@@ -1,12 +1,12 @@
 {
-  "checked_at_utc": "2026-07-26T08:13:05Z",
-  "publish_workflow_conclusion": "failure",
-  "publish_workflow_run_id": "30193998454",
+  "checked_at_utc": "2026-07-26T08:17:35Z",
+  "publish_workflow_conclusion": "manual",
+  "publish_workflow_run_id": "0",
   "overall": "failure",
   "web_url": "https://seungjae3908-source.github.io/guitar-coach-app/",
   "web_ok": false,
   "install_url": "https://seungjae3908-source.github.io/guitar-coach-app/install.html",
   "install_ok": false,
   "apk_url": "https://github.com/seungjae3908-source/guitar-coach-app/releases/download/preview-latest/guitar-coach-ai.apk",
-  "apk_ok": false
+  "apk_ok": true
 }
