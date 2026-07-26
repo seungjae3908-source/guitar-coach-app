@@ -81,9 +81,9 @@ jobs:
           apk='web/dist/downloads/guitar-coach-ai.apk'
           tag='preview-latest'
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$apk#기타-코치-AI.apk" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$tag" "$apk#guitar-coach-ai.apk" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$tag" "$apk#기타-코치-AI.apk" \
+            gh release create "$tag" "$apk#guitar-coach-ai.apk" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title '기타 코치 AI 휴대폰 테스트판' \
