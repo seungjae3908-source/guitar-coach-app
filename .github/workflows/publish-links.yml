@@ -3,6 +3,8 @@ name: Publish web preview and Android APK
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: github-pages
+  group: link-publish-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,7 +33,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Install mobile dependencies
         working-directory: mobile
@@ -63,15 +64,26 @@ jobs:
           cp mobile/android/app/build/outputs/apk/debug/app-debug.apk web/dist/downloads/guitar-coach-ai.apk
           test -s web/dist/downloads/guitar-coach-ai.apk
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: guitar-coach-ai-apk
+          path: web/dist/downloads/guitar-coach-ai.apk
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
