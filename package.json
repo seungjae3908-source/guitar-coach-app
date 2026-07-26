@@ -4,9 +4,11 @@
   "private": true,
   "description": "Personal guitar coaching app for mobile and web",
   "scripts": {
-    "check:structure": "node tests/verify-structure.mjs"
+    "check:structure": "node tests/verify-structure.mjs",
+    "check:mobile": "npm --prefix mobile run typecheck",
+    "check:web": "npm --prefix web run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   }
 }

@@ -25,15 +25,32 @@
 ## 현재 상태
 
 - GitHub 읽기·쓰기 권한: 실제 파일 생성·조회·삭제로 확인 완료
-- 기본 저장소 구조: 생성 및 구조 검사 단계
-- 모바일 UI: 아직 구현·테스트하지 않음
-- 웹 UI: 아직 구현·테스트하지 않음
-- 카메라·마이크 분석: 아직 구현·테스트하지 않음
+- 기본 저장소 구조: GitHub Actions 검사 완료
+- 모바일 UI: TypeScript 검사와 Expo Android 번들 내보내기 성공, 실제 휴대폰 확인 대기
+- 웹 UI: Vite 운영 빌드 성공, 실제 브라우저 확인 대기
+- 카메라·마이크·저장·실시간 연결: 아직 미구현·미테스트
 
-## 구조 검사
-
-Node.js가 설치된 환경에서 다음 명령으로 필수 폴더와 파일을 검사합니다.
+## 모바일 실행
 
 ```bash
-npm run check:structure
+cd mobile
+npm install
+npm start
 ```
+
+QR을 휴대폰 Expo Go로 스캔합니다. 실제 휴대폰 실행은 사용자 확인 후에만 성공으로 기록합니다.
+
+## 웹 실행
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+## 자동 검사
+
+- 저장소 구조 검사
+- 모바일 TypeScript 검사
+- Expo Android 번들 내보내기
+- Vite 웹 운영 빌드

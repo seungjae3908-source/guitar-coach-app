@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "기타 코치 AI",
+    "slug": "guitar-coach-ai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "platforms": ["android", "ios"],
+    "android": {
+      "package": "com.seungjae.guitarcoach"
+    },
+    "ios": {
+      "bundleIdentifier": "com.seungjae.guitarcoach"
+    }
+  }
+}
