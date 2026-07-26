@@ -1,0 +1,12 @@
+{
+  "name": "guitar-coach-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal guitar coaching app for mobile and web",
+  "scripts": {
+    "check:structure": "node tests/verify-structure.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
