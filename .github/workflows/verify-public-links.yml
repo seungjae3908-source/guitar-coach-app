@@ -1,6 +1,9 @@
 name: Verify public web and APK links
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-public-links.yml']
   workflow_run:
     workflows: ['Publish web preview and Android APK']
     types: [completed]
@@ -15,7 +18,7 @@ concurrency:
 
 jobs:
   verify:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
