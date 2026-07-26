@@ -1,0 +1,95 @@
+name: Verify public web and APK links
+
+on:
+  workflow_run:
+    workflows: ['Publish web preview and Android APK']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-public-links
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Check public URLs
+        id: check
+        env:
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -u
+          web_url='https://seungjae3908-source.github.io/guitar-coach-app/'
+          install_url='https://seungjae3908-source.github.io/guitar-coach-app/install.html'
+          apk_url='https://github.com/seungjae3908-source/guitar-coach-app/releases/download/preview-latest/guitar-coach-ai.apk'
+          conclusion="${WORKFLOW_CONCLUSION:-manual}"
+          run_id="${WORKFLOW_RUN_ID:-0}"
+
+          check_page() {
+            curl -fsSL --retry 24 --retry-delay 5 --retry-all-errors \
+              --max-time 20 -o /dev/null "$1"
+          }
+
+          check_apk() {
+            curl -fsSL --retry 24 --retry-delay 5 --retry-all-errors \
+              --max-time 30 --range 0-1023 -o /tmp/apk-head.bin "$1" && test -s /tmp/apk-head.bin
+          }
+
+          web_ok=false
+          install_ok=false
+          apk_ok=false
+
+          if [ "$conclusion" = 'success' ] || [ "$conclusion" = 'manual' ]; then
+            check_page "$web_url" && web_ok=true
+            check_page "$install_url" && install_ok=true
+            check_apk "$apk_url" && apk_ok=true
+          fi
+
+          if [ "$web_ok" = true ] && [ "$install_ok" = true ] && [ "$apk_ok" = true ]; then
+            overall='success'
+          else
+            overall='failure'
+          fi
+
+          mkdir -p docs
+          cat > docs/PUBLIC_LINK_STATUS.json <<JSON
+          {
+            "checked_at_utc": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "publish_workflow_conclusion": "$conclusion",
+            "publish_workflow_run_id": "$run_id",
+            "overall": "$overall",
+            "web_url": "$web_url",
+            "web_ok": $web_ok,
+            "install_url": "$install_url",
+            "install_ok": $install_ok,
+            "apk_url": "$apk_url",
+            "apk_ok": $apk_ok
+          }
+          JSON
+          cat docs/PUBLIC_LINK_STATUS.json
+
+      - name: Save verification result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/PUBLIC_LINK_STATUS.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'ci: record public link verification [skip ci]'
+          git push origin HEAD:main
