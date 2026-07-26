@@ -3,6 +3,9 @@ name: Publish web preview and Android APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/PUBLIC_LINK_STATUS.json'
+      - '.github/workflows/verify-public-links.yml'
   pull_request:
     branches: [main]
   workflow_dispatch:
