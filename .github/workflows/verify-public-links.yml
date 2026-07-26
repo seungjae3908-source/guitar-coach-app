@@ -5,7 +5,9 @@ on:
     branches: [main]
     paths: ['.github/workflows/verify-public-links.yml']
   workflow_run:
-    workflows: ['Publish web preview and Android APK']
+    workflows:
+      - 'Publish web preview and Android APK'
+      - 'Publish web preview and compact Android APK'
     types: [completed]
   workflow_dispatch:
 
