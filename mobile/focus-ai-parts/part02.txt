@@ -1,0 +1,200 @@
+      setPhase('idle');
+      void stopRecorderSafely();
+    }
+  }, [recorderState.mediaServicesDidReset, stopRecorderSafely]);
+
+  useEffect(() => {
+    const currentPhase = phaseRef.current;
+    if (!analysisEnabledRef.current || !recorderState.isRecording) return;
+    if (currentPhase !== 'calibrating' && currentPhase !== 'countdown' && currentPhase !== 'running' && currentPhase !== 'paused') return;
+
+    const meter = Number.isFinite(recorderState.metering) ? (recorderState.metering as number) : -60;
+    const safeMeter = clamp(meter, -100, 0);
+    const now = Date.now();
+    setLiveMeter(safeMeter);
+
+    if (currentPhase === 'calibrating') {
+      calibrationSamplesRef.current.push(safeMeter);
+      lastMeterRef.current = safeMeter;
+      return;
+    }
+
+    if (currentPhase !== 'running') {
+      lastMeterRef.current = safeMeter;
+      return;
+    }
+
+    meteringSamplesRef.current.push(safeMeter);
+    if (safeMeter > -1.5) clippingCountRef.current += 1;
+
+    const gate = thresholdRef.current;
+    const resetGate = gate - 5;
+    const clickSuppressed = metronomeSound && now - lastClickAtRef.current < CLICK_SUPPRESSION_MS;
+    const roseAboveGate = safeMeter >= gate && lastMeterRef.current < gate;
+    const sustainedAboveGate = safeMeter >= gate && !signalActiveRef.current && lastMeterRef.current >= gate;
+    const cooldownReady = now - lastAttackAtRef.current >= ATTACK_COOLDOWN_MS;
+
+    if (!clickSuppressed && cooldownReady && (roseAboveGate || sustainedAboveGate)) {
+      signalActiveRef.current = true;
+      lastAttackAtRef.current = now;
+      const attack: Attack = { at: now, levelDb: safeMeter };
+      const toleranceMs = Math.max(150, Math.round((60000 / bpm) * 0.42));
+      let nearestIndex = -1;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      beatsRef.current.forEach((beat, index) => {
+        if (beat.matched) return;
+        const distance = Math.abs(now - beat.at);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      });
+
+      if (nearestIndex >= 0 && nearestDistance <= toleranceMs) {
+        const beat = beatsRef.current[nearestIndex];
+        beat.matched = true;
+        attack.matchedBeatAt = beat.at;
+        attack.errorMs = now - beat.at - (metronomeSound ? CLICK_SUPPRESSION_MS : 0);
+        setLiveTimingMs(attack.errorMs);
+      }
+
+      attacksRef.current.push(attack);
+      setDetectedAttacks(attacksRef.current.length);
+      setMatchedAttacks(attacksRef.current.filter((item) => item.errorMs !== undefined).length);
+    }
+
+    if (safeMeter <= resetGate) signalActiveRef.current = false;
+    lastMeterRef.current = safeMeter;
+  }, [bpm, metronomeSound, recorderState.isRecording, recorderState.metering]);
+
+  useEffect(() => {
+    if (phase !== 'calibrating') return;
+    const timer = setTimeout(() => {
+      const samples = calibrationSamplesRef.current;
+      const floor = percentile(samples, 0.7);
+      const nextThreshold = clamp(Math.max(floor + 11, -38), -52, -20);
+      setNoiseFloor(floor);
+      setThreshold(nextThreshold);
+      setCountdown(3);
+      setPhase('countdown');
+    }, CALIBRATION_MS);
+    return () => clearTimeout(timer);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'countdown') return;
+    const timer = setTimeout(() => {
+      if (settings.haptics) void Haptics.selectionAsync();
+      if (countdown <= 1) {
+        sessionStartedAtRef.current = Date.now();
+        setCountdown(0);
+        setPhase('running');
+      } else {
+        setCountdown((value) => value - 1);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown, phase, settings.haptics]);
+
+  useEffect(() => {
+    if (phase !== 'running') return;
+    const timer = setInterval(() => {
+      setRemaining((value) => Math.max(0, value - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [phase]);
+
+  const playClick = useCallback(
+    async (accent: boolean) => {
+      if (!metronomeSound) return;
+      try {
+        clickPlayer.volume = accent ? 0.6 : 0.38;
+        await clickPlayer.seekTo(0);
+        clickPlayer.play();
+      } catch (error) {
+        console.warn('Metronome sound failed safely', error);
+        setMetronomeSound(false);
+        setAudioError('메트로놈 소리 재생이 불안정해 진동·화면 박자로 계속 진행합니다.');
+      }
+    },
+    [clickPlayer, metronomeSound],
+  );
+
+  useEffect(() => {
+    if (phase !== 'running') return;
+    const beatMs = Math.max(250, Math.round(60000 / bpm));
+
+    const fireBeat = () => {
+      const now = Date.now();
+      lastClickAtRef.current = now;
+      const beat: BeatEvent = { at: now, matched: false };
+      const earlyToleranceMs = Math.max(140, Math.round(beatMs * 0.38));
+      const earlyAttack = [...attacksRef.current]
+        .reverse()
+        .find((attack) => attack.matchedBeatAt === undefined && now - attack.at >= 0 && now - attack.at <= earlyToleranceMs);
+      if (earlyAttack) {
+        beat.matched = true;
+        earlyAttack.matchedBeatAt = now;
+        earlyAttack.errorMs = earlyAttack.at - now;
+        setLiveTimingMs(earlyAttack.errorMs);
+        setMatchedAttacks(attacksRef.current.filter((item) => item.errorMs !== undefined).length);
+      }
+      const accent = beatsRef.current.length % config.pattern.length === 0;
+      beatsRef.current.push(beat);
+      void playClick(accent);
+      if (settings.haptics) void Haptics.impactAsync(accent ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light);
+      setBeatIndex((value) => {
+        const next = (value + 1) % config.pattern.length;
+        if (next === 0) setBars((bar) => bar + 1);
+        return next;
+      });
+    };
+
+    fireBeat();
+    const timer = setInterval(fireBeat, beatMs);
+    return () => clearInterval(timer);
+  }, [bpm, config.pattern.length, phase, playClick, settings.haptics]);
+
+  const finishSession = useCallback(
+    async (completed: boolean) => {
+      if (finishingRef.current) return;
+      finishingRef.current = true;
+      setPhase('finishing');
+
+      const practicedSeconds = completed
+        ? targetSeconds
+        : Math.max(0, targetSeconds - remainingRef.current);
+
+      await stopRecorderSafely();
+
+      if (practicedSeconds < 5) {
+        setRemaining(targetSeconds);
+        setPhase('idle');
+        finishingRef.current = false;
+        return;
+      }
+
+      const scores = scoreSession({
+        attacks: attacksRef.current,
+        beats: beatsRef.current,
+        noiseFloor: noiseFloorRef.current,
+        clippingCount: clippingCountRef.current,
+        manualMistakes,
+        targetSeconds,
+        practicedSeconds,
+        metronomeSound,
+      });
+      const feedback = analysisEnabled
+        ? chooseFeedback(mode, scores)
+        : '마이크 분석 없이 완료했습니다. 다음 연습에서는 AI 소리 분석을 켜서 박자와 음량 피드백을 받아보세요.';
+      const metrics: AnalysisMetrics = {
+        rhythmAccuracy: analysisEnabled ? scores.rhythmAccuracy : 0,
+        timingConsistency: analysisEnabled ? scores.timingConsistency : 0,
+        dynamicStability: analysisEnabled ? scores.dynamicStability : 0,
+        noiseControl: analysisEnabled ? scores.noiseControl : 0,
+        detectedAttacks: analysisEnabled ? scores.detectedAttacks : 0,
+        matchedBeats: analysisEnabled ? scores.matchedBeats : 0,
+        expectedBeats: scores.expectedBeats,
+        averageOffsetMs: analysisEnabled ? scores.averageOffsetMs : 0,
+        confidence: analysisEnabled ? scores.confidence : 0,
