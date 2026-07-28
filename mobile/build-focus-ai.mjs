@@ -8,5 +8,8 @@ const content = (
   await Promise.all(parts.map((name) => readFile(join(root, 'focus-ai-parts', name), 'utf8')))
 ).join('');
 
+const clickBase64 = await readFile(join(root, 'assets', 'metronome-click.wav.b64'), 'utf8');
+
 await writeFile(join(root, 'FocusAiPracticeScreen.tsx'), content, 'utf8');
-console.log(`Generated FocusAiPracticeScreen.tsx (${content.length} chars)`);
+await writeFile(join(root, 'assets', 'metronome-click.wav'), Buffer.from(clickBase64.trim(), 'base64'));
+console.log(`Generated FocusAiPracticeScreen.tsx (${content.length} chars) and metronome-click.wav`);
