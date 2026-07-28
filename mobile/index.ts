@@ -1,5 +1,5 @@
 import { registerRootComponent } from 'expo';
 
-import App from './AppV5';
+import App from './AppV51';
 
 registerRootComponent(App);
