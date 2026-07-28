@@ -1,5 +1,5 @@
 import { registerRootComponent } from 'expo';
 
-import App from './AppV4';
+import App from './LiveCoachTestApp';
 
 registerRootComponent(App);
