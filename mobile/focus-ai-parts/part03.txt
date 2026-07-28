@@ -1,0 +1,200 @@
+      };
+
+      onSaveRecord({
+        id: nowId(),
+        createdAt: new Date().toISOString(),
+        mode,
+        durationSeconds: practicedSeconds,
+        source: '집중 코치',
+        bpm,
+        mistakes: manualMistakes,
+        coachScore: analysisEnabled ? scores.total : Math.max(0, 100 - manualMistakes * 7),
+        feedback,
+        analysis: metrics,
+      });
+
+      setResult({
+        score: analysisEnabled ? scores.total : Math.max(0, 100 - manualMistakes * 7),
+        feedback,
+        metrics,
+        coverage: analysisEnabled ? scores.coverage : 0,
+        duration: practicedSeconds,
+      });
+      setAudioStatus(analysisEnabled ? 'ready' : 'fallback');
+      setPhase('result');
+      if (settings.haptics) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      finishingRef.current = false;
+    },
+    [analysisEnabled, bpm, manualMistakes, metronomeSound, mode, onSaveRecord, settings.haptics, stopRecorderSafely, targetSeconds],
+  );
+
+  useEffect(() => {
+    if (phase === 'running' && remaining === 0) void finishSession(true);
+  }, [finishSession, phase, remaining]);
+
+  const prepareAudioAnalysis = async () => {
+    setAudioError('');
+    if (!analysisEnabled) {
+      setAudioStatus('fallback');
+      setCountdown(3);
+      setPhase('countdown');
+      return;
+    }
+
+    setAudioStatus('requesting');
+    try {
+      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        throw new Error('마이크 권한이 거부되었습니다. 휴대폰 설정에서 마이크 권한을 허용해 주세요.');
+      }
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        interruptionMode: 'doNotMix',
+        shouldRouteThroughEarpiece: false,
+        allowsBackgroundRecording: false,
+        shouldPlayInBackground: false,
+      });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      setAudioStatus('recording');
+      setPhase('calibrating');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '마이크 분석을 시작하지 못했습니다.';
+      setAudioError(message);
+      setAudioStatus('error');
+      setPhase('idle');
+      await stopRecorderSafely();
+      Alert.alert('AI 분석 시작 실패', `${message}\n\n앱은 종료되지 않습니다. 분석을 끄고 타이머 연습으로 진행할 수도 있습니다.`);
+    }
+  };
+
+  const start = async () => {
+    if (phase !== 'idle' && phase !== 'result') return;
+    resetAnalysis();
+    setRemaining(targetSeconds);
+    setBeatIndex(0);
+    setBars(0);
+    setManualMistakes(0);
+    setResult(null);
+    sessionStartedAtRef.current = 0;
+    await prepareAudioAnalysis();
+  };
+
+  const togglePause = () => {
+    if (phase === 'running') {
+      setPhase('paused');
+      if (audioRecorder.isRecording) audioRecorder.pause();
+    } else if (phase === 'paused') {
+      audioRecorder.record();
+      setPhase('running');
+    }
+  };
+
+  const reset = async () => {
+    await stopRecorderSafely();
+    setRemaining(targetSeconds);
+    setBeatIndex(0);
+    setBars(0);
+    setManualMistakes(0);
+    setResult(null);
+    setPhase('idle');
+    setAudioStatus('ready');
+    resetAnalysis();
+  };
+
+  const changeMode = async (nextMode: FocusMode) => {
+    if (phase !== 'idle' && phase !== 'result') return;
+    await reset();
+    setMode(nextMode);
+    setBpm(MODE_CONFIG[nextMode].defaultBpm);
+  };
+
+  const elapsed = Math.max(0, targetSeconds - remaining);
+  const progress = clamp((elapsed / Math.max(1, targetSeconds)) * 100);
+  const meterLevel = dbToLevel(liveMeter) * 100;
+  const timingLabel = liveTimingMs === null ? '입력 대기' : liveTimingMs < -45 ? `${Math.abs(Math.round(liveTimingMs))}ms 빠름` : liveTimingMs > 45 ? `${Math.round(liveTimingMs)}ms 늦음` : '박자 안쪽';
+  const phaseLabel =
+    phase === 'calibrating'
+      ? '주변 소음 측정'
+      : phase === 'countdown'
+        ? '준비'
+        : phase === 'running'
+          ? 'AI 분석 중'
+          : phase === 'paused'
+            ? '일시정지'
+            : phase === 'finishing'
+              ? '결과 계산 중'
+              : phase === 'result'
+                ? 'AI 분석 결과'
+                : '연습 설정';
+
+  return (
+    <View>
+      <View style={styles.statusCard}>
+        <View style={styles.rowBetween}>
+          <View>
+            <Text style={styles.statusEyebrow}>집중 연습 AI 1차</Text>
+            <Text style={styles.statusTitle}>소리·박자 실시간 분석</Text>
+          </View>
+          <View style={[styles.statusBadge, audioStatus === 'error' && styles.statusBadgeError]}>
+            <Text style={styles.statusBadgeText}>
+              {audioStatus === 'recording' ? '마이크 연결' : audioStatus === 'requesting' ? '준비 중' : audioStatus === 'fallback' ? '분석 꺼짐' : audioStatus === 'error' ? '안전 중단' : '대기'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.statusBody}>녹음 파일은 서버로 보내지 않고 휴대폰에서 음량 변화와 소리 시작 시점만 계산합니다.</Text>
+      </View>
+
+      <Text style={styles.sectionTitle}>훈련 종류</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+        {MODES.map((item) => (
+          <Pressable key={item} disabled={phase !== 'idle' && phase !== 'result'} onPress={() => void changeMode(item)}>
+            <View style={[styles.pill, mode === item && styles.pillActive]}>
+              <Text style={[styles.pillText, mode === item && styles.pillTextActive]}>{item}</Text>
+            </View>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>{config.title}</Text>
+        <Text style={styles.cardBody}>{config.instruction}</Text>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.controlLabel}>AI 소리 분석</Text>
+          <Switch
+            value={analysisEnabled}
+            disabled={phase !== 'idle' && phase !== 'result'}
+            onValueChange={setAnalysisEnabled}
+            trackColor={{ false: '#30363d', true: '#238636' }}
+            thumbColor="#f0f6fc"
+          />
+        </View>
+        <View style={styles.settingDivider} />
+        <View style={styles.rowBetween}>
+          <View style={styles.flexOne}>
+            <Text style={styles.controlLabel}>메트로놈 소리</Text>
+            <Text style={styles.settingHint}>스피커 사용 시 분석 신뢰도가 조금 낮아집니다. 이어폰 권장.</Text>
+          </View>
+          <Switch
+            value={metronomeSound}
+            disabled={phase !== 'idle' && phase !== 'result'}
+            onValueChange={setMetronomeSound}
+            trackColor={{ false: '#30363d', true: '#238636' }}
+            thumbColor="#f0f6fc"
+          />
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.controlLabel}>연습 속도</Text>
+          <Text style={styles.bpmText}>{bpm} BPM</Text>
+        </View>
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.smallButton} disabled={phase !== 'idle' && phase !== 'result'} onPress={() => setBpm((value) => Math.max(35, value - 5))}>
+            <Text style={styles.smallButtonText}>−5</Text>
+          </Pressable>
