@@ -2,18 +2,11 @@
   "expo": {
     "name": "기타 코치 AI",
     "slug": "guitar-coach-ai",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "platforms": ["android", "ios"],
     "plugins": [
-      [
-        "expo-audio",
-        {
-          "microphonePermission": "집중 연습에서 기타 소리의 박자와 음량을 분석하기 위해 마이크를 사용합니다.",
-          "recordAudioAndroid": true
-        }
-      ],
       [
         "expo-camera",
         {
@@ -33,12 +26,12 @@
     ],
     "android": {
       "package": "com.seungjae.guitarcoach",
-      "versionCode": 7,
+      "versionCode": 8,
       "permissions": ["CAMERA", "RECORD_AUDIO"]
     },
     "ios": {
       "bundleIdentifier": "com.seungjae.guitarcoach",
-      "buildNumber": "7"
+      "buildNumber": "8"
     }
   }
 }
