@@ -1,0 +1,200 @@
+          <Pressable style={styles.smallButton} disabled={phase !== 'idle' && phase !== 'result'} onPress={() => setBpm((value) => Math.min(180, value + 5))}>
+            <Text style={styles.smallButtonText}>＋5</Text>
+          </Pressable>
+        </View>
+        <View style={styles.durationRow}>
+          {[
+            { seconds: 30, label: '30초' },
+            { seconds: 60, label: '1분' },
+            { seconds: 180, label: '3분' },
+            { seconds: 300, label: '5분' },
+          ].map((item) => (
+            <Pressable
+              key={item.seconds}
+              disabled={phase !== 'idle' && phase !== 'result'}
+              style={[styles.durationButton, targetSeconds === item.seconds && styles.durationButtonActive]}
+              onPress={() => {
+                setTargetSeconds(item.seconds);
+                setRemaining(item.seconds);
+              }}
+            >
+              <Text style={styles.smallButtonText}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.practiceCard}>
+        <Text style={styles.phaseText}>{phaseLabel}</Text>
+        {phase === 'calibrating' ? (
+          <View style={styles.calibrationBox}>
+            <Text style={styles.calibrationTitle}>2초 동안 기타를 치지 마세요.</Text>
+            <Text style={styles.calibrationText}>주변 소음 기준을 자동 측정해 기타 소리 감지 문턱을 맞춥니다.</Text>
+          </View>
+        ) : (
+          <Text style={styles.timerText}>{phase === 'countdown' ? countdown : formatDuration(remaining)}</Text>
+        )}
+
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${progress}%` }]} />
+        </View>
+
+        <View style={styles.patternRow}>
+          {config.pattern.map((step, index) => {
+            const active = index === beatIndex && (phase === 'running' || phase === 'paused');
+            return (
+              <View key={`${step}-${index}`} style={[styles.patternCell, active && styles.patternCellActive]}>
+                <Text style={[styles.patternText, active && styles.patternTextActive]}>{step}</Text>
+                <Text style={styles.beatNumber}>{index + 1}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={styles.meterSection}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.meterLabel}>마이크 입력</Text>
+            <Text style={styles.meterValue}>{Math.round(liveMeter)} dB</Text>
+          </View>
+          <View style={styles.meterTrack}>
+            <View style={[styles.meterFill, { width: `${meterLevel}%` }]} />
+            <View style={[styles.thresholdMark, { left: `${dbToLevel(threshold) * 100}%` }]} />
+          </View>
+          <View style={styles.rowBetween}>
+            <Text style={styles.meterHint}>소음 기준 {Math.round(noiseFloor)} dB</Text>
+            <Text style={styles.meterHint}>감지 기준 {Math.round(threshold)} dB</Text>
+          </View>
+        </View>
+
+        <View style={styles.liveGrid}>
+          <View style={styles.liveCell}>
+            <Text style={styles.liveValue}>{detectedAttacks}</Text>
+            <Text style={styles.liveLabel}>감지 음</Text>
+          </View>
+          <View style={styles.liveCell}>
+            <Text style={styles.liveValue}>{matchedAttacks}</Text>
+            <Text style={styles.liveLabel}>박자 일치</Text>
+          </View>
+          <View style={styles.liveCell}>
+            <Text style={[styles.liveValue, liveTimingMs !== null && Math.abs(liveTimingMs) > 100 && styles.warningValue]}>{timingLabel}</Text>
+            <Text style={styles.liveLabel}>최근 타이밍</Text>
+          </View>
+          <View style={styles.liveCell}>
+            <Text style={[styles.liveValue, manualMistakes > 0 && styles.warningValue]}>{manualMistakes}</Text>
+            <Text style={styles.liveLabel}>직접 표시 실수</Text>
+          </View>
+        </View>
+
+        {(phase === 'idle' || phase === 'result') && !result ? (
+          <Pressable style={styles.primaryButton} onPress={() => void start()}>
+            <Text style={styles.primaryButtonText}>{analysisEnabled ? '환경 측정 후 AI 연습 시작' : '분석 없이 연습 시작'}</Text>
+          </Pressable>
+        ) : null}
+
+        {phase === 'running' || phase === 'paused' ? (
+          <View>
+            <View style={styles.buttonRow}>
+              <Pressable style={styles.secondaryButton} onPress={togglePause}>
+                <Text style={styles.secondaryButtonText}>{phase === 'paused' ? '계속' : '일시정지'}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.mistakeButton}
+                onPress={() => {
+                  setManualMistakes((value) => value + 1);
+                  if (settings.haptics) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                }}
+              >
+                <Text style={styles.mistakeButtonText}>실수 ＋1</Text>
+              </Pressable>
+            </View>
+            <Pressable style={styles.stopButton} onPress={() => void finishSession(false)}>
+              <Text style={styles.primaryButtonText}>중지하고 AI 결과 저장</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {phase === 'finishing' ? <Text style={styles.finishingText}>소리 데이터를 정리하고 점수를 계산하는 중</Text> : null}
+
+        {phase === 'result' && result ? (
+          <View style={styles.resultBox}>
+            <Text style={styles.resultCaption}>종합 AI 코치 점수</Text>
+            <Text style={styles.resultScore}>{result.score}점</Text>
+            <Text style={styles.resultMeta}>{formatDuration(result.duration)} · {bpm} BPM · 분석 신뢰도 {result.metrics.confidence}%</Text>
+            <Text style={styles.feedbackText}>{result.feedback}</Text>
+
+            <ScoreBar label="박자 정확도" value={result.metrics.rhythmAccuracy} detail={`평균 오차 ${result.metrics.averageOffsetMs > 0 ? '+' : ''}${result.metrics.averageOffsetMs}ms`} />
+            <ScoreBar label="타이밍 일관성" value={result.metrics.timingConsistency} detail="각 음의 박자 오차가 얼마나 일정한지" />
+            <ScoreBar label="음량 안정성" value={result.metrics.dynamicStability} detail="감지된 음 시작 세기의 균형" />
+            <ScoreBar label="잡음 제어" value={result.metrics.noiseControl} detail={`주변 소음 기준 ${Math.round(noiseFloorRef.current)}dB`} />
+
+            <View style={styles.resultStats}>
+              <Text style={styles.resultStat}>감지 {result.metrics.detectedAttacks}음</Text>
+              <Text style={styles.resultStat}>일치 {result.metrics.matchedBeats}/{result.metrics.expectedBeats}</Text>
+              <Text style={styles.resultStat}>완성도 {result.coverage}%</Text>
+            </View>
+
+            <Pressable style={styles.primaryButton} onPress={() => void reset()}>
+              <Text style={styles.primaryButtonText}>같은 훈련 다시 하기</Text>
+            </Pressable>
+          </View>
+        ) : null}
+      </View>
+
+      {audioError ? (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorTitle}>오디오 안내</Text>
+          <Text style={styles.errorText}>{audioError}</Text>
+          {audioStatus === 'error' ? (
+            <Pressable
+              style={styles.fallbackButton}
+              onPress={() => {
+                setAnalysisEnabled(false);
+                setAudioStatus('fallback');
+                setAudioError('AI 분석을 끄고 화면·진동·메트로놈 연습으로 전환했습니다.');
+              }}
+            >
+              <Text style={styles.fallbackButtonText}>분석 없이 안전 연습으로 전환</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>현재 AI가 실제로 보는 항목</Text>
+        <Text style={styles.cardBody}>• 기타 소리가 시작된 시점과 메트로놈 박자의 오차</Text>
+        <Text style={styles.cardBody}>• 연속 음의 간격 흔들림과 빠진 박자</Text>
+        <Text style={styles.cardBody}>• 각 음 시작 세기의 균형과 클리핑</Text>
+        <Text style={styles.cardBody}>• 주변 소음 기준과 신호 대비</Text>
+        <Text style={styles.limitText}>현재 마이크 음량 변화만으로 코드 이름이나 정확한 음정을 판별한다고 속이지 않습니다. 음정·코드 인식은 PCM 주파수 분석 모듈을 별도 검증한 뒤 추가합니다.</Text>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  flexOne: { flex: 1 },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusCard: { backgroundColor: '#102318', borderWidth: 1, borderColor: '#2ea043', borderRadius: 18, padding: 17, marginBottom: 12 },
+  statusEyebrow: { color: '#7ee787', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  statusTitle: { color: '#f0f6fc', fontSize: 20, fontWeight: '900', marginTop: 3 },
+  statusBody: { color: '#b1bac4', fontSize: 12, lineHeight: 18, marginTop: 10 },
+  statusBadge: { backgroundColor: '#238636', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 7 },
+  statusBadgeError: { backgroundColor: '#da3633' },
+  statusBadgeText: { color: '#fff', fontSize: 10, fontWeight: '900' },
+  sectionTitle: { color: '#f0f6fc', fontSize: 18, fontWeight: '900', marginTop: 12, marginBottom: 10 },
+  chipRow: { paddingBottom: 12 },
+  pill: { backgroundColor: '#21262d', borderRadius: 16, borderWidth: 1, borderColor: '#30363d', paddingHorizontal: 13, paddingVertical: 8, marginRight: 8 },
+  pillActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
+  pillText: { color: '#8b949e', fontSize: 12, fontWeight: '900' },
+  pillTextActive: { color: '#fff' },
+  card: { backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', borderRadius: 18, padding: 16, marginBottom: 12 },
+  cardTitle: { color: '#f0f6fc', fontSize: 16, fontWeight: '900', marginBottom: 7 },
+  cardBody: { color: '#b1bac4', fontSize: 13, lineHeight: 20 },
+  controlLabel: { color: '#f0f6fc', fontSize: 14, fontWeight: '900' },
+  settingHint: { color: '#8b949e', fontSize: 10, lineHeight: 15, marginTop: 3, paddingRight: 12 },
+  settingDivider: { height: 1, backgroundColor: '#30363d', marginVertical: 14 },
+  bpmText: { color: '#7ee787', fontSize: 21, fontWeight: '900' },
+  buttonRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  smallButton: { flex: 1, backgroundColor: '#21262d', borderWidth: 1, borderColor: '#30363d', borderRadius: 13, paddingVertical: 11, alignItems: 'center' },
+  smallButtonText: { color: '#fff', fontSize: 12, fontWeight: '900' },
+  durationRow: { flexDirection: 'row', gap: 6, marginTop: 12 },
