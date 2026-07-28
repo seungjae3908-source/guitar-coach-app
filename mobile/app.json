@@ -2,7 +2,7 @@
   "expo": {
     "name": "기타 코치 AI",
     "slug": "guitar-coach-ai",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "platforms": ["android", "ios"],
@@ -33,12 +33,12 @@
     ],
     "android": {
       "package": "com.seungjae.guitarcoach",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": ["CAMERA", "RECORD_AUDIO"]
     },
     "ios": {
       "bundleIdentifier": "com.seungjae.guitarcoach",
-      "buildNumber": "3"
+      "buildNumber": "4"
     }
   }
 }
