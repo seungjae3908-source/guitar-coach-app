@@ -1,0 +1,199 @@
+import * as Haptics from 'expo-haptics';
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioRecorder,
+  useAudioRecorderState,
+  type RecordingOptions,
+} from 'expo-audio';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+
+type FocusMode = '코드' | '핑거링' | '아르페지오' | '스트럼' | '피킹';
+type Phase = 'idle' | 'calibrating' | 'countdown' | 'running' | 'paused' | 'finishing' | 'result';
+
+type AnalysisMetrics = {
+  rhythmAccuracy: number;
+  timingConsistency: number;
+  dynamicStability: number;
+  noiseControl: number;
+  detectedAttacks: number;
+  matchedBeats: number;
+  expectedBeats: number;
+  averageOffsetMs: number;
+  confidence: number;
+};
+
+type FocusAiRecord = {
+  id: string;
+  createdAt: string;
+  mode: FocusMode;
+  durationSeconds: number;
+  source: '집중 코치';
+  bpm: number;
+  mistakes: number;
+  coachScore: number;
+  feedback: string;
+  analysis: AnalysisMetrics;
+};
+
+type Props = {
+  settings: {
+    haptics: boolean;
+    voiceFeedback?: boolean;
+  };
+  onSaveRecord: (record: FocusAiRecord) => void;
+};
+
+type ModeConfig = {
+  pattern: string[];
+  title: string;
+  instruction: string;
+  defaultBpm: number;
+  attackExpectation: 'one-per-beat' | 'sustain-friendly';
+  feedback: {
+    rhythm: string;
+    dynamics: string;
+    noise: string;
+    continuity: string;
+    strong: string;
+  };
+};
+
+type Attack = {
+  at: number;
+  levelDb: number;
+  matchedBeatAt?: number;
+  errorMs?: number;
+};
+
+type BeatEvent = {
+  at: number;
+  matched: boolean;
+};
+
+const MODES: FocusMode[] = ['코드', '핑거링', '아르페지오', '스트럼', '피킹'];
+
+const MODE_CONFIG: Record<FocusMode, ModeConfig> = {
+  코드: {
+    pattern: ['C', 'G', 'Am', 'F'],
+    title: '코드 전환 소리와 박자 분석',
+    instruction: '강조되는 코드에 맞춰 한 번 스트럼하세요. 울림이 끊기거나 코드가 깨지면 직접 실수도 표시할 수 있습니다.',
+    defaultBpm: 55,
+    attackExpectation: 'one-per-beat',
+    feedback: {
+      rhythm: '코드 모양을 박자 직전에 공중에서 만들고, 클릭과 동시에 손가락을 내려놓으세요.',
+      dynamics: '코드마다 스트럼 깊이가 달라집니다. 피크가 줄 안쪽으로 들어가는 깊이를 일정하게 하세요.',
+      noise: '줄을 누른 뒤 불필요한 손가락 접촉과 주변 소음을 줄이고 기타를 마이크 가까이에 두세요.',
+      continuity: '빠진 코드가 많습니다. BPM을 10 낮추고 네 코드만 무실수로 반복하세요.',
+      strong: '코드 전환과 스트럼 세기가 안정적입니다. 다음에는 BPM을 5만 올리세요.',
+    },
+  },
+  핑거링: {
+    pattern: ['1', '2', '3', '4'],
+    title: '핑거링 어택과 간격 분석',
+    instruction: '한 박에 한 음씩 또렷하게 연주하세요. 해머링이 아니라 피킹으로 음 시작점을 분명하게 만들어야 분석이 정확합니다.',
+    defaultBpm: 60,
+    attackExpectation: 'one-per-beat',
+    feedback: {
+      rhythm: '손가락을 프렛 가까이에 낮게 두고 다음 손가락을 미리 준비하세요.',
+      dynamics: '손가락마다 음량 차이가 큽니다. 피크 깊이와 손목 이동 폭을 같게 만드세요.',
+      noise: '줄 이동 때 손가락이 줄을 끌지 않도록 압력을 먼저 풀고 이동하세요.',
+      continuity: '빠진 음이 많습니다. 1-2-3-4를 한 줄에서만 천천히 반복하세요.',
+      strong: '음 시작점과 간격이 안정적입니다. 줄을 바꿔 같은 속도를 유지하세요.',
+    },
+  },
+  아르페지오: {
+    pattern: ['P', 'I', 'P', 'M'],
+    title: '아르페지오 박자·음량 균형 분석',
+    instruction: '강조되는 P-I-P-M 손가락만 움직이세요. 각 음의 시작 시점과 세기 균형을 실시간으로 분석합니다.',
+    defaultBpm: 65,
+    attackExpectation: 'one-per-beat',
+    feedback: {
+      rhythm: '검지를 앞으로 밀지 말고 관절을 접어 연주한 뒤 줄 가까이로 즉시 복귀하세요.',
+      dynamics: '엄지와 손가락 음량 차이가 큽니다. P의 깊이를 줄이고 I·M의 접촉 깊이를 일정하게 하세요.',
+      noise: '사용하지 않는 손가락이 줄에 닿거나 손톱 잡음이 섞입니다. 손가락을 줄 가까이에 띄워 대기하세요.',
+      continuity: '빠진 음이 많습니다. P-I 두 동작만 분리해서 8회 무실수 후 P-M을 붙이세요.',
+      strong: 'P-I-P-M의 간격과 음량 균형이 안정적입니다. 다음에는 BPM을 5 올리세요.',
+    },
+  },
+  스트럼: {
+    pattern: ['↓', '↓↑', '↑', '↓↑'],
+    title: '스트럼 리듬·강약·연속성 분석',
+    instruction: '강조되는 방향을 따라 연주하세요. 복합 표시(↓↑)는 한 박 안에서 다운과 업을 이어서 연주합니다.',
+    defaultBpm: 70,
+    attackExpectation: 'sustain-friendly',
+    feedback: {
+      rhythm: '팔 전체가 아니라 손목의 작은 회전으로 클릭 사이를 일정하게 나누세요.',
+      dynamics: '다운과 업의 음량 차이가 큽니다. 업에서는 피크 각도를 조금 열고 얕게 스치세요.',
+      noise: '피크가 줄에 깊게 걸리는 잡음이 큽니다. 피크 끝 2~3mm만 사용하세요.',
+      continuity: '리듬이 자주 끊깁니다. 다운만 8박 연속으로 만든 뒤 업을 추가하세요.',
+      strong: '리듬 흐름과 강약이 안정적입니다. 같은 속도로 8마디를 연속 유지하세요.',
+    },
+  },
+  피킹: {
+    pattern: ['D', 'U', 'D', 'U'],
+    title: '얼터네이트 피킹 타이밍 분석',
+    instruction: '한 박에 D/U 한 번씩 연주하세요. 피크가 줄을 통과하는 순간을 감지해 박자 오차를 계산합니다.',
+    defaultBpm: 70,
+    attackExpectation: 'one-per-beat',
+    feedback: {
+      rhythm: '다운과 업의 이동 거리를 같게 하고 손목 중심을 줄 위에 고정하세요.',
+      dynamics: '다운·업 음량 차이가 큽니다. 피크 기울기와 줄 접촉 깊이를 양방향에서 같게 하세요.',
+      noise: '피크 긁힘이 큽니다. 힘을 빼고 피크 끝만 줄을 통과시키세요.',
+      continuity: '빠진 피킹이 많습니다. 한 줄에서 D-U만 8박 무실수로 반복하세요.',
+      strong: '다운·업 간격과 세기가 안정적입니다. 줄 이동 훈련으로 확장하세요.',
+    },
+  },
+};
+
+const RECORDER_OPTIONS: RecordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
+  isMeteringEnabled: true,
+  android: {
+    ...RecordingPresets.HIGH_QUALITY.android,
+    audioSource: 'unprocessed',
+  },
+};
+
+const CALIBRATION_MS = 2200;
+const METER_INTERVAL_MS = 50;
+const CLICK_SUPPRESSION_MS = 70;
+const ATTACK_COOLDOWN_MS = 130;
+
+function clamp(value: number, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function average(values: number[]) {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function standardDeviation(values: number[]) {
+  if (values.length < 2) return 0;
+  const mean = average(values);
+  return Math.sqrt(average(values.map((value) => (value - mean) ** 2)));
+}
+
+function percentile(values: number[], ratio: number) {
+  if (values.length === 0) return -60;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.round((sorted.length - 1) * ratio)));
+  return sorted[index];
+}
+
+function formatDuration(totalSeconds: number) {
+  const safe = Math.max(0, Math.round(totalSeconds));
+  return `${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`;
+}
+
+function dbToLevel(db: number) {
+  return clamp((db + 60) / 60, 0, 1);
+}
+
+function nowId() {
+  return `focus-ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
