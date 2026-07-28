@@ -7,9 +7,9 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseDetector
 import com.google.mlkit.vision.pose.PoseLandmark
-import com.google.mlkit.vision.pose.defaults.PoseDetection
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
