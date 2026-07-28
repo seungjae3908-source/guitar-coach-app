@@ -1,0 +1,200 @@
+function scoreSession({
+  attacks,
+  beats,
+  noiseFloor,
+  clippingCount,
+  manualMistakes,
+  targetSeconds,
+  practicedSeconds,
+  metronomeSound,
+}: {
+  attacks: Attack[];
+  beats: BeatEvent[];
+  noiseFloor: number;
+  clippingCount: number;
+  manualMistakes: number;
+  targetSeconds: number;
+  practicedSeconds: number;
+  metronomeSound: boolean;
+}) {
+  const matched = attacks.filter((attack) => attack.errorMs !== undefined);
+  const errors = matched.map((attack) => Math.abs(attack.errorMs ?? 0));
+  const signedErrors = matched.map((attack) => attack.errorMs ?? 0);
+  const expectedBeats = Math.max(1, beats.length);
+  const coverage = clamp((matched.length / expectedBeats) * 100);
+  const meanError = average(errors);
+  const rhythmAccuracy = clamp(100 - meanError / 2.4) * 0.7 + coverage * 0.3;
+  const timingConsistency = clamp(100 - standardDeviation(signedErrors) / 2.1);
+  const levelValues = attacks.map((attack) => attack.levelDb).filter(Number.isFinite);
+  const dynamicStability = levelValues.length >= 2 ? clamp(100 - standardDeviation(levelValues) * 11) : 35;
+  const noiseControl = clamp(((-noiseFloor - 24) / 36) * 100 - clippingCount * 3);
+  const completion = clamp((practicedSeconds / Math.max(1, targetSeconds)) * 100);
+  const mistakePenalty = Math.min(24, manualMistakes * 4);
+  const confidence = clamp(
+    35 + Math.min(35, attacks.length * 2.2) + Math.min(25, beats.length * 0.8) - (metronomeSound ? 8 : 0),
+    20,
+    96,
+  );
+  const total = clamp(
+    rhythmAccuracy * 0.34 +
+      timingConsistency * 0.2 +
+      dynamicStability * 0.2 +
+      noiseControl * 0.11 +
+      coverage * 0.1 +
+      completion * 0.05 -
+      mistakePenalty,
+  );
+
+  return {
+    total: Math.round(total),
+    rhythmAccuracy: Math.round(rhythmAccuracy),
+    timingConsistency: Math.round(timingConsistency),
+    dynamicStability: Math.round(dynamicStability),
+    noiseControl: Math.round(noiseControl),
+    detectedAttacks: attacks.length,
+    matchedBeats: matched.length,
+    expectedBeats,
+    averageOffsetMs: Math.round(average(signedErrors)),
+    confidence: Math.round(confidence),
+    coverage: Math.round(coverage),
+  };
+}
+
+function chooseFeedback(mode: FocusMode, scores: ReturnType<typeof scoreSession>) {
+  const config = MODE_CONFIG[mode];
+  const candidates = [
+    { key: 'rhythm', value: scores.rhythmAccuracy },
+    { key: 'timing', value: scores.timingConsistency },
+    { key: 'dynamics', value: scores.dynamicStability },
+    { key: 'noise', value: scores.noiseControl },
+    { key: 'continuity', value: scores.coverage },
+  ].sort((a, b) => a.value - b.value);
+
+  if (scores.total >= 88 && scores.coverage >= 80) return config.feedback.strong;
+  const weakest = candidates[0]?.key;
+  if (weakest === 'dynamics') return config.feedback.dynamics;
+  if (weakest === 'noise') return config.feedback.noise;
+  if (weakest === 'continuity') return config.feedback.continuity;
+  return config.feedback.rhythm;
+}
+
+function ScoreBar({ label, value, detail }: { label: string; value: number; detail: string }) {
+  return (
+    <View style={styles.scoreBlock}>
+      <View style={styles.rowBetween}>
+        <Text style={styles.scoreLabel}>{label}</Text>
+        <Text style={styles.scoreValue}>{value}</Text>
+      </View>
+      <View style={styles.scoreTrack}>
+        <View style={[styles.scoreFill, { width: `${clamp(value)}%` }]} />
+      </View>
+      <Text style={styles.scoreDetail}>{detail}</Text>
+    </View>
+  );
+}
+
+export default function FocusAiPracticeScreen({ settings, onSaveRecord }: Props) {
+  const [mode, setMode] = useState<FocusMode>('아르페지오');
+  const config = MODE_CONFIG[mode];
+  const [bpm, setBpm] = useState(config.defaultBpm);
+  const [targetSeconds, setTargetSeconds] = useState(60);
+  const [remaining, setRemaining] = useState(60);
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [countdown, setCountdown] = useState(0);
+  const [beatIndex, setBeatIndex] = useState(0);
+  const [bars, setBars] = useState(0);
+  const [manualMistakes, setManualMistakes] = useState(0);
+  const [metronomeSound, setMetronomeSound] = useState(true);
+  const [analysisEnabled, setAnalysisEnabled] = useState(true);
+  const [audioStatus, setAudioStatus] = useState<'ready' | 'requesting' | 'recording' | 'fallback' | 'error'>('ready');
+  const [audioError, setAudioError] = useState('');
+  const [noiseFloor, setNoiseFloor] = useState(-60);
+  const [threshold, setThreshold] = useState(-34);
+  const [liveMeter, setLiveMeter] = useState(-60);
+  const [detectedAttacks, setDetectedAttacks] = useState(0);
+  const [matchedAttacks, setMatchedAttacks] = useState(0);
+  const [liveTimingMs, setLiveTimingMs] = useState<number | null>(null);
+  const [result, setResult] = useState<{
+    score: number;
+    feedback: string;
+    metrics: AnalysisMetrics;
+    coverage: number;
+    duration: number;
+  } | null>(null);
+
+  const audioRecorder = useAudioRecorder(RECORDER_OPTIONS);
+  const recorderState = useAudioRecorderState(audioRecorder, METER_INTERVAL_MS);
+  const clickPlayer = useAudioPlayer(require('./assets/metronome-click.wav'), { downloadFirst: true });
+
+  const calibrationSamplesRef = useRef<number[]>([]);
+  const attacksRef = useRef<Attack[]>([]);
+  const beatsRef = useRef<BeatEvent[]>([]);
+  const meteringSamplesRef = useRef<number[]>([]);
+  const lastMeterRef = useRef(-60);
+  const signalActiveRef = useRef(false);
+  const lastAttackAtRef = useRef(0);
+  const lastClickAtRef = useRef(0);
+  const clippingCountRef = useRef(0);
+  const sessionStartedAtRef = useRef(0);
+  const finishingRef = useRef(false);
+  const remainingRef = useRef(remaining);
+  const phaseRef = useRef<Phase>(phase);
+  const noiseFloorRef = useRef(noiseFloor);
+  const thresholdRef = useRef(threshold);
+  const analysisEnabledRef = useRef(analysisEnabled);
+
+  useEffect(() => {
+    remainingRef.current = remaining;
+  }, [remaining]);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  useEffect(() => {
+    noiseFloorRef.current = noiseFloor;
+  }, [noiseFloor]);
+
+  useEffect(() => {
+    thresholdRef.current = threshold;
+  }, [threshold]);
+
+  useEffect(() => {
+    analysisEnabledRef.current = analysisEnabled;
+  }, [analysisEnabled]);
+
+  const resetAnalysis = useCallback(() => {
+    calibrationSamplesRef.current = [];
+    attacksRef.current = [];
+    beatsRef.current = [];
+    meteringSamplesRef.current = [];
+    lastMeterRef.current = -60;
+    signalActiveRef.current = false;
+    lastAttackAtRef.current = 0;
+    lastClickAtRef.current = 0;
+    clippingCountRef.current = 0;
+    setDetectedAttacks(0);
+    setMatchedAttacks(0);
+    setLiveTimingMs(null);
+    setNoiseFloor(-60);
+    setThreshold(-34);
+  }, []);
+
+  const stopRecorderSafely = useCallback(async () => {
+    try {
+      if (audioRecorder.isRecording) await audioRecorder.stop();
+    } catch (error) {
+      console.warn('Recorder stop failed safely', error);
+    }
+  }, [audioRecorder]);
+
+  useEffect(() => {
+    return () => {
+      void stopRecorderSafely();
+    };
+  }, [stopRecorderSafely]);
+
+  useEffect(() => {
+    if (recorderState.mediaServicesDidReset && phaseRef.current !== 'idle' && phaseRef.current !== 'result') {
+      setAudioError('휴대폰 오디오 서비스가 재시작되어 분석을 중단했습니다. 다시 시작해 주세요.');
+      setAudioStatus('error');
