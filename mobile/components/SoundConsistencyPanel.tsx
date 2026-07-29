@@ -29,7 +29,12 @@ function scoreLabel(snapshot: SoundConsistencySnapshot) {
 export default function SoundConsistencyPanel({ running }: { running: boolean }) {
   const [snapshot, setSnapshot] = useState<SoundConsistencySnapshot>(() => getLatestSoundConsistency());
 
-  useEffect(() => subscribeSoundConsistency(setSnapshot), []);
+  useEffect(() => {
+    const unsubscribe = subscribeSoundConsistency(setSnapshot);
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!running && snapshot.capturedAt === 0) setSnapshot(emptySoundConsistencySnapshot());
