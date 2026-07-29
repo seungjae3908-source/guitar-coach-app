@@ -12,6 +12,7 @@ import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import AudioFileAnalysisPanel from './components/AudioFileAnalysisPanel';
 import CameraCalibrationWizard from './components/CameraCalibrationWizard';
 import MetronomeProgramPanel from './components/MetronomeProgramPanel';
+import PracticeRecordingPanel from './components/PracticeRecordingPanel';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import SongPracticePanel from './components/SongPracticePanel';
@@ -19,12 +20,13 @@ import TunerPanel from './components/TunerPanel';
 import VoiceCoachController from './components/VoiceCoachController';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
-type GlobalTool = 'app' | 'program' | 'session' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
+type GlobalTool = 'app' | 'program' | 'session' | 'recording' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
 
 const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'app', label: '홈' },
   { id: 'program', label: '메트로놈' },
   { id: 'session', label: '집중연습' },
+  { id: 'recording', label: '영상' },
   { id: 'audio', label: '음원분석' },
   { id: 'song', label: '곡연습' },
   { id: 'calibration', label: '촬영보정' },
@@ -35,6 +37,7 @@ const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
 function toolTitle(tool: GlobalTool) {
   if (tool === 'program') return '카운트인·타이머·자동 BPM 프로그램';
   if (tool === 'session') return 'AI 집중 연습과 자동 기록';
+  if (tool === 'recording') return '연습 영상 녹화·갤러리 저장·재생';
   if (tool === 'audio') return 'MP3·WAV 로컬 BPM·Key·코드 분석';
   if (tool === 'song') return '악보 초안·A-B 반복·속도 연습';
   if (tool === 'calibration') return '손·줄·브리지 촬영 보정';
@@ -107,6 +110,8 @@ export default function CompleteBetaAppV060Plus() {
           </View>
         ) : tool === 'program' ? (
           <MetronomeProgramPanel />
+        ) : tool === 'recording' ? (
+          <PracticeRecordingPanel mode={mode} />
         ) : tool === 'tuner' ? (
           <ScrollView style={styles.tunerScroll} contentContainerStyle={styles.tunerContent} showsVerticalScrollIndicator={false}>
             <TunerPanel />
