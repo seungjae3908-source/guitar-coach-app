@@ -4,7 +4,12 @@ import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet, Text, View
 
 import type { PracticeCategoryId } from '../config/guitar-mode-profiles';
 import type { PracticePreset } from '../config/personal-practice-presets';
-import { analyzeHandAsync, type HandAnalysisResult, isDetailedHandCoachAvailable } from '../modules/guitar-coach-hand';
+import {
+  analyzeHandAsync,
+  type GuitarStringContact,
+  type HandAnalysisResult,
+  isDetailedHandCoachAvailable,
+} from '../modules/guitar-coach-hand';
 import { analyzePoseAsync, isLiveCoachNativeAvailable, type PoseAnalysisResult, type PoseLandmarkPoint } from '../modules/guitar-coach-native';
 
 type AnalysisMode = 'full' | 'right-hand' | 'left-hand';
@@ -28,6 +33,14 @@ const PLAN_OPTIONS: Array<{ id: AnalysisPlan; label: string }> = [
   { id: 'auto-cycle', label: '자동 순환' },
 ];
 const AUTO_CYCLE: AnalysisMode[] = ['full', 'right-hand', 'left-hand'];
+const CONTACT_OFFSETS: Record<GuitarStringContact['id'], { x: number; y: number }> = {
+  pick: { x: 13, y: -20 },
+  thumb: { x: -29, y: -22 },
+  index: { x: 10, y: -24 },
+  middle: { x: 12, y: -5 },
+  ring: { x: 10, y: 14 },
+  pinky: { x: -34, y: 16 },
+};
 
 function initialPlan(focus: PracticePreset['cameraFocus']): AnalysisMode {
   if (focus === 'right-hand') return 'right-hand';
@@ -42,7 +55,7 @@ function modeTitle(mode: AnalysisMode) {
 }
 
 function modeInstruction(mode: AnalysisMode) {
-  if (mode === 'right-hand') return '브리지·오른손·줄 구간만 크게 보이면 됩니다. 손과 줄은 자동으로 따라갑니다.';
+  if (mode === 'right-hand') return '브리지·오른손·여섯 줄을 크게 보이게 두세요. 피크와 P·i·m·a를 각각 줄에 연결합니다.';
   if (mode === 'left-hand') return '왼손과 사용하는 프렛만 크게 보이면 됩니다. 코드 착지와 줄 접촉 영역을 봅니다.';
   return '머리·어깨·양 팔꿈치·기타가 함께 보이면 자세와 양손 연결을 번갈아 수집합니다.';
 }
@@ -52,10 +65,10 @@ function techniqueHint(category: PracticeCategoryId, mode: AnalysisMode) {
     ? '손가락 동시 착지·높이·전환 이동을 확인합니다.'
     : '손가락 독립성·포지션 이동·불필요한 들림을 확인합니다.';
   if (mode === 'right-hand') {
-    if (category === 'arpeggio') return 'P·i·m·a 복귀, 동반 움직임과 실제 줄 영역을 확인합니다.';
-    if (category === 'strumming') return '다운·업 줄 범위, 피크 그립, 손목과 소리 균형을 확인합니다.';
-    if (category === 'palmMute') return '브리지 근처 손날 위치, 피킹 줄과 톤 일관성을 확인합니다.';
-    return '피크 이동·그립·손목 안정성과 탄현 줄 영역을 확인합니다.';
+    if (category === 'arpeggio') return 'P·i·m·a 각각의 끝점, 복귀, 동반 움직임과 실제 탄현 줄을 확인합니다.';
+    if (category === 'strumming') return '피크 끝점과 통과한 줄 하나하나, 그립과 손목·소리 균형을 확인합니다.';
+    if (category === 'palmMute') return '브리지 근처 손날 위치, 피크 끝점과 탄현 줄·톤 일관성을 확인합니다.';
+    return '피크 끝점·각 손가락 끝점·줄별 거리·손목 안정성을 확인합니다.';
   }
   return '상체 균형·기타 위치·양손 큰 움직임·박자와 전체 소리를 종합합니다.';
 }
@@ -63,6 +76,12 @@ function techniqueHint(category: PracticeCategoryId, mode: AnalysisMode) {
 function Segment({ x1, y1, x2, y2, style }: { x1: number; y1: number; x2: number; y2: number; style: object }) {
   const length = Math.hypot(x2 - x1, y2 - y1);
   return <View style={[style, { width: length, left: (x1 + x2 - length) / 2, top: (y1 + y2) / 2, transform: [{ rotate: `${Math.atan2(y2 - y1, x2 - x1)}rad` }] }]} />;
+}
+
+function contactLineLabel(contact: GuitarStringContact) {
+  if (contact.stringNumber > 0) return `${contact.stringNumber}번`;
+  if (contact.visualIndex > 0) return `V${contact.visualIndex}`;
+  return '—';
 }
 
 function PoseOverlay({ result, width, height }: { result: PoseAnalysisResult | null; width: number; height: number }) {
@@ -84,10 +103,22 @@ function PoseOverlay({ result, width, height }: { result: PoseAnalysisResult | n
 function StringOverlay({ result, width, height }: { result: HandAnalysisResult; width: number; height: number }) {
   const tracking = result.stringTracking;
   if (!tracking?.detected || tracking.lines.length < 4) return null;
+  const activeIndexes = new Set((tracking.contacts ?? []).filter((contact) => contact.visualIndex > 0).map((contact) => contact.visualIndex));
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {tracking.roiTop != null && tracking.roiBottom != null ? (
+        <View style={[
+          styles.roiBox,
+          {
+            left: (tracking.roiLeft ?? 0) * width,
+            top: tracking.roiTop * height,
+            width: Math.max(20, ((tracking.roiRight ?? 1) - (tracking.roiLeft ?? 0)) * width),
+            height: Math.max(20, (tracking.roiBottom - tracking.roiTop) * height),
+          },
+        ]} />
+      ) : null}
       {tracking.lines.map((line) => {
-        const active = line.visualIndex === tracking.nearestVisualIndex;
+        const active = activeIndexes.has(line.visualIndex);
         const label = line.stringNumber > 0 ? `${line.stringNumber}` : `V${line.visualIndex}`;
         const x1 = line.startX * width;
         const y1 = line.startY * height;
@@ -96,11 +127,40 @@ function StringOverlay({ result, width, height }: { result: HandAnalysisResult; 
         return (
           <View key={line.visualIndex}>
             <Segment x1={x1} y1={y1} x2={x2} y2={y2} style={active ? styles.stringLineActive : styles.stringLine} />
-            {(active || line.stringNumber > 0) ? (
-              <View style={[styles.stringLabel, active && styles.stringLabelActive, { left: (x1 + x2) / 2 - 10, top: (y1 + y2) / 2 - 10 }]}>
-                <Text style={styles.stringLabelText}>{label}</Text>
-              </View>
-            ) : null}
+            <View style={[styles.stringLabel, active && styles.stringLabelActive, { left: (x1 + x2) / 2 - 10, top: (y1 + y2) / 2 - 10 }]}>
+              <Text style={styles.stringLabelText}>{label}</Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function ContactOverlay({ result, width, height }: { result: HandAnalysisResult; width: number; height: number }) {
+  const tracking = result.stringTracking;
+  if (!tracking?.contacts?.length) return null;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {tracking.contacts.map((contact) => {
+        const offset = CONTACT_OFFSETS[contact.id];
+        const resolved = contact.visualIndex > 0;
+        const primary = contact.id === tracking.primaryContactId;
+        return (
+          <View
+            key={contact.id}
+            style={[
+              styles.contactBadge,
+              resolved && styles.contactBadgeResolved,
+              primary && styles.contactBadgePrimary,
+              {
+                left: Math.max(1, Math.min(width - 48, contact.x * width + offset.x)),
+                top: Math.max(1, Math.min(height - 31, contact.y * height + offset.y)),
+              },
+            ]}
+          >
+            <Text style={styles.contactName}>{contact.label}</Text>
+            <Text style={styles.contactLine}>{contactLineLabel(contact)}</Text>
           </View>
         );
       })}
@@ -129,6 +189,7 @@ function HandOverlay({ result, width, height }: { result: HandAnalysisResult | n
       {result.pick.detected ? (
         <View style={[styles.pickMarker, { left: result.pick.centerX * width - 17, top: result.pick.centerY * height - 17, transform: [{ rotate: `${result.pick.angleDegrees}deg` }] }]}><View style={styles.pickAxis} /></View>
       ) : null}
+      <ContactOverlay result={result} width={width} height={height} />
     </View>
   );
 }
@@ -142,12 +203,19 @@ function stringStatus(result: HandAnalysisResult | null) {
   const tracking = result?.stringTracking;
   if (!tracking) return '기타줄 자동 인식 모듈 대기';
   if (!tracking.detected) return `줄 판정 불가 · 후보 신뢰 ${Math.round(tracking.confidence * 100)}%`;
-  const nearest = tracking.nearestStringNumber > 0
-    ? `${tracking.nearestStringNumber}번 줄 근처`
-    : tracking.nearestVisualIndex > 0
-      ? `시각 줄 ${tracking.nearestVisualIndex} 근처 · 번호 판정 불가`
-      : '접촉 줄 계산 중';
-  return `줄 ${tracking.visibleLineCount}/6 · ${Math.round(tracking.confidence * 100)}% · ${nearest}`;
+  const stability = Math.round((tracking.stabilityConfidence ?? 0) * 100);
+  const numbering = tracking.stringOrder === 'unknown' ? '번호 방향 판정 중' : `번호 신뢰 ${Math.round(tracking.numberingConfidence * 100)}%`;
+  return `줄 ${tracking.visibleLineCount}/6 · 검출 ${Math.round(tracking.confidence * 100)}% · 안정 ${stability}% · ${numbering}`;
+}
+
+function contactStatus(result: HandAnalysisResult | null) {
+  const contacts = result?.stringTracking?.contacts;
+  if (!contacts?.length) return '피크와 손가락별 줄 접촉 계산 중';
+  const order: GuitarStringContact['id'][] = ['pick', 'thumb', 'index', 'middle', 'ring', 'pinky'];
+  return [...contacts]
+    .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
+    .map((contact) => `${contact.label}→${contactLineLabel(contact)}`)
+    .join(' · ');
 }
 
 export default function SessionCoachCamera({ running, category, cameraFocus }: { running: boolean; category: PracticeCategoryId; cameraFocus: PracticePreset['cameraFocus'] }) {
@@ -217,13 +285,14 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
     const schedule = (delay: number) => { if (!cancelled) timer = setTimeout(captureAndAnalyze, delay); };
     const captureAndAnalyze = async () => {
       if (cancelled || analysisBusyRef.current || !cameraRef.current) {
-        schedule(140);
+        schedule(120);
         return;
       }
       analysisBusyRef.current = true;
       const startedAt = Date.now();
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: activeMode === 'full' ? 0.28 : 0.46, shutterSound: false, mirror: facing === 'front' });
+        const quality = activeMode === 'full' ? 0.28 : activeMode === 'right-hand' ? 0.64 : 0.52;
+        const photo = await cameraRef.current.takePictureAsync({ quality, shutterSound: false, mirror: facing === 'front' });
         if (!photo?.uri || cancelled) return;
         if (activeMode === 'full') {
           if (fullPassRef.current === 'pose' || !isDetailedHandCoachAvailable) {
@@ -247,8 +316,8 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
         if (!cancelled) setAnalysisError(caught instanceof Error ? caught.message : '자동 AI 분석 중 오류가 발생했습니다.');
       } finally {
         analysisBusyRef.current = false;
-        const target = activeMode === 'full' ? 820 : 520;
-        schedule(Math.max(150, target - (Date.now() - startedAt)));
+        const target = activeMode === 'full' ? 820 : activeMode === 'right-hand' ? 430 : 500;
+        schedule(Math.max(130, target - (Date.now() - startedAt)));
       }
     };
     schedule(100);
@@ -307,9 +376,10 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
 
       <View style={styles.resultCard}>
         <Text style={styles.resultTitle}>{detectionText}</Text>
-        {activeMode !== 'full' || handResult ? <Text style={styles.stringResult}>{stringStatus(handResult)}</Text> : null}
-        {activeMode === 'right-hand' && handResult?.pick.detected ? <Text style={styles.resultDetail}>피크 {Math.round(handResult.pick.confidence * 100)}% · 노출 {handResult.pick.exposure.toFixed(2)} · 각도 {Math.round(handResult.pick.angleDegrees)}°</Text> : null}
-        <Text style={styles.resultDetail}>고정 사각형이 아니라 검출된 손과 기타줄 위치를 따라 표시가 이동합니다.</Text>
+        {activeMode === 'right-hand' ? <Text style={styles.stringResult}>{stringStatus(handResult)}</Text> : null}
+        {activeMode === 'right-hand' ? <Text style={styles.contactResult}>{contactStatus(handResult)}</Text> : null}
+        {activeMode === 'right-hand' && handResult?.pick.detected ? <Text style={styles.resultDetail}>피크 검출 {Math.round(handResult.pick.confidence * 100)}% · 노출 {handResult.pick.exposure.toFixed(2)} · 영상각 {Math.round(handResult.pick.angleDegrees)}°</Text> : null}
+        <Text style={styles.resultDetail}>피크 끝점과 P·i·m·a·새끼 끝점을 따로 추적하며 최근 5개 프레임의 줄 위치를 합쳐 흔들림을 줄입니다.</Text>
         {selectedPlan === 'auto-cycle' ? <Text style={styles.cycleText}>20초마다 전체 → 오른손 → 왼손으로 전환됩니다. 안내에 맞춰 휴대폰 위치만 옮기세요.</Text> : null}
         {analysisError ? <Text style={styles.errorText}>{analysisError}</Text> : null}
       </View>
@@ -342,11 +412,17 @@ const styles = StyleSheet.create({
   cameraFrame: { height: 390, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
   cameraFrameClose: { height: 430 },
   trackingBox: { position: 'absolute', borderWidth: 2, borderColor: '#7ee787', borderRadius: 22, backgroundColor: 'rgba(126,231,135,0.05)' },
-  stringLine: { position: 'absolute', height: 1.5, borderRadius: 1, backgroundColor: 'rgba(242,204,96,0.62)' },
-  stringLineActive: { position: 'absolute', height: 4, borderRadius: 2, backgroundColor: '#ff7b72' },
+  roiBox: { position: 'absolute', borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(121,192,255,0.48)', backgroundColor: 'rgba(121,192,255,0.025)' },
+  stringLine: { position: 'absolute', height: 1.6, borderRadius: 1, backgroundColor: 'rgba(242,204,96,0.68)' },
+  stringLineActive: { position: 'absolute', height: 3.6, borderRadius: 2, backgroundColor: '#ff7b72' },
   stringLabel: { position: 'absolute', width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.72)', alignItems: 'center', justifyContent: 'center' },
   stringLabelActive: { backgroundColor: '#da3633' },
   stringLabelText: { color: '#ffffff', fontSize: 7, fontWeight: '900' },
+  contactBadge: { position: 'absolute', minWidth: 42, minHeight: 27, borderRadius: 8, borderWidth: 1, borderColor: '#6e7681', backgroundColor: 'rgba(13,17,23,0.88)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  contactBadgeResolved: { borderColor: '#f2cc60', backgroundColor: 'rgba(70,54,8,0.88)' },
+  contactBadgePrimary: { borderColor: '#ff7b72', borderWidth: 2, backgroundColor: 'rgba(94,28,31,0.92)' },
+  contactName: { color: '#ffffff', fontSize: 7, fontWeight: '900' },
+  contactLine: { color: '#f2cc60', fontSize: 7, fontWeight: '900', marginTop: 1 },
   badgeRow: { position: 'absolute', left: 8, right: 8, top: 8, flexDirection: 'row', justifyContent: 'space-between' },
   badge: { color: '#ffffff', backgroundColor: 'rgba(0,0,0,0.68)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 5, fontSize: 7, fontWeight: '900' },
   badgeRunning: { backgroundColor: 'rgba(35,134,54,0.92)' },
@@ -361,6 +437,7 @@ const styles = StyleSheet.create({
   resultCard: { backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', borderRadius: 12, padding: 9, marginTop: 7 },
   resultTitle: { color: '#f0f6fc', fontSize: 9, fontWeight: '900' },
   stringResult: { color: '#f2cc60', fontSize: 8, lineHeight: 12, fontWeight: '800', marginTop: 4 },
+  contactResult: { color: '#ffb3ad', fontSize: 8, lineHeight: 13, fontWeight: '900', marginTop: 4 },
   resultDetail: { color: '#8b949e', fontSize: 8, lineHeight: 12, marginTop: 3 },
   cycleText: { color: '#79c0ff', fontSize: 8, lineHeight: 12, marginTop: 4 },
   errorText: { color: '#ff7b72', fontSize: 8, lineHeight: 12, marginTop: 4 },
