@@ -10,9 +10,17 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "통기타와 일렉기타 연습 중 상체 자세와 손가락·피크를 휴대폰 안에서 분석하기 위해 카메라를 사용합니다.",
-          "microphonePermission": "크로매틱 튜너와 연주 어택·박자 분석을 휴대폰 안에서 처리하기 위해 마이크를 사용합니다.",
-          "recordAudioAndroid": false
+          "cameraPermission": "통기타와 일렉기타 연습 중 상체 자세와 손가락·피크를 휴대폰 안에서 분석하고 연습 영상을 녹화하기 위해 카메라를 사용합니다.",
+          "microphonePermission": "크로매틱 튜너, 연주 어택·박자 분석과 연습 영상 소리를 휴대폰 안에서 처리하기 위해 마이크를 사용합니다.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "저장된 연습 영상을 확인하기 위해 사진과 동영상 접근 권한을 사용합니다.",
+          "savePhotosPermission": "촬영한 기타 연습 영상을 휴대폰 갤러리에 저장하기 위해 권한을 사용합니다.",
+          "isAccessMediaLocationEnabled": false
         }
       ]
     ],
