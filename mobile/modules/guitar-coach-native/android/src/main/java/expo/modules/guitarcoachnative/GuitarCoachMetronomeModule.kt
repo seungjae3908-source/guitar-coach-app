@@ -2,10 +2,12 @@ package expo.modules.guitarcoachnative
 
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.Locale
@@ -16,7 +18,8 @@ class GuitarCoachMetronomeModule : Module() {
   private var toneGenerator: ToneGenerator? = null
   private var textToSpeech: TextToSpeech? = null
   private var ttsReady = false
-  private var pendingSpeech: String? = null
+  private var ttsInitializing = false
+  private val voiceWaiters = mutableListOf<Promise>()
 
   private var running = false
   private var generation = 0
@@ -37,6 +40,10 @@ class GuitarCoachMetronomeModule : Module() {
       true
     }
 
+    AsyncFunction("prepareVoiceAsync") { promise: Promise ->
+      mainHandler.post { prepareVoiceInternal(promise) }
+    }
+
     AsyncFunction("startAsync") {
       bpm: Int,
       beatsPerBar: Int,
@@ -54,14 +61,35 @@ class GuitarCoachMetronomeModule : Module() {
       }
     }
 
+    AsyncFunction("updateAsync") {
+      bpm: Int,
+      beatsPerBar: Int,
+      subdivision: Int,
+      soundEnabled: Boolean,
+      voiceEnabled: Boolean ->
+      mainHandler.post {
+        updateInternal(
+          bpm = bpm.coerceIn(35, 220),
+          beatsPerBar = beatsPerBar.coerceIn(1, 12),
+          subdivision = subdivision.coerceIn(1, 4),
+          soundEnabled = soundEnabled,
+          voiceEnabled = voiceEnabled
+        )
+      }
+    }
+
     AsyncFunction("stopAsync") {
       mainHandler.post { stopInternal(stopSpeech = true) }
     }
 
-    AsyncFunction("previewVoiceAsync") { subdivision: Int ->
+    AsyncFunction("previewVoiceAsync") { subdivision: Int, promise: Promise ->
       mainHandler.post {
-        val safeSubdivision = subdivision.coerceIn(1, 4)
-        speakToken(tokenForPulse(0, safeSubdivision))
+        if (!ttsReady) {
+          promise.reject("ERR_TTS_NOT_READY", "음성 엔진이 아직 준비되지 않았습니다.", null)
+          return@post
+        }
+        speakPhrase(voicePhraseForBeat(0, subdivision.coerceIn(1, 4)))
+        promise.resolve(null)
       }
     }
 
@@ -73,6 +101,8 @@ class GuitarCoachMetronomeModule : Module() {
         textToSpeech?.shutdown()
         textToSpeech = null
         ttsReady = false
+        ttsInitializing = false
+        rejectVoiceWaiters("ERR_TTS_DESTROYED", "음성 엔진이 종료되었습니다.")
       }
     }
   }
@@ -85,20 +115,51 @@ class GuitarCoachMetronomeModule : Module() {
     voiceEnabled: Boolean
   ) {
     stopInternal(stopSpeech = true)
+    applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled)
 
+    pulseIndex = 0
+    running = true
+    generation += 1
+
+    if (voiceEnabled && !ttsReady) ensureTextToSpeech()
+
+    nextTickAt = SystemClock.uptimeMillis() + 60L
+    scheduleTick(generation, nextTickAt)
+  }
+
+  private fun updateInternal(
+    bpm: Int,
+    beatsPerBar: Int,
+    subdivision: Int,
+    soundEnabled: Boolean,
+    voiceEnabled: Boolean
+  ) {
+    applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled)
+    if (voiceEnabled && !ttsReady) ensureTextToSpeech()
+    if (!running) return
+
+    generation += 1
+    tickRunnable?.let(mainHandler::removeCallbacks)
+    tickRunnable = null
+    toneGenerator?.stopTone()
+    textToSpeech?.stop()
+    pulseIndex = 0
+    nextTickAt = SystemClock.uptimeMillis() + 35L
+    scheduleTick(generation, nextTickAt)
+  }
+
+  private fun applyConfiguration(
+    bpm: Int,
+    beatsPerBar: Int,
+    subdivision: Int,
+    soundEnabled: Boolean,
+    voiceEnabled: Boolean
+  ) {
     currentBpm = bpm
     currentBeatsPerBar = beatsPerBar
     currentSubdivision = subdivision
     currentSoundEnabled = soundEnabled
     currentVoiceEnabled = voiceEnabled
-    pulseIndex = 0
-    running = true
-    generation += 1
-
-    if (voiceEnabled) ensureTextToSpeech()
-
-    nextTickAt = SystemClock.uptimeMillis() + 80L
-    scheduleTick(generation, nextTickAt)
   }
 
   private fun stopInternal(stopSpeech: Boolean) {
@@ -114,15 +175,19 @@ class GuitarCoachMetronomeModule : Module() {
     val runnable = Runnable {
       if (!running || expectedGeneration != generation) return@Runnable
 
-      val totalPulses = currentBeatsPerBar * currentSubdivision
+      val safeSubdivision = currentSubdivision.coerceIn(1, 4)
+      val totalPulses = (currentBeatsPerBar * safeSubdivision).coerceAtLeast(1)
       val accent = pulseIndex == 0
 
       if (currentSoundEnabled) playTone(accent)
-      if (currentVoiceEnabled) speakToken(tokenForPulse(pulseIndex, currentSubdivision))
+      if (currentVoiceEnabled && ttsReady && pulseIndex % safeSubdivision == 0) {
+        val beatIndex = (pulseIndex / safeSubdivision) % currentBeatsPerBar.coerceAtLeast(1)
+        speakPhrase(voicePhraseForBeat(beatIndex, safeSubdivision))
+      }
 
-      pulseIndex = (pulseIndex + 1) % totalPulses.coerceAtLeast(1)
+      pulseIndex = (pulseIndex + 1) % totalPulses
 
-      val intervalMs = 60000.0 / currentBpm.toDouble() / currentSubdivision.toDouble()
+      val intervalMs = 60000.0 / currentBpm.toDouble() / safeSubdivision.toDouble()
       nextTickAt = (nextTickAt + intervalMs).toLong()
       val now = SystemClock.uptimeMillis()
       if (nextTickAt < now - intervalMs.toLong()) {
@@ -137,91 +202,137 @@ class GuitarCoachMetronomeModule : Module() {
   }
 
   private fun playTone(accent: Boolean) {
-    val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_MUSIC, 92).also {
+    val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_MUSIC, 96).also {
       toneGenerator = it
     }
 
     generator.stopTone()
     val tone = if (accent) ToneGenerator.TONE_PROP_BEEP2 else ToneGenerator.TONE_PROP_BEEP
-    generator.startTone(tone, if (accent) 46 else 34)
+    generator.startTone(tone, if (accent) 42 else 30)
   }
 
-  private fun ensureTextToSpeech() {
-    if (textToSpeech != null) return
-
-    val context = appContext.reactContext ?: return
-    textToSpeech = TextToSpeech(context) { status ->
-      ttsReady = status == TextToSpeech.SUCCESS
-      if (!ttsReady) return@TextToSpeech
-
-      val engine = textToSpeech ?: return@TextToSpeech
-      val languageResult = engine.setLanguage(Locale.US)
-      if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-        engine.language = Locale.getDefault()
-      }
-      engine.setSpeechRate(1.65f)
-      engine.setPitch(1.0f)
-
-      pendingSpeech?.let { token ->
-        pendingSpeech = null
-        speakToken(token)
-      }
-    }
-  }
-
-  private fun speakToken(token: String) {
-    if (token.isBlank()) return
-
-    if (!ttsReady) {
-      pendingSpeech = token
-      ensureTextToSpeech()
+  private fun prepareVoiceInternal(promise: Promise) {
+    if (ttsReady) {
+      promise.resolve(voiceReadyPayload())
       return
     }
 
+    voiceWaiters.add(promise)
+    ensureTextToSpeech()
+  }
+
+  private fun ensureTextToSpeech() {
+    if (ttsReady || ttsInitializing) return
+
+    val context = appContext.reactContext?.applicationContext
+    if (context == null) {
+      rejectVoiceWaiters("ERR_TTS_CONTEXT", "Android 음성엔진을 시작할 수 없습니다.")
+      return
+    }
+
+    ttsInitializing = true
+    textToSpeech = TextToSpeech(context) { status ->
+      mainHandler.post {
+        ttsInitializing = false
+        if (status != TextToSpeech.SUCCESS) {
+          textToSpeech?.shutdown()
+          textToSpeech = null
+          ttsReady = false
+          rejectVoiceWaiters("ERR_TTS_INIT", "휴대폰의 사람 음성엔진을 초기화하지 못했습니다.")
+          return@post
+        }
+
+        val engine = textToSpeech
+        if (engine == null) {
+          rejectVoiceWaiters("ERR_TTS_INIT", "휴대폰의 사람 음성엔진을 찾지 못했습니다.")
+          return@post
+        }
+
+        val koreanResult = engine.setLanguage(Locale.KOREA)
+        val languageAvailable = koreanResult != TextToSpeech.LANG_MISSING_DATA &&
+          koreanResult != TextToSpeech.LANG_NOT_SUPPORTED
+
+        if (!languageAvailable) {
+          val englishResult = engine.setLanguage(Locale.US)
+          val englishAvailable = englishResult != TextToSpeech.LANG_MISSING_DATA &&
+            englishResult != TextToSpeech.LANG_NOT_SUPPORTED
+          if (!englishAvailable) {
+            engine.shutdown()
+            textToSpeech = null
+            ttsReady = false
+            rejectVoiceWaiters("ERR_TTS_LANGUAGE", "한국어 또는 영어 사람 음성이 휴대폰에 설치되어 있지 않습니다.")
+            return@post
+          }
+        }
+
+        engine.setSpeechRate(1.55f)
+        engine.setPitch(1.0f)
+        ttsReady = true
+        resolveVoiceWaiters()
+      }
+    }
+  }
+
+  private fun resolveVoiceWaiters() {
+    val payload = voiceReadyPayload()
+    val waiters = voiceWaiters.toList()
+    voiceWaiters.clear()
+    waiters.forEach { it.resolve(payload) }
+  }
+
+  private fun rejectVoiceWaiters(code: String, message: String) {
+    val waiters = voiceWaiters.toList()
+    voiceWaiters.clear()
+    waiters.forEach { it.reject(code, message, null) }
+  }
+
+  private fun voiceReadyPayload(): Map<String, Any> {
+    val language = textToSpeech?.language?.toLanguageTag().orEmpty().ifBlank { "system" }
+    return mapOf(
+      "ready" to true,
+      "language" to language,
+      "message" to "사람 음성 준비 완료"
+    )
+  }
+
+  private fun speakPhrase(phrase: String) {
+    if (!ttsReady || phrase.isBlank()) return
+
+    val params = Bundle().apply {
+      putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+    }
     textToSpeech?.speak(
-      token,
+      phrase,
       TextToSpeech.QUEUE_FLUSH,
-      null,
+      params,
       "guitar-coach-count-${SystemClock.uptimeMillis()}"
     )
   }
 
-  private fun tokenForPulse(index: Int, subdivision: Int): String {
-    val safeSubdivision = subdivision.coerceIn(1, 4)
-    val beatNumber = (index / safeSubdivision) % currentBeatsPerBar.coerceAtLeast(1)
-    val subIndex = index % safeSubdivision
-
-    return when (safeSubdivision) {
-      1 -> NUMBER_WORDS[beatNumber.coerceIn(NUMBER_WORDS.indices)]
-      2 -> if (subIndex == 0) NUMBER_WORDS[beatNumber.coerceIn(NUMBER_WORDS.indices)] else "and"
-      3 -> when (subIndex) {
-        0 -> NUMBER_WORDS[beatNumber.coerceIn(NUMBER_WORDS.indices)]
-        1 -> "trip"
-        else -> "let"
-      }
-      else -> when (subIndex) {
-        0 -> NUMBER_WORDS[beatNumber.coerceIn(NUMBER_WORDS.indices)]
-        1 -> "e"
-        2 -> "and"
-        else -> "a"
-      }
+  private fun voicePhraseForBeat(beatIndex: Int, subdivision: Int): String {
+    val number = KOREAN_COUNT_WORDS[beatIndex.coerceIn(KOREAN_COUNT_WORDS.indices)]
+    return when (subdivision.coerceIn(1, 4)) {
+      1 -> number
+      2 -> "$number 앤"
+      3 -> "$number 트립 렛"
+      else -> "$number 이 앤 어"
     }
   }
 
   companion object {
-    private val NUMBER_WORDS = listOf(
-      "one",
-      "two",
-      "three",
-      "four",
-      "five",
-      "six",
-      "seven",
-      "eight",
-      "nine",
-      "ten",
-      "eleven",
-      "twelve"
+    private val KOREAN_COUNT_WORDS = listOf(
+      "원",
+      "투",
+      "쓰리",
+      "포",
+      "파이브",
+      "식스",
+      "세븐",
+      "에잇",
+      "나인",
+      "텐",
+      "일레븐",
+      "트웰브"
     )
   }
 }
