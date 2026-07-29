@@ -4,13 +4,13 @@ plugins {
 }
 
 group = 'expo.modules.guitarcoachnative'
-version = '0.2.0'
+version = '0.3.0'
 
 android {
   namespace "expo.modules.guitarcoachnative"
   defaultConfig {
-    versionCode 2
-    versionName '0.2.0'
+    versionCode 3
+    versionName '0.3.0'
   }
 }
 
@@ -40,4 +40,10 @@ afterEvaluate {
 dependencies {
   implementation 'com.google.mlkit:pose-detection:18.0.0-beta5'
   implementation 'com.google.mediapipe:tasks-vision:latest.release'
+
+  def cameraxVersion = '1.4.2'
+  implementation "androidx.camera:camera-core:${cameraxVersion}"
+  implementation "androidx.camera:camera-camera2:${cameraxVersion}"
+  implementation "androidx.camera:camera-lifecycle:${cameraxVersion}"
+  implementation "androidx.camera:camera-view:${cameraxVersion}"
 }
