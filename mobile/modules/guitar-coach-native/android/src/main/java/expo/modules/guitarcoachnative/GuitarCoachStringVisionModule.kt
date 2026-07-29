@@ -18,6 +18,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 class GuitarCoachStringVisionModule : Module() {
   private val busy = AtomicBoolean(false)
@@ -26,80 +27,127 @@ class GuitarCoachStringVisionModule : Module() {
     Name("GuitarCoachStringVision")
 
     Constant("androidStringVisionAvailable") { true }
+    Constant("androidAdaptiveStringRegionAvailable") { true }
 
     AsyncFunction("analyzeStringsAsync") { uri: String, promise: Promise ->
-      if (!busy.compareAndSet(false, true)) {
-        promise.reject("ERR_STRING_VISION_BUSY", "이전 기타줄 분석이 아직 끝나지 않았습니다.", null)
-        return@AsyncFunction
-      }
+      startAnalysis(uri, null, promise)
+    }
 
-      Thread {
-        var bitmap: Bitmap? = null
-        try {
-          val decodedBitmap = decodeBitmap(uri)
-          bitmap = decodedBitmap
-          promise.resolve(detectStrings(decodedBitmap))
-        } catch (error: Throwable) {
-          promise.reject("ERR_STRING_VISION", "기타줄을 자동 분석하지 못했습니다.", error)
-        } finally {
-          bitmap?.recycle()
-          busy.set(false)
-        }
-      }.start()
+    AsyncFunction("analyzeStringsInRegionAsync") {
+      uri: String,
+      left: Double,
+      top: Double,
+      right: Double,
+      bottom: Double,
+      focusX: Double,
+      focusY: Double,
+      promise: Promise ->
+      startAnalysis(
+        uri,
+        NormalizedRegion(left, top, right, bottom, focusX, focusY),
+        promise
+      )
     }
   }
+
+  private fun startAnalysis(uri: String, region: NormalizedRegion?, promise: Promise) {
+    if (!busy.compareAndSet(false, true)) {
+      promise.reject("ERR_STRING_VISION_BUSY", "이전 기타줄 분석이 아직 끝나지 않았습니다.", null)
+      return
+    }
+
+    Thread {
+      var bitmap: Bitmap? = null
+      try {
+        val decodedBitmap = decodeBitmap(uri)
+        bitmap = decodedBitmap
+        promise.resolve(detectStrings(decodedBitmap, region))
+      } catch (error: Throwable) {
+        promise.reject("ERR_STRING_VISION", "기타줄을 자동 분석하지 못했습니다.", error)
+      } finally {
+        bitmap?.recycle()
+        busy.set(false)
+      }
+    }.start()
+  }
+
+  private data class NormalizedRegion(
+    val left: Double,
+    val top: Double,
+    val right: Double,
+    val bottom: Double,
+    val focusX: Double,
+    val focusY: Double
+  )
+
+  private data class PixelRegion(
+    val left: Int,
+    val top: Int,
+    val right: Int,
+    val bottom: Int,
+    val focusX: Double,
+    val focusY: Double
+  )
 
   private data class SequenceCandidate(
     val angleDegrees: Int,
     val normalX: Double,
     val normalY: Double,
     val minProjection: Double,
-    val startBin: Int,
-    val gap: Int,
+    val positions: DoubleArray,
     val strengths: DoubleArray,
-    val confidence: Double
+    val confidence: Double,
+    val regularity: Double,
+    val coverage: Double
   )
 
-  private fun detectStrings(bitmap: Bitmap): Map<String, Any> {
+  private fun detectStrings(bitmap: Bitmap, requestedRegion: NormalizedRegion?): Map<String, Any> {
     val width = bitmap.width
     val height = bitmap.height
     val minimumDimension = min(width, height)
     if (minimumDimension < 180) return emptyResult()
 
-    val roiLeft = (width * 0.02).roundToInt()
-    val roiRight = (width * 0.98).roundToInt()
-    val roiTop = (height * 0.12).roundToInt()
-    val roiBottom = (height * 0.88).roundToInt()
-    val sampleStep = max(3, minimumDimension / 220)
+    val region = pixelRegion(requestedRegion, width, height)
+    val roiWidth = region.right - region.left + 1
+    val roiHeight = region.bottom - region.top + 1
+    if (roiWidth < 120 || roiHeight < 90) return emptyResult()
+
+    val analysisDimension = min(roiWidth, roiHeight)
+    val sampleStep = max(2, analysisDimension / 280)
     val offset = max(2, sampleStep / 2)
     var best: SequenceCandidate? = null
 
-    for (angleDegrees in -40..40 step 5) {
+    for (angleDegrees in -45..45 step 3) {
       val radians = Math.toRadians(angleDegrees.toDouble())
       val lineX = cos(radians)
       val lineY = sin(radians)
       val normalX = -lineY
       val normalY = lineX
       val projections = doubleArrayOf(
-        normalX * roiLeft + normalY * roiTop,
-        normalX * roiRight + normalY * roiTop,
-        normalX * roiLeft + normalY * roiBottom,
-        normalX * roiRight + normalY * roiBottom
+        normalX * region.left + normalY * region.top,
+        normalX * region.right + normalY * region.top,
+        normalX * region.left + normalY * region.bottom,
+        normalX * region.right + normalY * region.bottom
       )
       val minProjection = projections.minOrNull() ?: continue
       val maxProjection = projections.maxOrNull() ?: continue
       val profile = DoubleArray(max(8, ceil(maxProjection - minProjection).toInt() + 3))
 
-      var y = roiTop
-      while (y <= roiBottom) {
-        var x = roiLeft
-        while (x <= roiRight) {
+      var y = region.top
+      while (y <= region.bottom) {
+        var x = region.left
+        while (x <= region.right) {
           val x1 = (x + normalX * offset).roundToInt().coerceIn(0, width - 1)
           val y1 = (y + normalY * offset).roundToInt().coerceIn(0, height - 1)
           val x2 = (x - normalX * offset).roundToInt().coerceIn(0, width - 1)
           val y2 = (y - normalY * offset).roundToInt().coerceIn(0, height - 1)
-          val edge = abs(gray(bitmap.getPixel(x1, y1)) - gray(bitmap.getPixel(x2, y2))).toDouble()
-          if (edge >= 5.0) {
+          val first = gray(bitmap.getPixel(x1, y1))
+          val second = gray(bitmap.getPixel(x2, y2))
+          val center = gray(bitmap.getPixel(x, y))
+          val twoSideEdge = abs(first - second).toDouble()
+          val centerContrast = abs(center - (first + second) / 2.0)
+          val edge = twoSideEdge + centerContrast * 0.62
+          if (edge >= 4.2) {
             val projection = normalX * x + normalY * y
             val bin = (projection - minProjection).roundToInt()
             if (bin in profile.indices) profile[bin] += edge
@@ -111,68 +159,116 @@ class GuitarCoachStringVisionModule : Module() {
 
       val smooth = smooth(profile, 2)
       val profileMean = smooth.average().coerceAtLeast(0.001)
-      val gapMin = max(4, minimumDimension / 210)
-      val gapMax = min(52, maximumUsefulGap(minimumDimension, smooth.size))
+      val gapMin = max(3, analysisDimension / 260)
+      val gapMax = min(64, maximumUsefulGap(analysisDimension, smooth.size))
       if (gapMax <= gapMin) continue
 
+      val focusProjection = normalX * region.focusX + normalY * region.focusY
+      val focusBin = focusProjection - minProjection
       var bestScore = 0.0
-      var bestStart = 0
-      var bestGap = 0
+      var bestPositions = DoubleArray(6)
       var bestStrengths = DoubleArray(6)
+      var bestRegularity = 0.0
+      var bestCoverage = 0.0
+      var bestFocusWeight = 0.0
+
       for (gap in gapMin..gapMax) {
         val lastStart = smooth.size - gap * 5 - 3
         if (lastStart <= 2) continue
+        val peakRadius = max(2, gap / 3)
         for (start in 2..lastStart) {
-          val strengths = DoubleArray(6) { index -> localMaximum(smooth, start + index * gap, 2) }
+          val positions = DoubleArray(6)
+          val strengths = DoubleArray(6)
+          for (index in 0 until 6) {
+            val center = start + index * gap
+            positions[index] = localPeakPosition(smooth, center, peakRadius)
+            strengths[index] = interpolatedValue(smooth, positions[index])
+          }
+
           val averageStrength = strengths.average()
-          if (averageStrength <= profileMean * 1.15) continue
+          if (averageStrength <= profileMean * 1.10) continue
           val minimumStrength = strengths.minOrNull() ?: 0.0
-          val regularity = (minimumStrength / averageStrength).coerceIn(0.0, 1.0)
-          val score = strengths.sum() * (0.62 + regularity * 0.38)
+          val minimumRegularity = (minimumStrength / averageStrength).coerceIn(0.0, 1.0)
+          val spacings = DoubleArray(5) { positions[it + 1] - positions[it] }
+          val spacingMean = spacings.average().coerceAtLeast(0.001)
+          val spacingDeviation = standardDeviation(spacings)
+          val spacingRegularity = (1.0 - spacingDeviation / max(1.0, spacingMean * 0.34)).coerceIn(0.0, 1.0)
+          val regularity = (spacingRegularity * 0.68 + minimumRegularity * 0.32).coerceIn(0.0, 1.0)
+          val coverage = strengths.count { it >= profileMean * 1.06 } / 6.0
+          if (coverage < 0.66 || regularity < 0.34) continue
+
+          val bandStart = positions.first() - spacingMean * 0.65
+          val bandEnd = positions.last() + spacingMean * 0.65
+          val focusDistance = when {
+            focusBin < bandStart -> bandStart - focusBin
+            focusBin > bandEnd -> focusBin - bandEnd
+            else -> 0.0
+          }
+          val focusWeight = 1.0 / (1.0 + focusDistance / max(1.0, spacingMean) * 0.42)
+          val score = strengths.sum() *
+            (0.46 + regularity * 0.34 + minimumRegularity * 0.20) *
+            (0.76 + coverage * 0.24) *
+            (0.72 + focusWeight * 0.28)
+
           if (score > bestScore) {
             bestScore = score
-            bestStart = start
-            bestGap = gap
+            bestPositions = positions
             bestStrengths = strengths
+            bestRegularity = regularity
+            bestCoverage = coverage
+            bestFocusWeight = focusWeight
           }
         }
       }
 
-      if (bestGap <= 0) continue
+      if (bestScore <= 0.0) continue
       val contrast = bestScore / (profileMean * 6.0 + 1.0)
-      val confidence = ((contrast - 1.15) / 5.5).coerceIn(0.0, 1.0)
+      val contrastConfidence = ((contrast - 1.02) / 5.0).coerceIn(0.0, 1.0)
+      val confidence = (
+        contrastConfidence * 0.48 +
+          bestRegularity * 0.24 +
+          bestCoverage * 0.18 +
+          bestFocusWeight * 0.10
+        ).coerceIn(0.0, 1.0)
       val candidate = SequenceCandidate(
         angleDegrees,
         normalX,
         normalY,
         minProjection,
-        bestStart,
-        bestGap,
+        bestPositions,
         bestStrengths,
-        confidence
+        confidence,
+        bestRegularity,
+        bestCoverage
       )
       val currentBest = best
       if (currentBest == null || candidate.confidence > currentBest.confidence) best = candidate
     }
 
     val candidate = best ?: return emptyResult()
-    if (candidate.confidence < 0.36) return emptyResult(candidate.confidence, candidate.angleDegrees.toDouble())
+    if (candidate.confidence < 0.40 || candidate.coverage < 0.66) {
+      return emptyResult(candidate.confidence, candidate.angleDegrees.toDouble(), region, width, height)
+    }
 
     val maximumStrength = (candidate.strengths.maxOrNull() ?: 1.0).coerceAtLeast(1.0)
     val normalizedStrengths = candidate.strengths.map { (it / maximumStrength).coerceIn(0.0, 1.0) }
     val firstSide = normalizedStrengths.take(2).average()
     val lastSide = normalizedStrengths.takeLast(2).average()
     val directionDifference = abs(firstSide - lastSide) / max(0.001, max(firstSide, lastSide))
-    val numberingConfidence = ((directionDifference - 0.10) / 0.38).coerceIn(0.0, 1.0) * candidate.confidence
+    val numberingConfidence = (
+      ((directionDifference - 0.11) / 0.36).coerceIn(0.0, 1.0) *
+        candidate.confidence *
+        candidate.regularity
+      ).coerceIn(0.0, 1.0)
     val stringOrder = when {
-      numberingConfidence < 0.62 -> "unknown"
+      numberingConfidence < 0.64 -> "unknown"
       firstSide > lastSide -> "low-to-high"
       else -> "high-to-low"
     }
 
     val lines = ArrayList<Map<String, Any>>()
     for (index in 0 until 6) {
-      val projection = candidate.minProjection + candidate.startBin + candidate.gap * index
+      val projection = candidate.minProjection + candidate.positions[index]
       val endpoints = lineEndpoints(
         candidate.normalX,
         candidate.normalY,
@@ -201,8 +297,8 @@ class GuitarCoachStringVisionModule : Module() {
       )
     }
 
-    val visibleCount = normalizedStrengths.count { it >= 0.34 }
-    val detected = lines.size == 6 && visibleCount >= 4 && candidate.confidence >= 0.36
+    val visibleCount = normalizedStrengths.count { it >= 0.28 }
+    val detected = lines.size == 6 && visibleCount >= 4 && candidate.confidence >= 0.40
     return mapOf(
       "detected" to detected,
       "confidence" to candidate.confidence,
@@ -213,12 +309,48 @@ class GuitarCoachStringVisionModule : Module() {
       "nearestVisualIndex" to 0,
       "nearestStringNumber" to 0,
       "nearestDistanceRatio" to 1.0,
+      "roiLeft" to (region.left / width.toDouble()).coerceIn(0.0, 1.0),
+      "roiTop" to (region.top / height.toDouble()).coerceIn(0.0, 1.0),
+      "roiRight" to (region.right / width.toDouble()).coerceIn(0.0, 1.0),
+      "roiBottom" to (region.bottom / height.toDouble()).coerceIn(0.0, 1.0),
+      "focusX" to (region.focusX / width.toDouble()).coerceIn(0.0, 1.0),
+      "focusY" to (region.focusY / height.toDouble()).coerceIn(0.0, 1.0),
       "lines" to lines
     )
   }
 
+  private fun pixelRegion(requested: NormalizedRegion?, width: Int, height: Int): PixelRegion {
+    val fallback = requested ?: NormalizedRegion(0.02, 0.12, 0.98, 0.88, 0.5, 0.5)
+    var left = (fallback.left.coerceIn(0.0, 0.96) * width).roundToInt()
+    var right = (fallback.right.coerceIn(0.04, 1.0) * width).roundToInt()
+    var top = (fallback.top.coerceIn(0.0, 0.96) * height).roundToInt()
+    var bottom = (fallback.bottom.coerceIn(0.04, 1.0) * height).roundToInt()
+    if (right - left < width * 0.45) {
+      val center = (left + right) / 2
+      left = (center - width * 0.24).roundToInt()
+      right = (center + width * 0.24).roundToInt()
+    }
+    if (bottom - top < height * 0.30) {
+      val center = (top + bottom) / 2
+      top = (center - height * 0.16).roundToInt()
+      bottom = (center + height * 0.16).roundToInt()
+    }
+    left = left.coerceIn(0, width - 2)
+    right = right.coerceIn(left + 1, width - 1)
+    top = top.coerceIn(0, height - 2)
+    bottom = bottom.coerceIn(top + 1, height - 1)
+    return PixelRegion(
+      left,
+      top,
+      right,
+      bottom,
+      (fallback.focusX.coerceIn(0.0, 1.0) * width).coerceIn(left.toDouble(), right.toDouble()),
+      (fallback.focusY.coerceIn(0.0, 1.0) * height).coerceIn(top.toDouble(), bottom.toDouble())
+    )
+  }
+
   private fun maximumUsefulGap(minimumDimension: Int, profileSize: Int): Int {
-    return min(profileSize / 7, max(8, minimumDimension / 16))
+    return min(profileSize / 7, max(8, minimumDimension / 13))
   }
 
   private fun smooth(values: DoubleArray, radius: Int): DoubleArray {
@@ -237,13 +369,40 @@ class GuitarCoachStringVisionModule : Module() {
     }
   }
 
-  private fun localMaximum(values: DoubleArray, center: Int, radius: Int): Double {
+  private fun localPeakPosition(values: DoubleArray, center: Int, radius: Int): Double {
+    var weightedPosition = 0.0
+    var weightTotal = 0.0
     var maximum = 0.0
     for (offset in -radius..radius) {
       val index = center + offset
-      if (index in values.indices) maximum = max(maximum, values[index])
+      if (index !in values.indices) continue
+      maximum = max(maximum, values[index])
     }
-    return maximum
+    val threshold = maximum * 0.72
+    for (offset in -radius..radius) {
+      val index = center + offset
+      if (index !in values.indices) continue
+      val value = values[index]
+      if (value >= threshold) {
+        weightedPosition += index * value
+        weightTotal += value
+      }
+    }
+    return if (weightTotal > 0.0) weightedPosition / weightTotal else center.toDouble()
+  }
+
+  private fun interpolatedValue(values: DoubleArray, position: Double): Double {
+    if (values.isEmpty()) return 0.0
+    val lower = position.toInt().coerceIn(0, values.lastIndex)
+    val upper = min(values.lastIndex, lower + 1)
+    val fraction = (position - lower).coerceIn(0.0, 1.0)
+    return values[lower] * (1.0 - fraction) + values[upper] * fraction
+  }
+
+  private fun standardDeviation(values: DoubleArray): Double {
+    if (values.size < 2) return 0.0
+    val mean = values.average()
+    return sqrt(values.map { (it - mean) * (it - mean) }.average())
   }
 
   private fun lineEndpoints(
@@ -294,7 +453,13 @@ class GuitarCoachStringVisionModule : Module() {
     return (Color.red(color) * 30 + Color.green(color) * 59 + Color.blue(color) * 11) / 100
   }
 
-  private fun emptyResult(confidence: Double = 0.0, angleDegrees: Double = 0.0): Map<String, Any> {
+  private fun emptyResult(
+    confidence: Double = 0.0,
+    angleDegrees: Double = 0.0,
+    region: PixelRegion? = null,
+    width: Int = 1,
+    height: Int = 1
+  ): Map<String, Any> {
     return mapOf(
       "detected" to false,
       "confidence" to confidence,
@@ -305,6 +470,12 @@ class GuitarCoachStringVisionModule : Module() {
       "nearestVisualIndex" to 0,
       "nearestStringNumber" to 0,
       "nearestDistanceRatio" to 1.0,
+      "roiLeft" to ((region?.left ?: 0) / width.toDouble()).coerceIn(0.0, 1.0),
+      "roiTop" to ((region?.top ?: 0) / height.toDouble()).coerceIn(0.0, 1.0),
+      "roiRight" to ((region?.right ?: width) / width.toDouble()).coerceIn(0.0, 1.0),
+      "roiBottom" to ((region?.bottom ?: height) / height.toDouble()).coerceIn(0.0, 1.0),
+      "focusX" to ((region?.focusX ?: width * 0.5) / width.toDouble()).coerceIn(0.0, 1.0),
+      "focusY" to ((region?.focusY ?: height * 0.5) / height.toDouble()).coerceIn(0.0, 1.0),
       "lines" to emptyList<Map<String, Any>>()
     )
   }
