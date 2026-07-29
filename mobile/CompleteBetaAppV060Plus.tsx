@@ -15,6 +15,7 @@ import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import SongPracticePanel from './components/SongPracticePanel';
 import TunerPanel from './components/TunerPanel';
+import VoiceCoachController from './components/VoiceCoachController';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
 type GlobalTool = 'app' | 'session' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
@@ -41,17 +42,29 @@ function toolTitle(tool: GlobalTool) {
 
 export default function CompleteBetaAppV060Plus() {
   const [tool, setTool] = useState<GlobalTool>('app');
+  const [voiceCoachEnabled, setVoiceCoachEnabled] = useState(true);
   const { mode, loading } = useGuitarModePreference();
 
   const needsMode = tool === 'session' || tool === 'audio' || tool === 'song' || tool === 'calibration';
 
   return (
     <SafeAreaView style={styles.root}>
+      <VoiceCoachController enabled={voiceCoachEnabled} />
       <View style={styles.toolBar}>
         <View style={styles.toolTextWrap}>
           <Text style={styles.toolEyebrow}>0.6.0 COMPLETE BETA · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
           <Text style={styles.toolTitle}>{toolTitle(tool)}</Text>
         </View>
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: voiceCoachEnabled }}
+          onPress={() => setVoiceCoachEnabled((value) => !value)}
+          style={[styles.voiceButton, voiceCoachEnabled && styles.voiceButtonActive]}
+        >
+          <Text style={[styles.voiceButtonText, voiceCoachEnabled && styles.voiceButtonTextActive]}>
+            음성 {voiceCoachEnabled ? '켜짐' : '꺼짐'}
+          </Text>
+        </Pressable>
       </View>
 
       <ScrollView
@@ -121,9 +134,13 @@ export default function CompleteBetaAppV060Plus() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0d1117' },
   toolBar: { flexDirection: 'row', alignItems: 'center', minHeight: 51, paddingHorizontal: 13, paddingVertical: 7, backgroundColor: '#161b22', borderBottomWidth: 1, borderBottomColor: '#30363d' },
-  toolTextWrap: { flex: 1 },
+  toolTextWrap: { flex: 1, paddingRight: 7 },
   toolEyebrow: { color: '#7ee787', fontSize: 7, fontWeight: '900', letterSpacing: 0.7 },
   toolTitle: { color: '#f0f6fc', fontSize: 13, fontWeight: '900', marginTop: 3 },
+  voiceButton: { minWidth: 67, height: 34, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
+  voiceButtonActive: { backgroundColor: '#1f6feb', borderColor: '#58a6ff' },
+  voiceButtonText: { color: '#8b949e', fontSize: 7, fontWeight: '900' },
+  voiceButtonTextActive: { color: '#ffffff' },
   toolScroll: { maxHeight: 48, backgroundColor: '#0d1117', borderBottomWidth: 1, borderBottomColor: '#30363d' },
   toolRow: { paddingHorizontal: 9, paddingVertical: 6, gap: 6 },
   toolButton: { minWidth: 66, minHeight: 34, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11 },
