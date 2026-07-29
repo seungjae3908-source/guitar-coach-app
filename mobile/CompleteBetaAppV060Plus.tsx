@@ -10,22 +10,25 @@ import {
 
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import CameraCalibrationWizard from './components/CameraCalibrationWizard';
+import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import TunerPanel from './components/TunerPanel';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
-type GlobalTool = 'app' | 'session' | 'calibration' | 'tuner';
+type GlobalTool = 'app' | 'session' | 'calibration' | 'records' | 'tuner';
 
 const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'app', label: '홈' },
   { id: 'session', label: '집중연습' },
   { id: 'calibration', label: '촬영보정' },
+  { id: 'records', label: '상세기록' },
   { id: 'tuner', label: '튜너' },
 ];
 
 function toolTitle(tool: GlobalTool) {
   if (tool === 'session') return 'AI 집중 연습과 자동 기록';
   if (tool === 'calibration') return '손·줄·브리지 촬영 보정';
+  if (tool === 'records') return '세션별 점수·박자·반복 문제 비교';
   if (tool === 'tuner') return '실시간 기타 튜너';
   return '통기타 · 일렉기타 AI 코치';
 }
@@ -92,9 +95,11 @@ export default function CompleteBetaAppV060Plus() {
             </View>
           </ScrollView>
         ) : tool === 'session' && mode ? (
-          <PracticeSessionRunnerV2 mode={mode} onClose={() => setTool('app')} />
+          <PracticeSessionRunnerV2 mode={mode} onClose={() => setTool('records')} />
         ) : tool === 'calibration' && mode ? (
           <CameraCalibrationWizard mode={mode} onSaved={() => setTool('session')} onClose={() => setTool('app')} />
+        ) : tool === 'records' ? (
+          <PracticeRecordsPanel initialMode={mode} />
         ) : (
           <CompleteBetaAppV060 />
         )}
