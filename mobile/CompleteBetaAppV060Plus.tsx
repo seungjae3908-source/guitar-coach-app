@@ -10,7 +10,7 @@ import {
 
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import CameraCalibrationWizard from './components/CameraCalibrationWizard';
-import PracticeSessionRunner from './components/PracticeSessionRunner';
+import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import TunerPanel from './components/TunerPanel';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
@@ -92,7 +92,7 @@ export default function CompleteBetaAppV060Plus() {
             </View>
           </ScrollView>
         ) : tool === 'session' && mode ? (
-          <PracticeSessionRunner mode={mode} onClose={() => setTool('app')} />
+          <PracticeSessionRunnerV2 mode={mode} onClose={() => setTool('app')} />
         ) : tool === 'calibration' && mode ? (
           <CameraCalibrationWizard mode={mode} onSaved={() => setTool('session')} onClose={() => setTool('app')} />
         ) : (
