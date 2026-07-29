@@ -134,8 +134,7 @@ function contactPoint(result: HandAnalysisResult) {
   if (result.pick.detected && result.pick.confidence >= 0.45) {
     return { x: result.pick.centerX, y: result.pick.centerY };
   }
-  const tipIndexes = [4, 8, 12, 16];
-  const tips = tipIndexes.map((index) => result.landmarks[index]).filter(Boolean);
+  const tips = [4, 8, 12, 16].map((index) => result.landmarks[index]).filter(Boolean);
   if (!tips.length) return null;
   return {
     x: tips.reduce((sum, point) => sum + point.x, 0) / tips.length,
@@ -147,10 +146,11 @@ function fuseNearestString(tracking: GuitarStringTrackingResult, hand: HandAnaly
   if (!tracking.detected || tracking.lines.length < 4 || !hand.hasHand) return tracking;
   const point = contactPoint(hand);
   if (!point) return tracking;
-  const candidates = tracking.lines.map((line) => ({ line, distance: pointToLineDistance(point, line) })).sort((a, b) => a.distance - b.distance);
+  const candidates = tracking.lines
+    .map((line) => ({ line, distance: pointToLineDistance(point, line) }))
+    .sort((a, b) => a.distance - b.distance);
   const nearest = candidates[0];
-  const spacing = averageLineSpacing(tracking.lines);
-  const distanceRatio = nearest ? nearest.distance / Math.max(0.004, spacing) : 1;
+  const distanceRatio = nearest ? nearest.distance / Math.max(0.004, averageLineSpacing(tracking.lines)) : 1;
   const numberTrusted = Boolean(
     nearest
     && nearest.line.stringNumber > 0
@@ -176,10 +176,6 @@ function publish(result: HandAnalysisResult) {
   return result;
 }
 
-export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
-  return publish(await analyzeHandRawAsync(uri, pickColor));
-}
-
 export async function analyzeHandWithStringsAsync(uri: string, pickColor: PickColor) {
   let tracking: GuitarStringTrackingResult | null = null;
   if (StringVisionModule?.androidStringVisionAvailable) {
@@ -192,4 +188,8 @@ export async function analyzeHandWithStringsAsync(uri: string, pickColor: PickCo
   const hand = await analyzeHandRawAsync(uri, pickColor);
   const result = tracking ? { ...hand, stringTracking: fuseNearestString(tracking, hand) } : hand;
   return publish(result);
+}
+
+export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
+  return analyzeHandWithStringsAsync(uri, pickColor);
 }
