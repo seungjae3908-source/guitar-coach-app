@@ -7,6 +7,7 @@ import {
   LiveCoachFeedback,
   subscribeLiveCoachFeedback,
 } from '../services/live-coach-feedback';
+import SoundConsistencyPanel from './SoundConsistencyPanel';
 
 function statusLabel(feedback: LiveCoachFeedback | null, running: boolean) {
   if (!running) return '시작 전';
@@ -86,67 +87,70 @@ export default function LiveTeacherPanel({
         : styles.unavailableCard;
 
   return (
-    <View style={[styles.card, cardStyle]}>
-      <View style={styles.topRow}>
-        <View style={styles.titleWrap}>
-          <Text style={styles.eyebrow}>REAL-TIME AI TEACHER</Text>
-          <Text style={styles.title}>{running ? visibleFeedback?.title : preset.goal}</Text>
-        </View>
-        <View style={styles.badgeWrap}>
-          <Text style={styles.badge}>{statusLabel(visibleFeedback, running)}</Text>
-          <Text style={styles.voiceBadge}>음성 {voiceEnabled ? '켜짐' : '꺼짐'}</Text>
-        </View>
-      </View>
-
-      {running && visibleFeedback ? (
-        <>
-          <View style={styles.instructionBox}>
-            <Text style={styles.instructionLabel}>선생님 지시</Text>
-            <Text style={styles.instruction}>{visibleFeedback.instruction}</Text>
+    <>
+      <View style={[styles.card, cardStyle]}>
+        <View style={styles.topRow}>
+          <View style={styles.titleWrap}>
+            <Text style={styles.eyebrow}>REAL-TIME AI TEACHER</Text>
+            <Text style={styles.title}>{running ? visibleFeedback?.title : preset.goal}</Text>
           </View>
-          <Text style={styles.evidence}>판정 근거 · {visibleFeedback.evidence}</Text>
-          <Text style={styles.nextGoal}>다음 3회 목표 · {visibleFeedback.nextGoal}</Text>
-
-          <View style={styles.holdRow}>
-            {[0, 1, 2].map((index) => (
-              <View key={index} style={[styles.holdDot, index < stableCount && styles.holdDotActive]} />
-            ))}
-            <Text style={styles.holdText}>{stableCount >= 3 ? '교정 유지 성공' : `좋은 동작 ${stableCount}/3`}</Text>
-            <Text style={styles.confidence}>{visibleFeedback.confidencePercent}% 신뢰</Text>
+          <View style={styles.badgeWrap}>
+            <Text style={styles.badge}>{statusLabel(visibleFeedback, running)}</Text>
+            <Text style={styles.voiceBadge}>음성 {voiceEnabled ? '켜짐' : '꺼짐'}</Text>
           </View>
+        </View>
 
-          {visibleFeedback.measurements.length ? (
-            <View style={styles.measurementRow}>
-              {visibleFeedback.measurements.slice(0, 4).map((item) => (
-                <View key={`${item.label}-${item.value}`} style={styles.measurementChip}>
-                  <Text style={styles.measurementLabel}>{item.label}</Text>
-                  <Text style={styles.measurementValue}>{item.value}</Text>
-                </View>
+        {running && visibleFeedback ? (
+          <>
+            <View style={styles.instructionBox}>
+              <Text style={styles.instructionLabel}>선생님 지시</Text>
+              <Text style={styles.instruction}>{visibleFeedback.instruction}</Text>
+            </View>
+            <Text style={styles.evidence}>판정 근거 · {visibleFeedback.evidence}</Text>
+            <Text style={styles.nextGoal}>다음 3회 목표 · {visibleFeedback.nextGoal}</Text>
+
+            <View style={styles.holdRow}>
+              {[0, 1, 2].map((index) => (
+                <View key={index} style={[styles.holdDot, index < stableCount && styles.holdDotActive]} />
+              ))}
+              <Text style={styles.holdText}>{stableCount >= 3 ? '교정 유지 성공' : `좋은 동작 ${stableCount}/3`}</Text>
+              <Text style={styles.confidence}>{visibleFeedback.confidencePercent}% 신뢰</Text>
+            </View>
+
+            {visibleFeedback.measurements.length ? (
+              <View style={styles.measurementRow}>
+                {visibleFeedback.measurements.slice(0, 4).map((item) => (
+                  <View key={`${item.label}-${item.value}`} style={styles.measurementChip}>
+                    <Text style={styles.measurementLabel}>{item.label}</Text>
+                    <Text style={styles.measurementValue}>{item.value}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Text style={styles.readyText}>시작하면 카메라·마이크에서 실제로 확인된 문제 한 가지를 크게 지적하고, 고친 동작을 3회 연속 확인합니다.</Text>
+            <View style={styles.checkpointBox}>
+              <Text style={styles.checkpointTitle}>{preset.pattern ? `패턴 · ${preset.pattern}` : '이번 루틴 체크포인트'}</Text>
+              {preset.checkpoints.slice(0, 4).map((item, index) => (
+                <Text key={item} style={styles.checkpointText}>{index + 1}. {item}</Text>
               ))}
             </View>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <Text style={styles.readyText}>시작하면 카메라·마이크에서 실제로 확인된 문제 한 가지를 크게 지적하고, 고친 동작을 3회 연속 확인합니다.</Text>
-          <View style={styles.checkpointBox}>
-            <Text style={styles.checkpointTitle}>{preset.pattern ? `패턴 · ${preset.pattern}` : '이번 루틴 체크포인트'}</Text>
-            {preset.checkpoints.slice(0, 4).map((item, index) => (
-              <Text key={item} style={styles.checkpointText}>{index + 1}. {item}</Text>
+          </>
+        )}
+
+        {running && recent.length > 1 ? (
+          <View style={styles.recentBox}>
+            <Text style={styles.recentTitle}>방금 받은 코칭</Text>
+            {recent.slice(1, 4).map((item) => (
+              <Text key={`${item.id}-${item.capturedAt}`} numberOfLines={1} style={styles.recentText}>• {item.instruction}</Text>
             ))}
           </View>
-        </>
-      )}
-
-      {running && recent.length > 1 ? (
-        <View style={styles.recentBox}>
-          <Text style={styles.recentTitle}>방금 받은 코칭</Text>
-          {recent.slice(1, 4).map((item) => (
-            <Text key={`${item.id}-${item.capturedAt}`} numberOfLines={1} style={styles.recentText}>• {item.instruction}</Text>
-          ))}
-        </View>
-      ) : null}
-    </View>
+        ) : null}
+      </View>
+      <SoundConsistencyPanel running={running} />
+    </>
   );
 }
 
