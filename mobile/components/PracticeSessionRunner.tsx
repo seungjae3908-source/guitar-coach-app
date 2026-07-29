@@ -20,6 +20,7 @@ import {
   stopNativeAudioAnalysisAsync,
 } from '../modules/guitar-coach-audio';
 import {
+  getAdvancedMetronomeTimingStateAsync,
   isAdvancedMetronomeAvailable,
   startAdvancedMetronomeAsync,
   stopAdvancedMetronomeAsync,
@@ -55,6 +56,7 @@ const EMPTY_SNAPSHOT: LiveSessionSnapshot = {
   sampleCounts: { pose: 0, hand: 0, audio: 0, validScore: 0 },
   lastStringNumber: null,
   timingOffsetMs: null,
+  timingJitterMs: null,
 };
 
 function pulsesForPreset(preset: PracticePreset): 1 | 2 | 3 | 4 {
@@ -80,6 +82,12 @@ function formatElapsed(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
+function timingLabel(offset: number | null) {
+  if (offset == null) return '-';
+  if (Math.abs(offset) <= 8) return '정박';
+  return offset < 0 ? `${Math.abs(offset)}ms 빠름` : `${offset}ms 늦음`;
 }
 
 function sessionToAttempt(session: PracticeSessionRecord): PracticeAttempt | null {
@@ -126,6 +134,7 @@ export default function PracticeSessionRunner({
   const accumulatorRef = useRef<LivePracticeSessionAccumulator | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const audioPollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metronomePollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSnapshotAtRef = useRef(0);
   const actionBusyRef = useRef(false);
 
@@ -166,6 +175,26 @@ export default function PracticeSessionRunner({
   }, [running]);
 
   useEffect(() => {
+    if (!running) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        await getAdvancedMetronomeTimingStateAsync();
+      } catch (caught) {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : '메트로놈 시각을 읽지 못했습니다.');
+      } finally {
+        if (!cancelled) metronomePollingRef.current = setTimeout(poll, 70);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (metronomePollingRef.current) clearTimeout(metronomePollingRef.current);
+      metronomePollingRef.current = null;
+    };
+  }, [running]);
+
+  useEffect(() => {
     if (!running || !microphoneEnabled) return;
     let cancelled = false;
     const poll = async () => {
@@ -174,7 +203,7 @@ export default function PracticeSessionRunner({
       } catch (caught) {
         if (!cancelled) setError(caught instanceof Error ? caught.message : '마이크 분석값을 읽지 못했습니다.');
       } finally {
-        if (!cancelled) audioPollingRef.current = setTimeout(poll, 120);
+        if (!cancelled) audioPollingRef.current = setTimeout(poll, 90);
       }
     };
     void poll();
@@ -186,7 +215,7 @@ export default function PracticeSessionRunner({
   }, [microphoneEnabled, running]);
 
   useEffect(() => {
-    if (!running || !accumulatorRef.current) return;
+    if (!running || !accumulatorRef.current || !selectedPreset) return;
     accumulatorRef.current.updateBpm(bpm);
     void updateAdvancedMetronomeAsync(
       bpm,
@@ -200,6 +229,7 @@ export default function PracticeSessionRunner({
 
   useEffect(() => () => {
     if (audioPollingRef.current) clearTimeout(audioPollingRef.current);
+    if (metronomePollingRef.current) clearTimeout(metronomePollingRef.current);
     void stopAdvancedMetronomeAsync();
     void stopNativeAudioAnalysisAsync();
   }, []);
@@ -307,6 +337,9 @@ export default function PracticeSessionRunner({
         .map(sessionToAttempt)
         .filter((attempt): attempt is PracticeAttempt => Boolean(attempt));
       const nextDecision = decideNextPracticeStep(selectedPreset, [...recentAttempts, currentAttempt]);
+      const timingNote = finalSnapshot.timingOffsetMs == null
+        ? ''
+        : ` · 박오차 ${timingLabel(finalSnapshot.timingOffsetMs)} · 흔들림 ${finalSnapshot.timingJitterMs ?? 0}ms`;
       const record: PracticeSessionRecord = {
         id: `session-${endedAt.getTime()}`,
         guitarMode: mode,
@@ -329,9 +362,7 @@ export default function PracticeSessionRunner({
         cameraMode: selectedPreset.cameraFocus,
         microphoneUsed: microphoneEnabled,
         metronomeUsed: true,
-        notes: tensionReported
-          ? `긴장 보고 · ${nextDecision.reason}`
-          : nextDecision.reason,
+        notes: `${tensionReported ? '긴장 보고 · ' : ''}${nextDecision.reason}${timingNote}`,
       };
       await savePracticeSession(record);
       setSnapshot(finalSnapshot);
@@ -398,7 +429,7 @@ export default function PracticeSessionRunner({
         <View style={styles.switchWrap}>
           <View style={styles.switchTextWrap}>
             <Text style={styles.switchTitle}>마이크 박자 분석</Text>
-            <Text style={styles.switchDetail}>탄현 어택 간격을 메트로놈과 비교</Text>
+            <Text style={styles.switchDetail}>실제 클릭 시각과 탄현 어택을 ms로 비교</Text>
           </View>
           <Switch disabled={running} value={microphoneEnabled} onValueChange={setMicrophoneEnabled} />
         </View>
@@ -414,22 +445,16 @@ export default function PracticeSessionRunner({
       <View style={styles.metricRow}>
         <Metric label="평균" value={snapshot.averageScore == null ? '-' : `${snapshot.averageScore}`} />
         <Metric label="신뢰도" value={`${snapshot.confidencePercent}%`} />
-        <Metric label="안정" value={`${snapshot.stableSeconds}초`} />
-        <Metric label="표본" value={`${snapshot.sampleCounts.validScore}`} />
+        <Metric label="박 오차" value={timingLabel(snapshot.timingOffsetMs)} />
+        <Metric label="흔들림" value={snapshot.timingJitterMs == null ? '-' : `${snapshot.timingJitterMs}ms`} />
         <Metric label="가까운 줄" value={snapshot.lastStringNumber ? `${snapshot.lastStringNumber}번` : '-'} />
       </View>
 
       <View style={styles.actionRow}>
-        <Pressable
-          onPress={() => setManualMistakes((value) => value + 1)}
-          style={styles.mistakeButton}
-        >
+        <Pressable onPress={() => setManualMistakes((value) => value + 1)} style={styles.mistakeButton}>
           <Text style={styles.mistakeText}>실수 +1 · {manualMistakes}</Text>
         </Pressable>
-        <Pressable
-          onPress={() => running ? void stopAndSave() : void start()}
-          style={[styles.startButton, running && styles.stopButton]}
-        >
+        <Pressable onPress={() => running ? void stopAndSave() : void start()} style={[styles.startButton, running && styles.stopButton]}>
           <Text style={styles.startText}>{saving ? '저장 중…' : running ? '종료·자동 저장' : `${bpm} BPM 시작`}</Text>
         </Pressable>
       </View>
@@ -498,8 +523,8 @@ const styles = StyleSheet.create({
   switchTitle: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
   switchDetail: { color: '#6e7681', fontSize: 7, lineHeight: 11, marginTop: 2 },
   metricRow: { flexDirection: 'row', gap: 4, padding: 7, backgroundColor: '#0d1117' },
-  metricCard: { flex: 1, backgroundColor: '#161b22', borderRadius: 9, paddingVertical: 6, alignItems: 'center' },
-  metricValue: { color: '#f0f6fc', fontSize: 10, fontWeight: '900' },
+  metricCard: { flex: 1, minWidth: 55, backgroundColor: '#161b22', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 2, alignItems: 'center' },
+  metricValue: { color: '#f0f6fc', fontSize: 8, fontWeight: '900', textAlign: 'center' },
   metricLabel: { color: '#6e7681', fontSize: 6, marginTop: 2 },
   actionRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 8, paddingBottom: 7 },
   mistakeButton: { flex: 0.8, minHeight: 39, borderRadius: 10, backgroundColor: '#21262d', borderWidth: 1, borderColor: '#30363d', alignItems: 'center', justifyContent: 'center' },
