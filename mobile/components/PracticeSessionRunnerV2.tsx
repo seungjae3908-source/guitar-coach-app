@@ -29,10 +29,15 @@ import {
   subscribeLiveAnalysis,
 } from '../services/analysis-stream';
 import { loadBestCameraCalibration } from '../services/camera-calibration-store';
+import { clearLiveCoachFeedback } from '../services/live-coach-feedback';
 import {
   LivePracticeSessionAccumulator,
   LiveSessionSnapshot,
 } from '../services/live-practice-session';
+import {
+  clearLivePracticeContext,
+  setLivePracticeContext,
+} from '../services/practice-session-context';
 import {
   decideNextPracticeStep,
   PracticeAttempt,
@@ -43,6 +48,7 @@ import {
   PracticeSessionRecord,
   savePracticeSession,
 } from '../services/practice-session-store';
+import LiveTeacherPanel from './LiveTeacherPanel';
 import SessionCoachCamera from './SessionCoachCamera';
 
 const EMPTY_SNAPSHOT: LiveSessionSnapshot = {
@@ -58,6 +64,9 @@ const EMPTY_SNAPSHOT: LiveSessionSnapshot = {
   timingJitterMs: null,
 };
 
+const DURATION_OPTIONS = [30, 60, 120, 180, 300, 600];
+const QUICK_BPM_OPTIONS = [40, 50, 60, 70, 80, 90, 100, 120];
+
 function pulsesForPreset(preset: PracticePreset): 1 | 2 | 3 | 4 {
   if (preset.pattern?.toLowerCase().includes('p i m')) return 3;
   if (preset.category === 'arpeggio') return 3;
@@ -71,9 +80,16 @@ function pulsesForPreset(preset: PracticePreset): 1 | 2 | 3 | 4 {
 }
 
 function formatElapsed(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
+  const safe = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safe / 60);
+  const remainder = safe % 60;
   return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
+function durationLabel(seconds: number) {
+  if (seconds < 60) return `${seconds}초`;
+  if (seconds % 60 === 0) return `${seconds / 60}분`;
+  return `${Math.floor(seconds / 60)}분 ${seconds % 60}초`;
 }
 
 function timingLabel(offset: number | null) {
@@ -102,17 +118,44 @@ function sessionToAttempt(session: PracticeSessionRecord): PracticeAttempt | nul
   };
 }
 
+function SmallOption({
+  label,
+  active,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.smallOption, active && styles.smallOptionActive, disabled && styles.disabled]}
+    >
+      <Text style={[styles.smallOptionText, active && styles.smallOptionTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export default function PracticeSessionRunnerV2({
   mode,
+  voiceCoachEnabled,
   onClose,
 }: {
   mode: GuitarModeId;
+  voiceCoachEnabled: boolean;
   onClose?: () => void;
 }) {
   const presets = useMemo(() => getPracticePresetsForMode(mode), [mode]);
   const [selectedPresetId, setSelectedPresetId] = useState(presets[0]?.id ?? '');
   const preset = presets.find((item) => item.id === selectedPresetId) ?? presets[0];
   const [bpm, setBpm] = useState(preset?.startBpm ?? 70);
+  const [sessionDurationSeconds, setSessionDurationSeconds] = useState(preset?.durationSeconds ?? 180);
+  const [autoStopEnabled, setAutoStopEnabled] = useState(true);
+  const [accentEnabled, setAccentEnabled] = useState(true);
   const [running, setRunning] = useState(false);
   const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
   const [manualMistakes, setManualMistakes] = useState(0);
@@ -120,28 +163,46 @@ export default function PracticeSessionRunnerV2({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [snapshot, setSnapshot] = useState<LiveSessionSnapshot>(EMPTY_SNAPSHOT);
   const [decision, setDecision] = useState<ProgressionDecision | null>(null);
-  const [status, setStatus] = useState('루틴을 고른 뒤 시작하세요.');
+  const [status, setStatus] = useState('루틴과 시간을 고른 뒤 시작하세요.');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [calibrationConfidence, setCalibrationConfidence] = useState<number | null>(null);
   const accumulatorRef = useRef<LivePracticeSessionAccumulator | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const lastSnapshotAtRef = useRef(0);
+  const autoStopTriggeredRef = useRef(false);
+
+  const pulsesPerBeat = preset ? pulsesForPreset(preset) : 1;
+  const remainingSeconds = autoStopEnabled
+    ? Math.max(0, sessionDurationSeconds - elapsedSeconds)
+    : null;
+  const progressPercent = autoStopEnabled
+    ? Math.min(100, Math.round(elapsedSeconds / Math.max(1, sessionDurationSeconds) * 100))
+    : 0;
 
   useEffect(() => {
     const first = presets[0];
     setSelectedPresetId(first?.id ?? '');
     setBpm(first?.startBpm ?? 70);
+    setSessionDurationSeconds(first?.durationSeconds ?? 180);
     setSnapshot(EMPTY_SNAPSHOT);
     setDecision(null);
+    setCalibrationConfidence(null);
+    clearLivePracticeContext();
+    clearLiveCoachFeedback();
   }, [mode, presets]);
 
   useEffect(() => {
     if (!preset || running) return;
     setBpm(preset.startBpm);
+    setSessionDurationSeconds(preset.durationSeconds);
     setManualMistakes(0);
     setTensionReported(false);
     setSnapshot(EMPTY_SNAPSHOT);
     setDecision(null);
+    setCalibrationConfidence(null);
+    setStatus('루틴과 시간을 고른 뒤 시작하세요.');
+    clearLiveCoachFeedback();
   }, [preset, running]);
 
   useEffect(() => subscribeLiveAnalysis((frame) => {
@@ -154,15 +215,6 @@ export default function PracticeSessionRunnerV2({
       setSnapshot(accumulator.snapshot());
     }
   }), [running]);
-
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => {
-      const startedAt = startedAtRef.current;
-      if (startedAt) setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
-    }, 250);
-    return () => clearInterval(timer);
-  }, [running]);
 
   useEffect(() => {
     if (!running) return;
@@ -204,11 +256,6 @@ export default function PracticeSessionRunnerV2({
     };
   }, [microphoneEnabled, running]);
 
-  useEffect(() => () => {
-    void stopAdvancedMetronomeAsync();
-    void stopNativeAudioAnalysisAsync();
-  }, []);
-
   const requestMicrophonePermission = async () => {
     if (Platform.OS !== 'android') return true;
     const result = await PermissionsAndroid.request(
@@ -235,35 +282,61 @@ export default function PracticeSessionRunnerV2({
         cameraFacing: 'back',
         mirrored: false,
       });
+      const calibrationPercent = calibration?.confidencePercent ?? null;
+      setCalibrationConfidence(calibrationPercent);
+
       if (microphoneEnabled) {
         if (!isNativeAudioAnalysisAvailable) throw new Error('마이크 분석 모듈이 APK에 없습니다.');
         const granted = await requestMicrophonePermission();
         if (!granted) throw new Error('마이크 권한이 허용되지 않았습니다.');
         await startNativeAudioAnalysisAsync(440);
       }
+
       clearLatestLiveAnalysisFrames();
+      clearLiveCoachFeedback();
       accumulatorRef.current = new LivePracticeSessionAccumulator({
         category: preset.category,
         bpm,
-        pulsesPerBeat: pulsesForPreset(preset),
+        pulsesPerBeat,
         calibration,
       });
       startedAtRef.current = Date.now();
+      autoStopTriggeredRef.current = false;
       setElapsedSeconds(0);
       setManualMistakes(0);
       setTensionReported(false);
       setSnapshot(EMPTY_SNAPSHOT);
       setDecision(null);
-      await startAdvancedMetronomeAsync(bpm, 4, pulsesForPreset(preset), true, false, 0);
+
+      setLivePracticeContext({
+        active: true,
+        guitarMode: mode,
+        presetId: preset.id,
+        title: preset.title,
+        goal: preset.goal,
+        pattern: preset.pattern,
+        category: preset.category,
+        cameraFocus: preset.cameraFocus,
+        bpm,
+        targetBpm: preset.targetBpm,
+        pulsesPerBeat,
+        microphoneEnabled,
+        calibrationConfidencePercent: calibrationPercent,
+        startedAt: startedAtRef.current,
+      });
+
+      await startAdvancedMetronomeAsync(bpm, 4, pulsesPerBeat, accentEnabled, false, 0);
       setRunning(true);
       setStatus(calibration
-        ? `자동 분석 중 · 촬영 보정 ${calibration.confidencePercent}% 적용`
-        : '자동 분석 중 · 손·자세 중심 분석');
+        ? `실시간 선생님 분석 중 · 촬영 보정 ${calibration.confidencePercent}% 적용`
+        : '실시간 선생님 분석 중 · 보정 없는 항목은 판정 불가 처리');
     } catch (caught) {
       await stopAdvancedMetronomeAsync();
       await stopNativeAudioAnalysisAsync();
       accumulatorRef.current = null;
       startedAtRef.current = null;
+      clearLivePracticeContext();
+      clearLiveCoachFeedback();
       setRunning(false);
       setStatus('시작 실패');
       setError(caught instanceof Error ? caught.message : '집중 연습을 시작하지 못했습니다.');
@@ -272,12 +345,13 @@ export default function PracticeSessionRunnerV2({
     }
   };
 
-  const stopAndSave = async () => {
+  const stopAndSave = async (autoCompleted = false) => {
     if (!preset || !running || busy) return;
     setBusy(true);
     setError('');
-    setStatus('종료하고 기록을 계산하는 중…');
+    setStatus(autoCompleted ? '설정 시간이 끝나 기록을 계산하는 중…' : '종료하고 기록을 계산하는 중…');
     setRunning(false);
+    clearLivePracticeContext();
     try {
       await stopAdvancedMetronomeAsync();
       await stopNativeAudioAnalysisAsync();
@@ -329,7 +403,7 @@ export default function PracticeSessionRunnerV2({
         cameraMode: preset.cameraFocus,
         microphoneUsed: microphoneEnabled,
         metronomeUsed: true,
-        notes: `${tensionReported ? '긴장 보고 · ' : ''}${nextDecision.reason}${timingText}`,
+        notes: `${autoCompleted ? '설정 시간 완료 · ' : ''}${tensionReported ? '긴장 보고 · ' : ''}${nextDecision.reason}${timingText}`,
       };
       await savePracticeSession(record);
       setSnapshot(finalSnapshot);
@@ -340,6 +414,7 @@ export default function PracticeSessionRunnerV2({
         : `저장 완료 · 평균 ${finalSnapshot.averageScore}점 · 다음 ${nextDecision.nextBpm} BPM`);
       accumulatorRef.current = null;
       startedAtRef.current = null;
+      autoStopTriggeredRef.current = false;
     } catch (caught) {
       setStatus('기록 저장 실패');
       setError(caught instanceof Error ? caught.message : '연습 기록을 저장하지 못했습니다.');
@@ -348,15 +423,47 @@ export default function PracticeSessionRunnerV2({
     }
   };
 
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => {
+      const startedAt = startedAtRef.current;
+      if (!startedAt) return;
+      const nextElapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      setElapsedSeconds(nextElapsed);
+      if (
+        autoStopEnabled
+        && nextElapsed >= sessionDurationSeconds
+        && !autoStopTriggeredRef.current
+      ) {
+        autoStopTriggeredRef.current = true;
+        void stopAndSave(true);
+      }
+    }, 250);
+    return () => clearInterval(timer);
+  }, [autoStopEnabled, running, sessionDurationSeconds]);
+
+  useEffect(() => () => {
+    clearLivePracticeContext();
+    clearLiveCoachFeedback();
+    void stopAdvancedMetronomeAsync();
+    void stopNativeAudioAnalysisAsync();
+  }, []);
+
   if (!preset) {
     return <View style={styles.center}><Text style={styles.statusText}>등록된 개인 루틴이 없습니다.</Text></View>;
   }
 
   return (
-    <View style={styles.root}>
+    <ScrollView
+      style={styles.root}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.header}>
         <View style={styles.headerTextWrap}>
-          <Text style={styles.eyebrow}>{mode === 'acoustic' ? '통기타' : '일렉기타'} · AUTO AI SESSION</Text>
+          <Text style={styles.eyebrow}>{mode === 'acoustic' ? '통기타' : '일렉기타'} · LIVE AI TEACHER</Text>
           <Text style={styles.title}>{preset.title}</Text>
           <Text style={styles.statusText}>{status}</Text>
         </View>
@@ -380,74 +487,155 @@ export default function PracticeSessionRunnerV2({
         ))}
       </ScrollView>
 
-      <View style={styles.controlRow}>
-        <View style={styles.timeBlock}>
-          <Text style={styles.smallLabel}>연습 시간</Text>
-          <Text style={styles.timeValue}>{formatElapsed(elapsedSeconds)}</Text>
+      <View style={styles.lessonPlanCard}>
+        <Text style={styles.lessonPlanTitle}>오늘의 한 가지 목표</Text>
+        <Text style={styles.lessonPlanGoal}>{preset.goal}</Text>
+        <View style={styles.lessonMetaRow}>
+          <Text style={styles.lessonMeta}>{preset.pattern ? `패턴 ${preset.pattern}` : '동작 반복 루틴'}</Text>
+          <Text style={styles.lessonMeta}>분할 {pulsesPerBeat}회/박</Text>
+          <Text style={styles.lessonMeta}>목표 {preset.targetBpm} BPM</Text>
         </View>
-        <View style={styles.bpmBlock}>
-          <Text style={styles.smallLabel}>BPM · 목표 {preset.targetBpm}</Text>
-          <View style={styles.bpmRow}>
-            <Pressable disabled={running} onPress={() => setBpm((value) => Math.max(35, value - 5))} style={[styles.stepButton, running && styles.disabled]}><Text style={styles.stepText}>-5</Text></Pressable>
+      </View>
+
+      <View style={styles.setupCard}>
+        <Text style={styles.sectionTitle}>집중 연습 시간</Text>
+        <View style={styles.optionWrap}>
+          {DURATION_OPTIONS.map((value) => (
+            <SmallOption
+              key={value}
+              label={durationLabel(value)}
+              active={autoStopEnabled && sessionDurationSeconds === value}
+              disabled={running}
+              onPress={() => {
+                setAutoStopEnabled(true);
+                setSessionDurationSeconds(value);
+              }}
+            />
+          ))}
+          <SmallOption label="무제한" active={!autoStopEnabled} disabled={running} onPress={() => setAutoStopEnabled(false)} />
+        </View>
+        <View style={styles.customRow}>
+          <SmallOption label="-1분" disabled={running || !autoStopEnabled} onPress={() => setSessionDurationSeconds((value) => Math.max(30, value - 60))} />
+          <SmallOption label="-30초" disabled={running || !autoStopEnabled} onPress={() => setSessionDurationSeconds((value) => Math.max(30, value - 30))} />
+          <Text style={styles.customValue}>{autoStopEnabled ? durationLabel(sessionDurationSeconds) : '직접 종료'}</Text>
+          <SmallOption label="+30초" disabled={running || !autoStopEnabled} onPress={() => setSessionDurationSeconds((value) => Math.min(1_800, value + 30))} />
+          <SmallOption label="+1분" disabled={running || !autoStopEnabled} onPress={() => setSessionDurationSeconds((value) => Math.min(1_800, value + 60))} />
+        </View>
+
+        <Text style={styles.sectionTitle}>메트로놈 속도</Text>
+        <View style={styles.bpmControlRow}>
+          <SmallOption label="-5" disabled={running} onPress={() => setBpm((value) => Math.max(35, value - 5))} />
+          <SmallOption label="-1" disabled={running} onPress={() => setBpm((value) => Math.max(35, value - 1))} />
+          <View style={styles.bpmCenter}>
             <Text style={styles.bpmValue}>{bpm}</Text>
-            <Pressable disabled={running} onPress={() => setBpm((value) => Math.min(preset.targetBpm, value + 5))} style={[styles.stepButton, running && styles.disabled]}><Text style={styles.stepText}>+5</Text></Pressable>
+            <Text style={styles.bpmUnit}>BPM</Text>
+          </View>
+          <SmallOption label="+1" disabled={running} onPress={() => setBpm((value) => Math.min(220, value + 1))} />
+          <SmallOption label="+5" disabled={running} onPress={() => setBpm((value) => Math.min(220, value + 5))} />
+        </View>
+        <View style={styles.optionWrap}>
+          {QUICK_BPM_OPTIONS.map((value) => (
+            <SmallOption key={value} label={`${value}`} active={bpm === value} disabled={running} onPress={() => setBpm(value)} />
+          ))}
+        </View>
+
+        <View style={styles.switchRow}>
+          <View style={styles.switchItem}>
+            <View style={styles.switchTextWrap}>
+              <Text style={styles.switchTitle}>마이크 박자 분석</Text>
+              <Text style={styles.switchDetail}>탄현 간격·클리핑·흔들림을 실제 입력으로 비교</Text>
+            </View>
+            <Switch disabled={running} value={microphoneEnabled} onValueChange={setMicrophoneEnabled} />
+          </View>
+          <View style={styles.switchItem}>
+            <View style={styles.switchTextWrap}>
+              <Text style={styles.switchTitle}>첫 박 악센트</Text>
+              <Text style={styles.switchDetail}>각 마디 첫 박을 강하게 재생</Text>
+            </View>
+            <Switch disabled={running} value={accentEnabled} onValueChange={setAccentEnabled} />
           </View>
         </View>
       </View>
 
-      <View style={styles.switchRow}>
-        <View style={styles.switchItem}>
-          <View style={styles.switchTextWrap}>
-            <Text style={styles.switchTitle}>마이크 박자</Text>
-            <Text style={styles.switchDetail}>클릭과 탄현을 ms로 비교</Text>
-          </View>
-          <Switch disabled={running} value={microphoneEnabled} onValueChange={setMicrophoneEnabled} />
+      <View style={styles.liveSummary}>
+        <View style={styles.timeBlock}>
+          <Text style={styles.smallLabel}>연습 경과</Text>
+          <Text style={styles.timeValue}>{formatElapsed(elapsedSeconds)}</Text>
         </View>
-        <View style={styles.switchItem}>
-          <View style={styles.switchTextWrap}>
-            <Text style={styles.switchTitle}>긴장·통증</Text>
-            <Text style={styles.switchDetail}>증속 중지·휴식 처리</Text>
-          </View>
-          <Switch value={tensionReported} onValueChange={setTensionReported} />
+        <View style={styles.timeBlockCenter}>
+          <Text style={styles.smallLabel}>남은 시간</Text>
+          <Text style={styles.remainingValue}>{remainingSeconds == null ? '∞' : formatElapsed(remainingSeconds)}</Text>
+        </View>
+        <View style={styles.timeBlockRight}>
+          <Text style={styles.smallLabel}>현재 속도</Text>
+          <Text style={styles.runningBpm}>{bpm}<Text style={styles.runningBpmUnit}> BPM</Text></Text>
         </View>
       </View>
+      {autoStopEnabled ? <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${progressPercent}%` }]} /></View> : null}
+
+      <View style={styles.actionRow}>
+        <Pressable onPress={() => setManualMistakes((value) => value + 1)} style={styles.mistakeButton}>
+          <Text style={styles.mistakeText}>내가 느낀 실수 +1 · {manualMistakes}</Text>
+        </Pressable>
+        <Pressable
+          disabled={busy}
+          onPress={() => running ? void stopAndSave(false) : void start()}
+          style={[styles.startButton, running && styles.stopButton, busy && styles.disabled]}
+        >
+          <Text style={styles.startText}>{busy ? '처리 중…' : running ? '종료·자동 저장' : `${bpm} BPM 실시간 레슨 시작`}</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.tensionRow}>
+        <View style={styles.switchTextWrap}>
+          <Text style={styles.switchTitle}>손목·어깨 긴장 또는 통증</Text>
+          <Text style={styles.switchDetail}>켜면 다음 속도 추천에서 증속을 중단하고 휴식을 우선합니다.</Text>
+        </View>
+        <Switch value={tensionReported} onValueChange={setTensionReported} />
+      </View>
+
+      <LiveTeacherPanel preset={preset} running={running} voiceEnabled={voiceCoachEnabled} />
 
       <View style={styles.metricRow}>
         <Metric label="평균" value={snapshot.averageScore == null ? '-' : `${snapshot.averageScore}`} />
         <Metric label="신뢰도" value={`${snapshot.confidencePercent}%`} />
         <Metric label="박 오차" value={timingLabel(snapshot.timingOffsetMs)} />
         <Metric label="흔들림" value={snapshot.timingJitterMs == null ? '-' : `${snapshot.timingJitterMs}ms`} />
-        <Metric label="가까운 줄" value={snapshot.lastStringNumber ? `${snapshot.lastStringNumber}번` : '-'} />
-      </View>
-
-      <View style={styles.actionRow}>
-        <Pressable onPress={() => setManualMistakes((value) => value + 1)} style={styles.mistakeButton}>
-          <Text style={styles.mistakeText}>실수 +1 · {manualMistakes}</Text>
-        </Pressable>
-        <Pressable disabled={busy} onPress={() => running ? void stopAndSave() : void start()} style={[styles.startButton, running && styles.stopButton, busy && styles.disabled]}>
-          <Text style={styles.startText}>{busy ? '처리 중…' : running ? '종료·자동 저장' : `${bpm} BPM 자동 시작`}</Text>
-        </Pressable>
+        <Metric label="촬영보정" value={calibrationConfidence == null ? '없음' : `${calibrationConfidence}%`} />
       </View>
 
       {decision ? (
         <View style={styles.decisionCard}>
-          <Text style={styles.decisionTitle}>다음 단계 · {decision.nextBpm} BPM</Text>
+          <Text style={styles.decisionTitle}>AI 다음 수업 · {decision.nextBpm} BPM</Text>
           <Text style={styles.decisionText}>{decision.reason}</Text>
           <Text style={styles.decisionFocus}>{decision.nextFocus}</Text>
         </View>
       ) : null}
       {snapshot.issues.length ? (
         <View style={styles.issueCard}>
-          <Text style={styles.issueTitle}>반복 문제</Text>
-          <Text style={styles.issueText}>{snapshot.issues.slice(0, 3).map((issue) => `${issue.title} ${issue.count}회`).join(' · ')}</Text>
+          <Text style={styles.issueTitle}>이번 세션에서 반복된 문제</Text>
+          <Text style={styles.issueText}>{snapshot.issues.slice(0, 4).map((issue) => `${issue.title} ${issue.count}회`).join(' · ')}</Text>
         </View>
       ) : null}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+      <View style={styles.cameraSectionHeader}>
+        <View style={styles.headerTextWrap}>
+          <Text style={styles.eyebrow}>LIVE CAMERA ANALYSIS</Text>
+          <Text style={styles.cameraSectionTitle}>관절·피크 추적 화면</Text>
+        </View>
+        <Text style={styles.cameraSectionHint}>아래까지 자유롭게 스크롤됩니다</Text>
+      </View>
       <View style={styles.cameraWrap}>
         <SessionCoachCamera running={running} category={preset.category} cameraFocus={preset.cameraFocus} />
       </View>
-    </View>
+
+      <View style={styles.ruleCard}>
+        <Text style={styles.ruleTitle}>이 루틴에서 실제로 확인하는 항목</Text>
+        {preset.checkpoints.map((item, index) => <Text key={item} style={styles.ruleText}>{index + 1}. {item}</Text>)}
+        <Text style={styles.ruleNotice}>카메라 프레임 속도나 보정값으로 확인할 수 없는 세부 시간 차이는 숫자를 만들지 않고 판정 불가로 표시합니다.</Text>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -462,52 +650,81 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0d1117' },
+  content: { paddingBottom: 100 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0d1117' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 11, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#30363d' },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#30363d' },
   headerTextWrap: { flex: 1, paddingRight: 8 },
-  eyebrow: { color: '#79c0ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.7 },
-  title: { color: '#f0f6fc', fontSize: 14, fontWeight: '900', marginTop: 2 },
-  statusText: { color: '#8b949e', fontSize: 8, lineHeight: 12, marginTop: 2 },
-  closeButton: { minWidth: 45, height: 34, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
-  closeText: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
-  presetScroll: { maxHeight: 43, borderBottomWidth: 1, borderBottomColor: '#30363d' },
-  presetRow: { gap: 5, paddingHorizontal: 8, paddingVertical: 6 },
-  presetChip: { minHeight: 29, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', justifyContent: 'center', paddingHorizontal: 9 },
+  eyebrow: { color: '#79c0ff', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
+  title: { color: '#f0f6fc', fontSize: 17, fontWeight: '900', marginTop: 3 },
+  statusText: { color: '#8b949e', fontSize: 9, lineHeight: 14, marginTop: 3 },
+  closeButton: { minWidth: 48, height: 38, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
+  closeText: { color: '#f0f6fc', fontSize: 9, fontWeight: '900' },
+  presetScroll: { maxHeight: 49, borderBottomWidth: 1, borderBottomColor: '#30363d' },
+  presetRow: { gap: 6, paddingHorizontal: 9, paddingVertical: 7 },
+  presetChip: { minHeight: 34, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', justifyContent: 'center', paddingHorizontal: 11 },
   presetChipActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
-  presetChipText: { color: '#b1bac4', fontSize: 7, fontWeight: '900' },
+  presetChipText: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
   presetChipTextActive: { color: '#ffffff' },
-  controlRow: { flexDirection: 'row', backgroundColor: '#161b22', paddingHorizontal: 10, paddingVertical: 7 },
+  lessonPlanCard: { margin: 9, marginBottom: 0, borderRadius: 15, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#111d2f', padding: 12 },
+  lessonPlanTitle: { color: '#79c0ff', fontSize: 8, fontWeight: '900' },
+  lessonPlanGoal: { color: '#f0f6fc', fontSize: 12, lineHeight: 18, fontWeight: '800', marginTop: 4 },
+  lessonMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 8 },
+  lessonMeta: { color: '#b6d8ff', backgroundColor: '#0d1522', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 5, fontSize: 7, fontWeight: '800' },
+  setupCard: { margin: 9, marginBottom: 0, borderRadius: 15, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', padding: 11 },
+  sectionTitle: { color: '#f0f6fc', fontSize: 10, fontWeight: '900', marginTop: 5, marginBottom: 7 },
+  optionWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  smallOption: { minWidth: 44, minHeight: 34, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  smallOptionActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
+  smallOptionText: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
+  smallOptionTextActive: { color: '#ffffff' },
+  customRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 7 },
+  customValue: { flex: 1, color: '#7ee787', fontSize: 10, fontWeight: '900', textAlign: 'center' },
+  bpmControlRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, marginBottom: 7 },
+  bpmCenter: { minWidth: 68, alignItems: 'center' },
+  bpmValue: { color: '#7ee787', fontSize: 27, fontWeight: '900' },
+  bpmUnit: { color: '#8b949e', fontSize: 7, fontWeight: '800' },
+  switchRow: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#30363d', marginTop: 10, paddingTop: 8 },
+  switchItem: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingRight: 6 },
+  switchTextWrap: { flex: 1, paddingRight: 5 },
+  switchTitle: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
+  switchDetail: { color: '#6e7681', fontSize: 7, lineHeight: 11, marginTop: 2 },
+  liveSummary: { flexDirection: 'row', backgroundColor: '#161b22', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#30363d', marginTop: 9, paddingHorizontal: 12, paddingVertical: 9 },
   timeBlock: { flex: 1 },
-  bpmBlock: { flex: 1, alignItems: 'flex-end' },
+  timeBlockCenter: { flex: 1, alignItems: 'center' },
+  timeBlockRight: { flex: 1, alignItems: 'flex-end' },
   smallLabel: { color: '#8b949e', fontSize: 7, fontWeight: '900' },
-  timeValue: { color: '#7ee787', fontSize: 21, fontWeight: '900', marginTop: 2 },
-  bpmRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  stepButton: { width: 34, height: 29, borderRadius: 8, backgroundColor: '#21262d', borderWidth: 1, borderColor: '#30363d', alignItems: 'center', justifyContent: 'center' },
-  stepText: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
-  bpmValue: { color: '#f0f6fc', fontSize: 19, fontWeight: '900', minWidth: 39, textAlign: 'center' },
-  switchRow: { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#30363d' },
-  switchItem: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 5, borderRightWidth: 1, borderRightColor: '#30363d' },
-  switchTextWrap: { flex: 1, paddingRight: 3 },
-  switchTitle: { color: '#f0f6fc', fontSize: 7, fontWeight: '900' },
-  switchDetail: { color: '#6e7681', fontSize: 6, lineHeight: 9, marginTop: 1 },
-  metricRow: { flexDirection: 'row', gap: 3, padding: 6 },
-  metricCard: { flex: 1, minWidth: 51, backgroundColor: '#161b22', borderRadius: 8, alignItems: 'center', paddingVertical: 5, paddingHorizontal: 1 },
-  metricValue: { color: '#f0f6fc', fontSize: 7, fontWeight: '900', textAlign: 'center' },
-  metricLabel: { color: '#6e7681', fontSize: 5, marginTop: 2 },
-  actionRow: { flexDirection: 'row', gap: 5, paddingHorizontal: 7, paddingBottom: 6 },
-  mistakeButton: { flex: 0.75, minHeight: 36, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
-  mistakeText: { color: '#f2cc60', fontSize: 8, fontWeight: '900' },
-  startButton: { flex: 1.25, minHeight: 36, borderRadius: 9, backgroundColor: '#2ea043', alignItems: 'center', justifyContent: 'center' },
+  timeValue: { color: '#7ee787', fontSize: 22, fontWeight: '900', marginTop: 2 },
+  remainingValue: { color: '#f0f6fc', fontSize: 22, fontWeight: '900', marginTop: 2 },
+  runningBpm: { color: '#f0f6fc', fontSize: 22, fontWeight: '900', marginTop: 2 },
+  runningBpmUnit: { color: '#8b949e', fontSize: 8 },
+  progressTrack: { height: 5, backgroundColor: '#21262d', overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: '#2ea043' },
+  actionRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 8, paddingTop: 9 },
+  mistakeButton: { flex: 0.85, minHeight: 44, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  mistakeText: { color: '#f2cc60', fontSize: 8, fontWeight: '900', textAlign: 'center' },
+  startButton: { flex: 1.25, minHeight: 44, borderRadius: 11, backgroundColor: '#2ea043', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   stopButton: { backgroundColor: '#da3633' },
-  startText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
-  decisionCard: { marginHorizontal: 7, marginBottom: 5, padding: 7, borderRadius: 10, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#102418' },
-  decisionTitle: { color: '#7ee787', fontSize: 8, fontWeight: '900' },
-  decisionText: { color: '#b1bac4', fontSize: 7, lineHeight: 11, marginTop: 2 },
-  decisionFocus: { color: '#f0f6fc', fontSize: 7, lineHeight: 11, fontWeight: '800', marginTop: 2 },
-  issueCard: { marginHorizontal: 7, marginBottom: 5, padding: 7, borderRadius: 10, borderWidth: 1, borderColor: '#9e6a03', backgroundColor: '#2d2208' },
-  issueTitle: { color: '#f2cc60', fontSize: 8, fontWeight: '900' },
-  issueText: { color: '#d2b45c', fontSize: 7, lineHeight: 11, marginTop: 2 },
-  errorText: { color: '#ff7b72', fontSize: 7, lineHeight: 11, marginHorizontal: 8, marginBottom: 4 },
-  cameraWrap: { flex: 1, minHeight: 360 },
+  startText: { color: '#ffffff', fontSize: 9, fontWeight: '900', textAlign: 'center' },
+  tensionRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 8, marginTop: 7, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', paddingHorizontal: 10, paddingVertical: 7 },
+  metricRow: { flexDirection: 'row', gap: 4, paddingHorizontal: 8, paddingTop: 8 },
+  metricCard: { flex: 1, minWidth: 53, backgroundColor: '#161b22', borderRadius: 9, alignItems: 'center', paddingVertical: 7, paddingHorizontal: 2 },
+  metricValue: { color: '#f0f6fc', fontSize: 8, fontWeight: '900', textAlign: 'center' },
+  metricLabel: { color: '#6e7681', fontSize: 6, marginTop: 2 },
+  decisionCard: { marginHorizontal: 8, marginTop: 7, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#102418' },
+  decisionTitle: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
+  decisionText: { color: '#b1bac4', fontSize: 8, lineHeight: 13, marginTop: 3 },
+  decisionFocus: { color: '#f0f6fc', fontSize: 8, lineHeight: 13, fontWeight: '800', marginTop: 3 },
+  issueCard: { marginHorizontal: 8, marginTop: 7, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#9e6a03', backgroundColor: '#2d2208' },
+  issueTitle: { color: '#f2cc60', fontSize: 9, fontWeight: '900' },
+  issueText: { color: '#d2b45c', fontSize: 8, lineHeight: 13, marginTop: 3 },
+  errorText: { color: '#ff7b72', fontSize: 8, lineHeight: 13, marginHorizontal: 9, marginTop: 7 },
+  cameraSectionHeader: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 9, marginTop: 13, marginBottom: 4 },
+  cameraSectionTitle: { color: '#f0f6fc', fontSize: 13, fontWeight: '900', marginTop: 2 },
+  cameraSectionHint: { color: '#8b949e', fontSize: 7 },
+  cameraWrap: { minHeight: 575 },
+  ruleCard: { marginHorizontal: 9, marginTop: 8, borderRadius: 14, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', padding: 12 },
+  ruleTitle: { color: '#79c0ff', fontSize: 9, fontWeight: '900', marginBottom: 6 },
+  ruleText: { color: '#b1bac4', fontSize: 8, lineHeight: 14 },
+  ruleNotice: { color: '#f2cc60', fontSize: 7, lineHeight: 12, marginTop: 8 },
   disabled: { opacity: 0.42 },
 });
