@@ -74,7 +74,7 @@ class GuitarCoachNativeModule : Module() {
 
               promise.resolve(
                 mapOf(
-                  "hasPerson" to (points.size >= 4),
+                  "hasPerson" to (points.count { (it["confidence"] as? Double ?: 0.0) >= 0.35 } >= 4),
                   "imageWidth" to decodedBitmap.width,
                   "imageHeight" to decodedBitmap.height,
                   "latencyMs" to (System.currentTimeMillis() - startedAt),
@@ -147,12 +147,22 @@ class GuitarCoachNativeModule : Module() {
   companion object {
     private val LANDMARKS = listOf(
       LandmarkSpec("nose", PoseLandmark.NOSE),
+      LandmarkSpec("leftEye", PoseLandmark.LEFT_EYE),
+      LandmarkSpec("rightEye", PoseLandmark.RIGHT_EYE),
+      LandmarkSpec("leftEar", PoseLandmark.LEFT_EAR),
+      LandmarkSpec("rightEar", PoseLandmark.RIGHT_EAR),
       LandmarkSpec("leftShoulder", PoseLandmark.LEFT_SHOULDER),
       LandmarkSpec("rightShoulder", PoseLandmark.RIGHT_SHOULDER),
       LandmarkSpec("leftElbow", PoseLandmark.LEFT_ELBOW),
       LandmarkSpec("rightElbow", PoseLandmark.RIGHT_ELBOW),
       LandmarkSpec("leftWrist", PoseLandmark.LEFT_WRIST),
       LandmarkSpec("rightWrist", PoseLandmark.RIGHT_WRIST),
+      LandmarkSpec("leftThumb", PoseLandmark.LEFT_THUMB),
+      LandmarkSpec("rightThumb", PoseLandmark.RIGHT_THUMB),
+      LandmarkSpec("leftIndex", PoseLandmark.LEFT_INDEX),
+      LandmarkSpec("rightIndex", PoseLandmark.RIGHT_INDEX),
+      LandmarkSpec("leftPinky", PoseLandmark.LEFT_PINKY),
+      LandmarkSpec("rightPinky", PoseLandmark.RIGHT_PINKY),
       LandmarkSpec("leftHip", PoseLandmark.LEFT_HIP),
       LandmarkSpec("rightHip", PoseLandmark.RIGHT_HIP)
     )
