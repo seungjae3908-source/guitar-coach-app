@@ -6,7 +6,8 @@
       "expo.modules.guitarcoachnative.GuitarCoachMetronomeModule",
       "expo.modules.guitarcoachnative.GuitarCoachHandModule",
       "expo.modules.guitarcoachnative.GuitarCoachAudioModule",
-      "expo.modules.guitarcoachnative.GuitarCoachAudioFileModule"
+      "expo.modules.guitarcoachnative.GuitarCoachAudioFileModule",
+      "expo.modules.guitarcoachnative.GuitarCoachSpeechModule"
     ]
   }
 }
