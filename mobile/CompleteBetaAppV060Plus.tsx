@@ -124,7 +124,7 @@ export default function CompleteBetaAppV060Plus() {
             </View>
           </ScrollView>
         ) : tool === 'session' && mode ? (
-          <PracticeSessionRunnerV2 mode={mode} onClose={() => setTool('records')} />
+          <PracticeSessionRunnerV2 mode={mode} voiceCoachEnabled={voiceCoachEnabled} onClose={() => setTool('records')} />
         ) : tool === 'audio' && mode ? (
           <AudioFileAnalysisPanel mode={mode} />
         ) : tool === 'song' && mode ? (
