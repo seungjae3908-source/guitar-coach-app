@@ -5,6 +5,7 @@
       "expo.modules.guitarcoachnative.GuitarCoachNativeModule",
       "expo.modules.guitarcoachnative.GuitarCoachMetronomeModule",
       "expo.modules.guitarcoachnative.GuitarCoachHandModule",
+      "expo.modules.guitarcoachnative.GuitarCoachStringVisionModule",
       "expo.modules.guitarcoachnative.GuitarCoachAudioModule",
       "expo.modules.guitarcoachnative.GuitarCoachAudioFileModule",
       "expo.modules.guitarcoachnative.GuitarCoachSpeechModule"
