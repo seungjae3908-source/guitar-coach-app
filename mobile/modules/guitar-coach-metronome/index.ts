@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 
+import { publishLiveAnalysisFrame } from '../../services/analysis-stream';
+
 export type VoicePreparationResult = {
   ready: boolean;
   language: string;
@@ -8,6 +10,22 @@ export type VoicePreparationResult = {
 };
 
 export type MetronomeSoundPreset = 0 | 1 | 2 | 3 | 4;
+
+export type MetronomeTimingState = {
+  running: boolean;
+  bpm: number;
+  beatsPerBar: number;
+  subdivision: number;
+  intervalMs: number;
+  lastTickElapsedRealtimeMs: number;
+  lastTickUptimeMs: number;
+  nextTickUptimeMs: number;
+  lastTickPulseIndex: number;
+  nextPulseIndex: number;
+  absolutePulseCount: number;
+  elapsedRealtimeNowMs: number;
+  uptimeNowMs: number;
+};
 
 type GuitarCoachMetronomeModule = {
   androidMetronomeAvailable: boolean;
@@ -28,6 +46,7 @@ type GuitarCoachMetronomeModule = {
     voiceEnabled: boolean,
     soundPreset: MetronomeSoundPreset,
   ): Promise<void>;
+  getTimingStateAsync(): Promise<MetronomeTimingState>;
   stopAsync(): Promise<void>;
   previewVoiceAsync(subdivision: number): Promise<void>;
   previewSoundAsync(soundPreset: MetronomeSoundPreset): Promise<void>;
@@ -64,6 +83,17 @@ export async function updateAdvancedMetronomeAsync(
 ) {
   if (!NativeModule) throw new Error('고급 메트로놈 모듈을 사용할 수 없습니다.');
   await NativeModule.updateAsync(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset);
+}
+
+export async function getAdvancedMetronomeTimingStateAsync() {
+  if (!NativeModule) throw new Error('고급 메트로놈 모듈을 사용할 수 없습니다.');
+  const result = await NativeModule.getTimingStateAsync();
+  publishLiveAnalysisFrame({
+    kind: 'metronome',
+    capturedAt: Date.now(),
+    result,
+  });
+  return result;
 }
 
 export async function stopAdvancedMetronomeAsync() {
