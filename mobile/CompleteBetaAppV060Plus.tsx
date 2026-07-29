@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
+import AudioFileAnalysisPanel from './components/AudioFileAnalysisPanel';
 import CameraCalibrationWizard from './components/CameraCalibrationWizard';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
@@ -16,11 +17,12 @@ import SongPracticePanel from './components/SongPracticePanel';
 import TunerPanel from './components/TunerPanel';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
-type GlobalTool = 'app' | 'session' | 'song' | 'calibration' | 'records' | 'tuner';
+type GlobalTool = 'app' | 'session' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
 
 const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'app', label: '홈' },
   { id: 'session', label: '집중연습' },
+  { id: 'audio', label: '음원분석' },
   { id: 'song', label: '곡연습' },
   { id: 'calibration', label: '촬영보정' },
   { id: 'records', label: '상세기록' },
@@ -29,6 +31,7 @@ const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
 
 function toolTitle(tool: GlobalTool) {
   if (tool === 'session') return 'AI 집중 연습과 자동 기록';
+  if (tool === 'audio') return 'MP3·WAV 로컬 BPM·Key·코드 분석';
   if (tool === 'song') return '악보 초안·A-B 반복·속도 연습';
   if (tool === 'calibration') return '손·줄·브리지 촬영 보정';
   if (tool === 'records') return '세션별 점수·박자·반복 문제 비교';
@@ -40,7 +43,7 @@ export default function CompleteBetaAppV060Plus() {
   const [tool, setTool] = useState<GlobalTool>('app');
   const { mode, loading } = useGuitarModePreference();
 
-  const needsMode = tool === 'session' || tool === 'song' || tool === 'calibration';
+  const needsMode = tool === 'session' || tool === 'audio' || tool === 'song' || tool === 'calibration';
 
   return (
     <SafeAreaView style={styles.root}>
@@ -81,7 +84,7 @@ export default function CompleteBetaAppV060Plus() {
         ) : needsMode && !mode ? (
           <View style={styles.center}>
             <Text style={styles.infoTitle}>먼저 통기타 또는 일렉기타를 선택하세요</Text>
-            <Text style={styles.infoText}>홈 화면에서 모드를 선택하면 집중 연습·곡 연습·촬영 보정이 해당 기준으로 실행됩니다.</Text>
+            <Text style={styles.infoText}>홈 화면에서 모드를 선택하면 집중 연습·음원 분석·곡 연습·촬영 보정이 해당 기준으로 실행됩니다.</Text>
             <Pressable onPress={() => setTool('app')} style={styles.modeButton}>
               <Text style={styles.modeButtonText}>홈에서 기타 선택</Text>
             </Pressable>
@@ -99,6 +102,8 @@ export default function CompleteBetaAppV060Plus() {
           </ScrollView>
         ) : tool === 'session' && mode ? (
           <PracticeSessionRunnerV2 mode={mode} onClose={() => setTool('records')} />
+        ) : tool === 'audio' && mode ? (
+          <AudioFileAnalysisPanel mode={mode} />
         ) : tool === 'song' && mode ? (
           <SongPracticePanel mode={mode} />
         ) : tool === 'calibration' && mode ? (
