@@ -10,8 +10,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "통기타와 일렉기타 연습 중 상체 자세와 손가락·피크를 휴대폰 안에서 분석하고 연습 영상을 녹화하기 위해 카메라를 사용합니다.",
-          "microphonePermission": "크로매틱 튜너, 연주 어택·박자·톤 일관성 분석과 연습 영상 소리를 휴대폰 안에서 처리하기 위해 마이크를 사용합니다.",
+          "cameraPermission": "통기타와 일렉기타 연습 중 상체 자세와 손가락·피크·기타줄을 휴대폰 안에서 분석하고 연습 영상을 녹화하기 위해 카메라를 사용합니다.",
+          "microphonePermission": "크로매틱 튜너, 연주 어택·박자·톤 일관성과 영상 줄 판정 보조를 휴대폰 안에서 처리하기 위해 마이크를 사용합니다.",
           "recordAudioAndroid": true
         }
       ],
@@ -26,7 +26,7 @@
     ],
     "android": {
       "package": "com.seungjae.guitarcoach.livetest",
-      "versionCode": 7,
+      "versionCode": 8,
       "permissions": ["CAMERA", "RECORD_AUDIO"]
     }
   }
