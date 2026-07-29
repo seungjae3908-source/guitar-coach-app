@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 
+import { publishLiveAnalysisFrame } from '../../services/analysis-stream';
+
 export type NativeAudioStartResult = {
   started: boolean;
   sampleRate: number;
@@ -47,7 +49,13 @@ export async function updateNativeAudioReferenceAsync(referenceA4: number) {
 
 export async function getLatestNativeAudioReadingAsync() {
   if (!NativeModule) throw new Error('마이크 튜너 모듈을 사용할 수 없습니다.');
-  return NativeModule.getLatestAudioReadingAsync();
+  const result = await NativeModule.getLatestAudioReadingAsync();
+  publishLiveAnalysisFrame({
+    kind: 'audio',
+    capturedAt: Date.now(),
+    result,
+  });
+  return result;
 }
 
 export async function stopNativeAudioAnalysisAsync() {
