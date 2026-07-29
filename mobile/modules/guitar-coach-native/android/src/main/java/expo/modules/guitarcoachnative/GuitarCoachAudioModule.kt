@@ -59,7 +59,7 @@ class GuitarCoachAudioModule : Module() {
     }
 
     AsyncFunction("getLatestAudioReadingAsync") { promise: Promise ->
-      val payload = synchronized(readingLock) { latestReading.toMap(referenceA4) }
+      val payload = synchronized(readingLock) { latestReading.toMap(referenceA4, running) }
       promise.resolve(payload)
     }
 
@@ -95,13 +95,7 @@ class GuitarCoachAudioModule : Module() {
     if (minBuffer <= 0) throw IllegalStateException("휴대폰 마이크 버퍼를 만들 수 없습니다.")
 
     val bufferSize = max(minBuffer * 2, FRAME_SIZE * 2)
-    val recorder = AudioRecord(
-      MediaRecorder.AudioSource.UNPROCESSED,
-      SAMPLE_RATE,
-      AudioFormat.CHANNEL_IN_MONO,
-      AudioFormat.ENCODING_PCM_16BIT,
-      bufferSize
-    )
+    val recorder = createRecorder(bufferSize)
     if (recorder.state != AudioRecord.STATE_INITIALIZED) {
       recorder.release()
       throw IllegalStateException("휴대폰 마이크를 초기화하지 못했습니다.")
@@ -114,6 +108,24 @@ class GuitarCoachAudioModule : Module() {
       it.priority = Thread.MAX_PRIORITY
       it.start()
     }
+  }
+
+  private fun createRecorder(bufferSize: Int): AudioRecord {
+    val sources = listOf(MediaRecorder.AudioSource.UNPROCESSED, MediaRecorder.AudioSource.DEFAULT)
+    for (source in sources) {
+      val recorder = runCatching {
+        AudioRecord(
+          source,
+          SAMPLE_RATE,
+          AudioFormat.CHANNEL_IN_MONO,
+          AudioFormat.ENCODING_PCM_16BIT,
+          bufferSize
+        )
+      }.getOrNull() ?: continue
+      if (recorder.state == AudioRecord.STATE_INITIALIZED) return recorder
+      recorder.release()
+    }
+    throw IllegalStateException("지원되는 휴대폰 마이크 입력을 찾지 못했습니다.")
   }
 
   private fun stopInternal() {
@@ -232,8 +244,8 @@ class GuitarCoachAudioModule : Module() {
         energyA += a * a
         energyB += b * b
       }
-      val denominator = sqrt(max(1e-12, energyA * energyB))
-      val correlation = cross / denominator
+      val correlationDenominator = sqrt(max(1e-12, energyA * energyB))
+      val correlation = cross / correlationDenominator
       correlations[lag] = correlation
       if (correlation > bestCorrelation) {
         bestCorrelation = correlation
@@ -259,8 +271,8 @@ class GuitarCoachAudioModule : Module() {
     val left = correlations[max(minLag, selectedLag - 1)]
     val center = correlations[selectedLag]
     val right = correlations[min(maxLag, selectedLag + 1)]
-    val denominator = left - 2.0 * center + right
-    val correction = if (abs(denominator) > 1e-9) 0.5 * (left - right) / denominator else 0.0
+    val curveDenominator = left - 2.0 * center + right
+    val correction = if (abs(curveDenominator) > 1e-9) 0.5 * (left - right) / curveDenominator else 0.0
     val refinedLag = selectedLag + correction.coerceIn(-0.5, 0.5)
     val frequency = effectiveRate / refinedLag
 
@@ -287,7 +299,7 @@ class GuitarCoachAudioModule : Module() {
     val attackStrength: Double,
     val sampleCount: Int
   ) {
-    fun toMap(referenceA4: Double): Map<String, Any> = mapOf(
+    fun toMap(referenceA4: Double, isRunning: Boolean): Map<String, Any> = mapOf(
       "timestampMs" to timestampMs.toDouble(),
       "frequencyHz" to frequencyHz,
       "pitchConfidence" to pitchConfidence,
@@ -301,7 +313,7 @@ class GuitarCoachAudioModule : Module() {
       "sampleCount" to sampleCount,
       "referenceA4" to referenceA4,
       "hasPitch" to (frequencyHz > 0.0 && pitchConfidence >= MIN_PITCH_CONFIDENCE),
-      "running" to running
+      "running" to isRunning
     )
 
     companion object {
