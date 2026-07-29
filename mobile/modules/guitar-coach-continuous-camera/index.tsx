@@ -89,12 +89,18 @@ function fuseHitWithAudio(hit: ContinuousStringHit): ContinuousStringHit {
 }
 
 function fuseAudio(result: ContinuousHandAnalysisResult): ContinuousHandAnalysisResult {
+  const newHits = result.continuous.newHits.map(fuseHitWithAudio);
+  const recentHits = result.continuous.recentHits.map(fuseHitWithAudio);
+  const currentAudioConfirmed = newHits.some((hit) => hit.audioConfirmed);
   return {
     ...result,
+    stringTracking: result.stringTracking
+      ? { ...result.stringTracking, audioConfirmed: currentAudioConfirmed }
+      : result.stringTracking,
     continuous: {
       ...result.continuous,
-      newHits: result.continuous.newHits.map(fuseHitWithAudio),
-      recentHits: result.continuous.recentHits.map(fuseHitWithAudio),
+      newHits,
+      recentHits,
     },
   };
 }
