@@ -6,6 +6,8 @@ export type NativeAudioStartResult = {
   started: boolean;
   sampleRate: number;
   referenceA4: number;
+  inputSource: 'UNPROCESSED' | 'DEFAULT' | 'UNKNOWN' | string;
+  automaticGainControlLikely: boolean;
 };
 
 export type NativeAudioReading = {
@@ -13,15 +15,25 @@ export type NativeAudioReading = {
   frequencyHz: number;
   pitchConfidence: number;
   rms: number;
+  peakAmplitude: number;
   noiseFloor: number;
+  signalToNoiseDb: number;
   clippingRatio: number;
+  zeroCrossingRate: number;
+  spectralCentroidHz: number;
+  brightnessRatio: number;
+  spectralFlatness: number;
   attackCount: number;
   lastAttackAtMs: number;
   attackIntervalMs: number;
   attackStrength: number;
+  millisecondsSinceAttack: number;
+  envelopeRatio: number;
   sampleCount: number;
   referenceA4: number;
   hasPitch: boolean;
+  inputSource: 'UNPROCESSED' | 'DEFAULT' | 'UNKNOWN' | string;
+  automaticGainControlLikely: boolean;
   running: boolean;
 };
 
