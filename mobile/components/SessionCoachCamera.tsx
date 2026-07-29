@@ -4,6 +4,12 @@ import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet, Text, View
 
 import type { PracticeCategoryId } from '../config/guitar-mode-profiles';
 import type { PracticePreset } from '../config/personal-practice-presets';
+import ContinuousRightHandCamera, {
+  type ContinuousHandAnalysisResult,
+  type ContinuousRightHandStats,
+  type ContinuousStringHit,
+  isContinuousRightHandCameraAvailable,
+} from '../modules/guitar-coach-continuous-camera';
 import {
   analyzeHandAsync,
   type GuitarStringContact,
@@ -49,13 +55,13 @@ function initialPlan(focus: PracticePreset['cameraFocus']): AnalysisMode {
 }
 
 function modeTitle(mode: AnalysisMode) {
-  if (mode === 'right-hand') return '오른손·피크·기타줄 정밀 분석';
+  if (mode === 'right-hand') return '오른손·피크·기타줄 연속 분석';
   if (mode === 'left-hand') return '왼손·코드·지판 정밀 분석';
   return '전체 자세·양손 연결 종합 분석';
 }
 
 function modeInstruction(mode: AnalysisMode) {
-  if (mode === 'right-hand') return '브리지·오른손·여섯 줄을 크게 보이게 두세요. 피크와 P·i·m·a를 각각 줄에 연결합니다.';
+  if (mode === 'right-hand') return '브리지·오른손·여섯 줄을 크게 보이게 두세요. 연속 영상에서 피크와 P·i·m·a의 줄 통과를 추적합니다.';
   if (mode === 'left-hand') return '왼손과 사용하는 프렛만 크게 보이면 됩니다. 코드 착지와 줄 접촉 영역을 봅니다.';
   return '머리·어깨·양 팔꿈치·기타가 함께 보이면 자세와 양손 연결을 번갈아 수집합니다.';
 }
@@ -65,10 +71,10 @@ function techniqueHint(category: PracticeCategoryId, mode: AnalysisMode) {
     ? '손가락 동시 착지·높이·전환 이동을 확인합니다.'
     : '손가락 독립성·포지션 이동·불필요한 들림을 확인합니다.';
   if (mode === 'right-hand') {
-    if (category === 'arpeggio') return 'P·i·m·a 각각의 끝점, 복귀, 동반 움직임과 실제 탄현 줄을 확인합니다.';
-    if (category === 'strumming') return '피크 끝점과 통과한 줄 하나하나, 그립과 손목·소리 균형을 확인합니다.';
-    if (category === 'palmMute') return '브리지 근처 손날 위치, 피크 끝점과 탄현 줄·톤 일관성을 확인합니다.';
-    return '피크 끝점·각 손가락 끝점·줄별 거리·손목 안정성을 확인합니다.';
+    if (category === 'arpeggio') return 'P·i·m·a 끝점의 연속 궤적, 복귀와 실제 줄 통과 시각을 확인합니다.';
+    if (category === 'strumming') return '피크가 통과한 줄 범위와 다운·업 방향을 연속 프레임으로 확인합니다.';
+    if (category === 'palmMute') return '브리지 근처 손날 위치, 피크 줄 통과와 톤 일관성을 함께 확인합니다.';
+    return '피크·손가락 속도, 줄 교차, 줄별 거리와 손목 안정성을 연속 추적합니다.';
   }
   return '상체 균형·기타 위치·양손 큰 움직임·박자와 전체 소리를 종합합니다.';
 }
@@ -82,6 +88,12 @@ function contactLineLabel(contact: GuitarStringContact) {
   if (contact.stringNumber > 0) return `${contact.stringNumber}번`;
   if (contact.visualIndex > 0) return `V${contact.visualIndex}`;
   return '—';
+}
+
+function hitLineLabel(hit: ContinuousStringHit) {
+  if (hit.stringNumber > 0) return `${hit.stringNumber}번 줄`;
+  if (hit.visualIndex > 0) return `시각 줄 ${hit.visualIndex}`;
+  return '줄 번호 판정 불가';
 }
 
 function PoseOverlay({ result, width, height }: { result: PoseAnalysisResult | null; width: number; height: number }) {
@@ -218,6 +230,13 @@ function contactStatus(result: HandAnalysisResult | null) {
     .join(' · ');
 }
 
+function continuousStatus(stats: ContinuousRightHandStats | null) {
+  if (!stats) return '연속 분석 엔진 준비 중';
+  const inputFps = stats.previewFps > 0 ? stats.previewFps.toFixed(1) : '-';
+  const analysisFps = stats.analysisFps > 0 ? stats.analysisFps.toFixed(1) : '-';
+  return `카메라 입력 ${inputFps}fps · 분석 출력 ${analysisFps}fps · 누적 ${stats.analyzedFrameCount}프레임`;
+}
+
 export default function SessionCoachCamera({ running, category, cameraFocus }: { running: boolean; category: PracticeCategoryId; cameraFocus: PracticePreset['cameraFocus'] }) {
   const cameraRef = useRef<CameraView | null>(null);
   const analysisBusyRef = useRef(false);
@@ -231,10 +250,13 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
   const [cameraReady, setCameraReady] = useState(false);
   const [poseResult, setPoseResult] = useState<PoseAnalysisResult | null>(null);
   const [handResult, setHandResult] = useState<HandAnalysisResult | null>(null);
+  const [continuousStats, setContinuousStats] = useState<ContinuousRightHandStats | null>(null);
+  const [latestHit, setLatestHit] = useState<ContinuousStringHit | null>(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [analysisError, setAnalysisError] = useState('');
   const [frameCount, setFrameCount] = useState(0);
   const [cycleIndex, setCycleIndex] = useState(0);
+  const useContinuousRightHand = activeMode === 'right-hand' && isContinuousRightHandCameraAvailable;
 
   useEffect(() => {
     if (running) return;
@@ -265,12 +287,15 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
     setCameraKey((value) => value + 1);
     setPoseResult(null);
     setHandResult(null);
+    setContinuousStats(null);
+    setLatestHit(null);
     setFrameCount(0);
     setAnalysisError('');
     fullPassRef.current = 'pose';
   }, [activeMode]);
 
   useEffect(() => {
+    if (useContinuousRightHand) return;
     if (!running || !cameraReady || !permission?.granted) return;
     if (activeMode === 'full' && !isLiveCoachNativeAvailable) {
       setAnalysisError('전체 자세 모듈이 APK에 없습니다.');
@@ -291,7 +316,7 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
       analysisBusyRef.current = true;
       const startedAt = Date.now();
       try {
-        const quality = activeMode === 'full' ? 0.28 : activeMode === 'right-hand' ? 0.64 : 0.52;
+        const quality = activeMode === 'full' ? 0.28 : 0.52;
         const photo = await cameraRef.current.takePictureAsync({ quality, shutterSound: false, mirror: facing === 'front' });
         if (!photo?.uri || cancelled) return;
         if (activeMode === 'full') {
@@ -305,7 +330,7 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
             fullPassRef.current = 'pose';
           }
         } else {
-          const result = await analyzeHandAsync(photo.uri, activeMode === 'right-hand' ? 'auto' : 'none');
+          const result = await analyzeHandAsync(photo.uri, 'none');
           if (!cancelled) setHandResult(result);
         }
         if (!cancelled) {
@@ -316,7 +341,7 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
         if (!cancelled) setAnalysisError(caught instanceof Error ? caught.message : '자동 AI 분석 중 오류가 발생했습니다.');
       } finally {
         analysisBusyRef.current = false;
-        const target = activeMode === 'full' ? 820 : activeMode === 'right-hand' ? 430 : 500;
+        const target = activeMode === 'full' ? 820 : 500;
         schedule(Math.max(130, target - (Date.now() - startedAt)));
       }
     };
@@ -326,9 +351,10 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
       if (timer) clearTimeout(timer);
       analysisBusyRef.current = false;
     };
-  }, [activeMode, cameraReady, facing, permission?.granted, running]);
+  }, [activeMode, cameraReady, facing, permission?.granted, running, useContinuousRightHand]);
 
   const switchCamera = () => {
+    if (useContinuousRightHand) return;
     setCameraReady(false);
     setFacing((value) => value === 'front' ? 'back' : 'front');
     setCameraKey((value) => value + 1);
@@ -362,24 +388,57 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
       </View>
 
       <View style={styles.infoRow}>
-        <View style={styles.infoTextWrap}><Text style={styles.eyebrow}>ADAPTIVE CAMERA AI</Text><Text style={styles.title}>{modeTitle(activeMode)}</Text><Text style={styles.hint}>{techniqueHint(category, activeMode)}</Text></View>
-        <Pressable onPress={switchCamera} style={styles.cameraButton}><Text style={styles.cameraButtonText}>{facing === 'front' ? '전면' : '후면'} 전환</Text></Pressable>
+        <View style={styles.infoTextWrap}><Text style={styles.eyebrow}>{useContinuousRightHand ? 'CONTINUOUS CAMERAX AI' : 'ADAPTIVE CAMERA AI'}</Text><Text style={styles.title}>{modeTitle(activeMode)}</Text><Text style={styles.hint}>{techniqueHint(category, activeMode)}</Text></View>
+        {useContinuousRightHand ? (
+          <View style={styles.fixedCameraBadge}><Text style={styles.fixedCameraText}>후면 연속</Text></View>
+        ) : (
+          <Pressable onPress={switchCamera} style={styles.cameraButton}><Text style={styles.cameraButtonText}>{facing === 'front' ? '전면' : '후면'} 전환</Text></Pressable>
+        )}
       </View>
 
       <View style={[styles.cameraFrame, activeMode !== 'full' && styles.cameraFrameClose]} onLayout={onLayout}>
-        <CameraView key={`${facing}-${cameraKey}`} ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} mirror={facing === 'front'} mode="picture" ratio="4:3" animateShutter={false} onCameraReady={() => setCameraReady(true)} onMountError={(event) => setAnalysisError(event.message)} />
+        {useContinuousRightHand ? (
+          <ContinuousRightHandCamera
+            style={StyleSheet.absoluteFill}
+            running
+            pickColor="auto"
+            onCameraReady={() => {
+              setCameraReady(true);
+              setAnalysisError('');
+            }}
+            onAnalysis={(event) => {
+              const result: ContinuousHandAnalysisResult = event.nativeEvent;
+              setHandResult(result);
+              setContinuousStats(result.continuous);
+              setFrameCount(result.continuous.frameCount);
+              const newest = result.continuous.newHits.at(-1);
+              if (newest) setLatestHit(newest);
+              setAnalysisError('');
+            }}
+            onError={(event) => setAnalysisError(event.nativeEvent.message)}
+          />
+        ) : (
+          <CameraView key={`${facing}-${cameraKey}`} ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} mirror={facing === 'front'} mode="picture" ratio="4:3" animateShutter={false} onCameraReady={() => setCameraReady(true)} onMountError={(event) => setAnalysisError(event.message)} />
+        )}
         {activeMode === 'full' ? <PoseOverlay result={poseResult} width={previewSize.width} height={previewSize.height} /> : null}
         <HandOverlay result={handResult} width={previewSize.width} height={previewSize.height} />
-        <View pointerEvents="none" style={styles.badgeRow}><Text style={[styles.badge, running && styles.badgeRunning]}>{running ? `${activeMode === 'full' ? '전체' : activeMode === 'right-hand' ? '오른손' : '왼손'} 자동 추적` : '세션 시작 대기'}</Text><Text style={styles.badge}>{frameCount}프레임</Text></View>
+        <View pointerEvents="none" style={styles.badgeRow}>
+          <Text style={[styles.badge, running && styles.badgeRunning]}>{running ? `${activeMode === 'full' ? '전체' : activeMode === 'right-hand' ? '오른손' : '왼손'} ${useContinuousRightHand ? '연속 분석' : '자동 추적'}` : useContinuousRightHand ? '연속 정렬·분석 대기' : '세션 시작 대기'}</Text>
+          <Text style={styles.badge}>{frameCount}프레임</Text>
+        </View>
         {!cameraReady ? <View style={styles.loading}><ActivityIndicator /><Text style={styles.loadingText}>카메라 준비 중</Text></View> : null}
       </View>
 
       <View style={styles.resultCard}>
         <Text style={styles.resultTitle}>{detectionText}</Text>
+        {activeMode === 'right-hand' ? <Text style={styles.fpsResult}>{continuousStatus(continuousStats)}</Text> : null}
         {activeMode === 'right-hand' ? <Text style={styles.stringResult}>{stringStatus(handResult)}</Text> : null}
         {activeMode === 'right-hand' ? <Text style={styles.contactResult}>{contactStatus(handResult)}</Text> : null}
+        {activeMode === 'right-hand' && latestHit ? <Text style={styles.hitResult}>최근 탄현 후보 · {latestHit.label} → {hitLineLabel(latestHit)} · {latestHit.direction === 'down' ? '다운' : latestHit.direction === 'up' ? '업' : '방향 판정 불가'} · {Math.round(latestHit.confidence * 100)}%</Text> : null}
         {activeMode === 'right-hand' && handResult?.pick.detected ? <Text style={styles.resultDetail}>피크 검출 {Math.round(handResult.pick.confidence * 100)}% · 노출 {handResult.pick.exposure.toFixed(2)} · 영상각 {Math.round(handResult.pick.angleDegrees)}°</Text> : null}
-        <Text style={styles.resultDetail}>피크 끝점과 P·i·m·a·새끼 끝점을 따로 추적하며 최근 5개 프레임의 줄 위치를 합쳐 흔들림을 줄입니다.</Text>
+        <Text style={styles.resultDetail}>{useContinuousRightHand ? '미리보기는 계속 유지하고 오래된 분석 프레임은 쌓지 않습니다. 피크와 각 손가락의 최근 궤적이 줄을 통과할 때만 탄현 후보로 기록합니다.' : '전체·왼손 모드는 현재 안정된 촬영 분석을 유지합니다.'}</Text>
+        {continuousStats && continuousStats.analysisFps > 0 && continuousStats.analysisFps < 12 ? <Text style={styles.warningText}>분석 속도가 12fps보다 낮습니다. 빠른 탄현의 일부는 판정 불가가 될 수 있습니다.</Text> : null}
+        {!isContinuousRightHandCameraAvailable && activeMode === 'right-hand' ? <Text style={styles.warningText}>연속 카메라 모듈이 없어 사진 분석으로 대체되었습니다.</Text> : null}
         {selectedPlan === 'auto-cycle' ? <Text style={styles.cycleText}>20초마다 전체 → 오른손 → 왼손으로 전환됩니다. 안내에 맞춰 휴대폰 위치만 옮기세요.</Text> : null}
         {analysisError ? <Text style={styles.errorText}>{analysisError}</Text> : null}
       </View>
@@ -409,6 +468,8 @@ const styles = StyleSheet.create({
   hint: { color: '#8b949e', fontSize: 8, lineHeight: 12, marginTop: 2 },
   cameraButton: { minWidth: 64, height: 36, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
   cameraButtonText: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
+  fixedCameraBadge: { minWidth: 64, height: 36, borderRadius: 10, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#16351f', alignItems: 'center', justifyContent: 'center' },
+  fixedCameraText: { color: '#7ee787', fontSize: 8, fontWeight: '900' },
   cameraFrame: { height: 390, borderRadius: 16, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
   cameraFrameClose: { height: 430 },
   trackingBox: { position: 'absolute', borderWidth: 2, borderColor: '#7ee787', borderRadius: 22, backgroundColor: 'rgba(126,231,135,0.05)' },
@@ -436,9 +497,12 @@ const styles = StyleSheet.create({
   pickAxis: { width: 28, height: 2, backgroundColor: '#ff7b72' },
   resultCard: { backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', borderRadius: 12, padding: 9, marginTop: 7 },
   resultTitle: { color: '#f0f6fc', fontSize: 9, fontWeight: '900' },
+  fpsResult: { color: '#7ee787', fontSize: 8, lineHeight: 12, fontWeight: '900', marginTop: 4 },
   stringResult: { color: '#f2cc60', fontSize: 8, lineHeight: 12, fontWeight: '800', marginTop: 4 },
   contactResult: { color: '#ffb3ad', fontSize: 8, lineHeight: 13, fontWeight: '900', marginTop: 4 },
+  hitResult: { color: '#ffffff', fontSize: 8, lineHeight: 13, fontWeight: '900', backgroundColor: '#4b1f22', borderRadius: 8, padding: 6, marginTop: 5 },
   resultDetail: { color: '#8b949e', fontSize: 8, lineHeight: 12, marginTop: 3 },
+  warningText: { color: '#f2cc60', fontSize: 8, lineHeight: 12, fontWeight: '800', marginTop: 4 },
   cycleText: { color: '#79c0ff', fontSize: 8, lineHeight: 12, marginTop: 4 },
   errorText: { color: '#ff7b72', fontSize: 8, lineHeight: 12, marginTop: 4 },
   disabled: { opacity: 0.42 },
