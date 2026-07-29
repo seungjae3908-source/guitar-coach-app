@@ -1,8 +1,9 @@
 import type { PracticeCategoryId } from '../config/guitar-mode-profiles';
-import type { CameraCalibration } from './camera-calibration';
-import { nearestStringGuide } from './camera-calibration';
+import type { MetronomeTimingState } from '../modules/guitar-coach-metronome';
 import { evaluateAnalysisQuality } from './analysis-confidence';
 import type { LiveAnalysisFrame } from './analysis-stream';
+import type { CameraCalibration } from './camera-calibration';
+import { nearestStringGuide } from './camera-calibration';
 import type { SessionIssue } from './practice-session-store';
 
 export type LiveSessionOptions = {
@@ -27,6 +28,7 @@ export type LiveSessionSnapshot = {
   };
   lastStringNumber: number | null;
   timingOffsetMs: number | null;
+  timingJitterMs: number | null;
 };
 
 type MetricSample = {
@@ -84,11 +86,15 @@ export class LivePracticeSessionAccumulator {
   private readonly handSamples: MetricSample[] = [];
   private readonly pickSamples: MetricSample[] = [];
   private readonly timingSamples: MetricSample[] = [];
+  private readonly timingOffsets: number[] = [];
   private readonly handTemporalSamples: HandTemporalSample[] = [];
   private readonly issueCounters = new Map<string, IssueCounter>();
+  private readonly issueLastRecordedAt = new Map<string, number>();
   private stableFrameCount = 0;
   private lastStringNumber: number | null = null;
   private latestTimingOffsetMs: number | null = null;
+  private latestMetronome: MetronomeTimingState | null = null;
+  private lastProcessedAttackCount = -1;
 
   constructor(options: LiveSessionOptions) {
     this.options = options;
@@ -101,7 +107,8 @@ export class LivePracticeSessionAccumulator {
   addFrame(frame: LiveAnalysisFrame) {
     if (frame.kind === 'pose') this.addPoseFrame(frame);
     else if (frame.kind === 'hand') this.addHandFrame(frame);
-    else this.addAudioFrame(frame);
+    else if (frame.kind === 'audio') this.addAudioFrame(frame);
+    else this.addMetronomeFrame(frame);
   }
 
   private addIssue(
@@ -109,7 +116,11 @@ export class LivePracticeSessionAccumulator {
     title: string,
     severity: SessionIssue['severity'],
     confidencePercent: number,
+    capturedAt: number,
   ) {
+    const previousAt = this.issueLastRecordedAt.get(id) ?? 0;
+    if (capturedAt - previousAt < 1200) return;
+    this.issueLastRecordedAt.set(id, capturedAt);
     const current = this.issueCounters.get(id);
     this.issueCounters.set(id, {
       title,
@@ -117,6 +128,11 @@ export class LivePracticeSessionAccumulator {
       severity: !current || severityRank(severity) > severityRank(current.severity) ? severity : current.severity,
       confidenceTotal: (current?.confidenceTotal ?? 0) + confidencePercent,
     });
+  }
+
+  private addMetronomeFrame(frame: Extract<LiveAnalysisFrame, { kind: 'metronome' }>) {
+    this.latestMetronome = frame.result;
+    if (frame.result.running) this.options.bpm = clamp(Math.round(frame.result.bpm), 35, 220);
   }
 
   private addPoseFrame(frame: Extract<LiveAnalysisFrame, { kind: 'pose' }>) {
@@ -157,10 +173,10 @@ export class LivePracticeSessionAccumulator {
     ), 0, 100);
 
     this.poseSamples.push({ score, confidence: quality.confidencePercent, capturedAt: frame.capturedAt });
-    if (shoulderTiltRatio > 0.13) this.addIssue('shoulder-tilt', '한쪽 어깨가 올라감', 'warn', quality.confidencePercent);
-    if (Math.abs(shoulderCenterX - 0.5) > 0.13) this.addIssue('body-off-center', '상체가 화면 중심에서 벗어남', 'info', quality.confidencePercent);
-    if (headOffsetRatio > 0.34) this.addIssue('head-tilt', '고개가 한쪽으로 기울어짐', 'warn', quality.confidencePercent);
-    if (torsoOffset > 0.12) this.addIssue('torso-lean', '상체가 옆으로 접힘', 'warn', quality.confidencePercent);
+    if (shoulderTiltRatio > 0.13) this.addIssue('shoulder-tilt', '한쪽 어깨가 올라감', 'warn', quality.confidencePercent, frame.capturedAt);
+    if (Math.abs(shoulderCenterX - 0.5) > 0.13) this.addIssue('body-off-center', '상체가 화면 중심에서 벗어남', 'info', quality.confidencePercent, frame.capturedAt);
+    if (headOffsetRatio > 0.34) this.addIssue('head-tilt', '고개가 한쪽으로 기울어짐', 'warn', quality.confidencePercent, frame.capturedAt);
+    if (torsoOffset > 0.12) this.addIssue('torso-lean', '상체가 옆으로 접힘', 'warn', quality.confidencePercent, frame.capturedAt);
   }
 
   private addHandFrame(frame: Extract<LiveAnalysisFrame, { kind: 'hand' }>) {
@@ -219,10 +235,10 @@ export class LivePracticeSessionAccumulator {
     const score = clamp(Math.round(100 - motionPenalty - gripPenalty - pinchPenalty), 0, 100);
 
     this.handSamples.push({ score, confidence: quality.confidencePercent, capturedAt: frame.capturedAt });
-    if (pinchRatio > 0.6) this.addIssue('wide-pick-grip', '엄지와 검지 간격이 큼', 'warn', quality.confidencePercent);
-    if (pinchRatio < 0.05) this.addIssue('tight-pick-grip', '엄지와 검지가 과하게 겹침', 'warn', quality.confidencePercent);
-    if (pinchVariation > 0.1) this.addIssue('unstable-grip', '피크 그립 간격이 흔들림', 'warn', quality.confidencePercent);
-    if (palmVariation > 22) this.addIssue('wrist-angle-variation', '손목 방향 변화가 큼', 'warn', quality.confidencePercent);
+    if (pinchRatio > 0.6) this.addIssue('wide-pick-grip', '엄지와 검지 간격이 큼', 'warn', quality.confidencePercent, frame.capturedAt);
+    if (pinchRatio < 0.05) this.addIssue('tight-pick-grip', '엄지와 검지가 과하게 겹침', 'warn', quality.confidencePercent, frame.capturedAt);
+    if (pinchVariation > 0.1) this.addIssue('unstable-grip', '피크 그립 간격이 흔들림', 'warn', quality.confidencePercent, frame.capturedAt);
+    if (palmVariation > 22) this.addIssue('wrist-angle-variation', '손목 방향 변화가 큼', 'warn', quality.confidencePercent, frame.capturedAt);
 
     if (result.pick.detected) {
       const pickQuality = evaluateAnalysisQuality({
@@ -239,8 +255,8 @@ export class LivePracticeSessionAccumulator {
             : 0;
         const pickScore = clamp(Math.round(100 - exposurePenalty), 0, 100);
         this.pickSamples.push({ score: pickScore, confidence: pickQuality.confidencePercent, capturedAt: frame.capturedAt });
-        if (result.pick.exposure < 0.1) this.addIssue('pick-hidden', '피크가 손가락 안에 너무 많이 숨음', 'warn', pickQuality.confidencePercent);
-        if (result.pick.exposure > 0.9) this.addIssue('pick-exposed', '피크 노출량이 너무 큼', 'high', pickQuality.confidencePercent);
+        if (result.pick.exposure < 0.1) this.addIssue('pick-hidden', '피크가 손가락 안에 너무 많이 숨음', 'warn', pickQuality.confidencePercent, frame.capturedAt);
+        if (result.pick.exposure > 0.9) this.addIssue('pick-exposed', '피크 노출량이 너무 큼', 'high', pickQuality.confidencePercent, frame.capturedAt);
 
         if (this.options.calibration) {
           const nearest = nearestStringGuide(
@@ -255,7 +271,10 @@ export class LivePracticeSessionAccumulator {
 
   private addAudioFrame(frame: Extract<LiveAnalysisFrame, { kind: 'audio' }>) {
     const result = frame.result;
-    if (!result.running || result.attackIntervalMs <= 0) return;
+    if (!result.running || result.attackCount <= 0 || result.lastAttackAtMs <= 0) return;
+    if (result.attackCount === this.lastProcessedAttackCount) return;
+    this.lastProcessedAttackCount = result.attackCount;
+
     const quality = evaluateAnalysisQuality({
       source: 'microphone',
       confidence: Math.max(result.pitchConfidence, Math.min(1, result.attackStrength)),
@@ -265,16 +284,35 @@ export class LivePracticeSessionAccumulator {
     });
     if (!quality.allowed) return;
 
-    const expectedIntervalMs = 60000 / Math.max(35, this.options.bpm) / this.options.pulsesPerBeat;
-    const offset = result.attackIntervalMs - expectedIntervalMs;
+    const metronome = this.latestMetronome;
+    const fallbackInterval = 60000 / Math.max(35, this.options.bpm) / this.options.pulsesPerBeat;
+    const intervalMs = metronome?.running && metronome.intervalMs > 0
+      ? metronome.intervalMs
+      : fallbackInterval;
+    let offset: number;
+    if (metronome?.running && metronome.lastTickElapsedRealtimeMs > 0) {
+      const fromLastTick = result.lastAttackAtMs - metronome.lastTickElapsedRealtimeMs;
+      offset = fromLastTick - Math.round(fromLastTick / intervalMs) * intervalMs;
+    } else if (result.attackIntervalMs > 0) {
+      offset = result.attackIntervalMs - intervalMs;
+    } else {
+      return;
+    }
+
     const absoluteOffset = Math.abs(offset);
-    const score = clamp(Math.round(100 - absoluteOffset / Math.max(1, expectedIntervalMs) * 145), 0, 100);
+    const score = clamp(Math.round(100 - absoluteOffset / Math.max(1, intervalMs * 0.5) * 100), 0, 100);
     this.latestTimingOffsetMs = Math.round(offset);
+    this.timingOffsets.push(offset);
+    if (this.timingOffsets.length > 120) this.timingOffsets.shift();
     this.timingSamples.push({ score, confidence: quality.confidencePercent, capturedAt: frame.capturedAt });
 
-    if (offset > expectedIntervalMs * 0.18) this.addIssue('timing-slow', '박보다 늦게 연주함', 'warn', quality.confidencePercent);
-    if (offset < -expectedIntervalMs * 0.18) this.addIssue('timing-fast', '박보다 빠르게 연주함', 'warn', quality.confidencePercent);
-    if (result.clippingRatio > 0.015) this.addIssue('audio-near-clipping', '앰프 또는 기타 입력이 너무 큼', 'info', quality.confidencePercent);
+    if (offset > intervalMs * 0.15) this.addIssue('timing-slow', '클릭보다 늦게 연주함', 'warn', quality.confidencePercent, frame.capturedAt);
+    if (offset < -intervalMs * 0.15) this.addIssue('timing-fast', '클릭보다 빠르게 연주함', 'warn', quality.confidencePercent, frame.capturedAt);
+    const recentJitter = standardDeviation(this.timingOffsets.slice(-12));
+    if (this.timingOffsets.length >= 6 && recentJitter > Math.min(65, intervalMs * 0.18)) {
+      this.addIssue('timing-jitter', '박자 앞뒤 흔들림이 큼', 'warn', quality.confidencePercent, frame.capturedAt);
+    }
+    if (result.clippingRatio > 0.015) this.addIssue('audio-near-clipping', '앰프 또는 기타 입력이 너무 큼', 'info', quality.confidencePercent, frame.capturedAt);
   }
 
   snapshot(): LiveSessionSnapshot {
@@ -324,7 +362,7 @@ export class LivePracticeSessionAccumulator {
       confidencePercent,
       stableSeconds: Math.min(
         Math.round((Date.now() - this.startedAt) / 1000),
-        Math.round(this.stableFrameCount * 0.35),
+        Math.round(this.stableFrameCount * 0.5),
       ),
       aiMistakes: issues.reduce((sum, issue) => sum + issue.count, 0),
       issues,
@@ -336,6 +374,9 @@ export class LivePracticeSessionAccumulator {
       },
       lastStringNumber: this.lastStringNumber,
       timingOffsetMs: this.latestTimingOffsetMs,
+      timingJitterMs: this.timingOffsets.length >= 2
+        ? Math.round(standardDeviation(this.timingOffsets.slice(-20)))
+        : null,
     };
   }
 }
