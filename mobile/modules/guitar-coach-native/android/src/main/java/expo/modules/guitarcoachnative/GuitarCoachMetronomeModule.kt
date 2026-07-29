@@ -26,6 +26,10 @@ class GuitarCoachMetronomeModule : Module() {
   private var pulseIndex = 0
   private var nextTickAt = 0L
   private var tickRunnable: Runnable? = null
+  private var lastTickElapsedRealtime = 0L
+  private var lastTickUptime = 0L
+  private var lastTickPulseIndex = -1
+  private var absolutePulseCount = 0L
 
   private var currentBpm = 70
   private var currentBeatsPerBar = 4
@@ -83,6 +87,30 @@ class GuitarCoachMetronomeModule : Module() {
       }
     }
 
+    AsyncFunction("getTimingStateAsync") { promise: Promise ->
+      mainHandler.post {
+        val safeSubdivision = currentSubdivision.coerceIn(1, 4)
+        val intervalMs = 60000.0 / currentBpm.toDouble() / safeSubdivision.toDouble()
+        promise.resolve(
+          mapOf(
+            "running" to running,
+            "bpm" to currentBpm,
+            "beatsPerBar" to currentBeatsPerBar,
+            "subdivision" to safeSubdivision,
+            "intervalMs" to intervalMs,
+            "lastTickElapsedRealtimeMs" to lastTickElapsedRealtime.toDouble(),
+            "lastTickUptimeMs" to lastTickUptime.toDouble(),
+            "nextTickUptimeMs" to nextTickAt.toDouble(),
+            "lastTickPulseIndex" to lastTickPulseIndex,
+            "nextPulseIndex" to pulseIndex,
+            "absolutePulseCount" to absolutePulseCount.toDouble(),
+            "elapsedRealtimeNowMs" to SystemClock.elapsedRealtime().toDouble(),
+            "uptimeNowMs" to SystemClock.uptimeMillis().toDouble()
+          )
+        )
+      }
+    }
+
     AsyncFunction("stopAsync") {
       mainHandler.post { stopInternal(stopSpeech = true) }
     }
@@ -130,6 +158,10 @@ class GuitarCoachMetronomeModule : Module() {
     applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset)
 
     pulseIndex = 0
+    absolutePulseCount = 0L
+    lastTickElapsedRealtime = 0L
+    lastTickUptime = 0L
+    lastTickPulseIndex = -1
     running = true
     generation += 1
 
@@ -157,6 +189,10 @@ class GuitarCoachMetronomeModule : Module() {
     toneGenerator?.stopTone()
     textToSpeech?.stop()
     pulseIndex = 0
+    absolutePulseCount = 0L
+    lastTickElapsedRealtime = 0L
+    lastTickUptime = 0L
+    lastTickPulseIndex = -1
     nextTickAt = SystemClock.uptimeMillis() + 35L
     scheduleTick(generation, nextTickAt)
   }
@@ -192,15 +228,21 @@ class GuitarCoachMetronomeModule : Module() {
 
       val safeSubdivision = currentSubdivision.coerceIn(1, 4)
       val totalPulses = (currentBeatsPerBar * safeSubdivision).coerceAtLeast(1)
-      val accent = pulseIndex == 0
+      val firedPulseIndex = pulseIndex
+      val accent = firedPulseIndex == 0
+
+      lastTickElapsedRealtime = SystemClock.elapsedRealtime()
+      lastTickUptime = SystemClock.uptimeMillis()
+      lastTickPulseIndex = firedPulseIndex
+      absolutePulseCount += 1L
 
       if (currentSoundEnabled) playToneWithPreset(accent, currentSoundPreset)
-      if (currentVoiceEnabled && ttsReady && pulseIndex % safeSubdivision == 0) {
-        val beatIndex = (pulseIndex / safeSubdivision) % currentBeatsPerBar.coerceAtLeast(1)
+      if (currentVoiceEnabled && ttsReady && firedPulseIndex % safeSubdivision == 0) {
+        val beatIndex = (firedPulseIndex / safeSubdivision) % currentBeatsPerBar.coerceAtLeast(1)
         speakPhrase(voicePhraseForBeat(beatIndex, safeSubdivision))
       }
 
-      pulseIndex = (pulseIndex + 1) % totalPulses
+      pulseIndex = (firedPulseIndex + 1) % totalPulses
 
       val intervalMs = 60000.0 / currentBpm.toDouble() / safeSubdivision.toDouble()
       nextTickAt = (nextTickAt + intervalMs).toLong()
