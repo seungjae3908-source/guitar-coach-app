@@ -55,6 +55,29 @@ export type PickAnalysisResult = {
   centerY: number;
 };
 
+export type GuitarStringLine = {
+  visualIndex: 1 | 2 | 3 | 4 | 5 | 6;
+  stringNumber: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  strength: number;
+};
+
+export type GuitarStringTrackingResult = {
+  detected: boolean;
+  confidence: number;
+  angleDegrees: number;
+  visibleLineCount: number;
+  stringOrder: 'low-to-high' | 'high-to-low' | 'unknown' | string;
+  numberingConfidence: number;
+  nearestVisualIndex: number;
+  nearestStringNumber: number;
+  nearestDistanceRatio: number;
+  lines: GuitarStringLine[];
+};
+
 export type HandAnalysisResult = {
   hasHand: boolean;
   imageWidth: number;
@@ -64,6 +87,7 @@ export type HandAnalysisResult = {
   handednessScore: number;
   landmarks: HandLandmarkPoint[];
   pick: PickAnalysisResult;
+  stringTracking?: GuitarStringTrackingResult;
 };
 
 type GuitarCoachHandModule = {
