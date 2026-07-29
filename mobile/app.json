@@ -2,7 +2,7 @@
   "expo": {
     "name": "기타 코치 라이브 테스트",
     "slug": "guitar-coach-live-test",
-    "version": "0.5.7",
+    "version": "0.5.8",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "platforms": ["android"],
@@ -10,7 +10,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "집중 연습 중 상체 자세를 화면에서 분석하기 위해 카메라를 사용합니다.",
+          "cameraPermission": "집중 연습 중 상체 자세와 손가락·피크를 휴대폰 안에서 분석하기 위해 카메라를 사용합니다.",
           "microphonePermission": "이 테스트판은 마이크를 사용하지 않습니다.",
           "recordAudioAndroid": false
         }
@@ -18,7 +18,7 @@
     ],
     "android": {
       "package": "com.seungjae.guitarcoach.livetest",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": ["CAMERA"]
     }
   }
