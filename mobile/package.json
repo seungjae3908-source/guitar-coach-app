@@ -1,6 +1,6 @@
 {
-  "name": "guitar-coach-live-test",
-  "version": "0.5.8",
+  "name": "guitar-coach-complete-beta",
+  "version": "0.6.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
