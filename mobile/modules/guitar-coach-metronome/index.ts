@@ -7,6 +7,8 @@ export type VoicePreparationResult = {
   message?: string;
 };
 
+export type MetronomeSoundPreset = 0 | 1 | 2 | 3 | 4;
+
 type GuitarCoachMetronomeModule = {
   androidMetronomeAvailable: boolean;
   prepareVoiceAsync(): Promise<VoicePreparationResult>;
@@ -16,6 +18,7 @@ type GuitarCoachMetronomeModule = {
     subdivision: number,
     soundEnabled: boolean,
     voiceEnabled: boolean,
+    soundPreset: MetronomeSoundPreset,
   ): Promise<void>;
   updateAsync(
     bpm: number,
@@ -23,9 +26,11 @@ type GuitarCoachMetronomeModule = {
     subdivision: number,
     soundEnabled: boolean,
     voiceEnabled: boolean,
+    soundPreset: MetronomeSoundPreset,
   ): Promise<void>;
   stopAsync(): Promise<void>;
   previewVoiceAsync(subdivision: number): Promise<void>;
+  previewSoundAsync(soundPreset: MetronomeSoundPreset): Promise<void>;
 };
 
 const NativeModule = requireOptionalNativeModule<GuitarCoachMetronomeModule>('GuitarCoachMetronome');
@@ -43,9 +48,10 @@ export async function startAdvancedMetronomeAsync(
   subdivision: number,
   soundEnabled: boolean,
   voiceEnabled: boolean,
+  soundPreset: MetronomeSoundPreset = 0,
 ) {
   if (!NativeModule) throw new Error('고급 메트로놈 모듈을 사용할 수 없습니다.');
-  await NativeModule.startAsync(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled);
+  await NativeModule.startAsync(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset);
 }
 
 export async function updateAdvancedMetronomeAsync(
@@ -54,9 +60,10 @@ export async function updateAdvancedMetronomeAsync(
   subdivision: number,
   soundEnabled: boolean,
   voiceEnabled: boolean,
+  soundPreset: MetronomeSoundPreset = 0,
 ) {
   if (!NativeModule) throw new Error('고급 메트로놈 모듈을 사용할 수 없습니다.');
-  await NativeModule.updateAsync(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled);
+  await NativeModule.updateAsync(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset);
 }
 
 export async function stopAdvancedMetronomeAsync() {
@@ -67,4 +74,9 @@ export async function stopAdvancedMetronomeAsync() {
 export async function previewVoiceCountAsync(subdivision: number) {
   if (!NativeModule) throw new Error('음성 카운트 모듈을 사용할 수 없습니다.');
   await NativeModule.previewVoiceAsync(subdivision);
+}
+
+export async function previewMetronomeSoundAsync(soundPreset: MetronomeSoundPreset) {
+  if (!NativeModule) throw new Error('메트로놈 음원 모듈을 사용할 수 없습니다.');
+  await NativeModule.previewSoundAsync(soundPreset);
 }
