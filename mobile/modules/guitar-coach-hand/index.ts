@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 
 import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../services/analysis-stream';
+import { getLivePracticeContext } from '../../services/practice-session-context';
 
 export type HandLandmarkName =
   | 'wrist'
@@ -118,6 +119,34 @@ function contactPoint(result: HandAnalysisResult) {
   };
 }
 
+function palmSize(result: HandAnalysisResult) {
+  if (!result.hasHand || result.landmarks.length < 10) return 0;
+  return Math.hypot(
+    result.landmarks[0].x - result.landmarks[9].x,
+    result.landmarks[0].y - result.landmarks[9].y,
+  );
+}
+
+function shouldPublishForCoach(result: HandAnalysisResult, pickColor: PickColor) {
+  const context = getLivePracticeContext();
+  if (!context?.active) return true;
+  const rightHandCategory = context.category === 'arpeggio'
+    || context.category === 'fingerstyle'
+    || context.category === 'strumming'
+    || context.category === 'downPicking'
+    || context.category === 'alternatePicking'
+    || context.category === 'palmMute';
+  const leftHandCategory = context.category === 'chords'
+    || context.category === 'fingering'
+    || context.category === 'powerChords'
+    || context.category === 'scales'
+    || context.category === 'leadTechnique';
+
+  if (pickColor === 'auto') return rightHandCategory;
+  if (pickColor === 'none') return leftHandCategory && palmSize(result) >= 0.18;
+  return rightHandCategory;
+}
+
 function liveAudioCandidates() {
   const frame = getLatestLiveAnalysisFrames().audio;
   if (!frame || Date.now() - frame.capturedAt > 850) return null;
@@ -180,8 +209,10 @@ async function analyzeHandRawAsync(uri: string, pickColor: PickColor) {
   return NativeModule.analyzeHandAsync(uri, pickColor);
 }
 
-function publish(result: HandAnalysisResult) {
-  publishLiveAnalysisFrame({ kind: 'hand', capturedAt: Date.now(), result });
+function finish(result: HandAnalysisResult, pickColor: PickColor) {
+  if (shouldPublishForCoach(result, pickColor)) {
+    publishLiveAnalysisFrame({ kind: 'hand', capturedAt: Date.now(), result });
+  }
   return result;
 }
 
@@ -195,7 +226,8 @@ export async function analyzeHandWithStringsAsync(uri: string, pickColor: PickCo
     }
   }
   const hand = await analyzeHandRawAsync(uri, pickColor);
-  return publish(tracking ? { ...hand, stringTracking: fuseNearestString(tracking, hand) } : hand);
+  const result = tracking ? { ...hand, stringTracking: fuseNearestString(tracking, hand) } : hand;
+  return finish(result, pickColor);
 }
 
 export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
