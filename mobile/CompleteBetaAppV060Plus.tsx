@@ -11,35 +11,52 @@ import {
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import AudioFileAnalysisPanel from './components/AudioFileAnalysisPanel';
 import CameraCalibrationWizard from './components/CameraCalibrationWizard';
+import MasterSongStudioPanel from './components/MasterSongStudioPanel';
+import MasteryAcademyPanel from './components/MasteryAcademyPanel';
 import MetronomeProgramPanel from './components/MetronomeProgramPanel';
 import PracticeRecordingPanel from './components/PracticeRecordingPanel';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
-import SongPracticePanel from './components/SongPracticePanel';
+import ToneMasterLabPanel from './components/ToneMasterLabPanel';
 import TunerPanel from './components/TunerPanel';
 import VoiceCoachController from './components/VoiceCoachController';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
-type GlobalTool = 'app' | 'program' | 'session' | 'recording' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
+type GlobalTool =
+  | 'app'
+  | 'academy'
+  | 'session'
+  | 'song'
+  | 'tone'
+  | 'program'
+  | 'recording'
+  | 'audio'
+  | 'calibration'
+  | 'records'
+  | 'tuner';
 
 const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'app', label: '홈' },
+  { id: 'academy', label: '수제자수업' },
+  { id: 'session', label: '집중교정' },
+  { id: 'song', label: '곡스튜디오' },
+  { id: 'tone', label: '톤연구실' },
   { id: 'program', label: '메트로놈' },
-  { id: 'session', label: '집중연습' },
   { id: 'recording', label: '영상' },
   { id: 'audio', label: '음원분석' },
-  { id: 'song', label: '곡연습' },
   { id: 'calibration', label: '촬영보정' },
   { id: 'records', label: '상세기록' },
   { id: 'tuner', label: '튜너' },
 ];
 
 function toolTitle(tool: GlobalTool) {
+  if (tool === 'academy') return '수준 진단·오늘 수업·맞춤곡·숙제';
+  if (tool === 'session') return '실시간 AI 집중 교정과 자동 기록';
+  if (tool === 'song') return 'YouTube 재생 동기화·자동 스크롤 정밀 악보';
+  if (tool === 'tone') return 'THR30·GT-1 A/B/C 톤 메이킹 수업';
   if (tool === 'program') return '카운트인·타이머·자동 BPM 프로그램';
-  if (tool === 'session') return 'AI 집중 연습과 자동 기록';
   if (tool === 'recording') return '연습 영상 녹화·갤러리 저장·재생';
   if (tool === 'audio') return 'MP3·WAV 로컬 BPM·Key·코드 분석';
-  if (tool === 'song') return '악보 초안·A-B 반복·속도 연습';
   if (tool === 'calibration') return '손·줄·브리지 촬영 보정';
   if (tool === 'records') return '세션별 점수·박자·반복 문제 비교';
   if (tool === 'tuner') return '실시간 기타 튜너';
@@ -51,7 +68,12 @@ export default function CompleteBetaAppV060Plus() {
   const [voiceCoachEnabled, setVoiceCoachEnabled] = useState(true);
   const { mode, loading } = useGuitarModePreference();
 
-  const needsMode = tool === 'session' || tool === 'audio' || tool === 'song' || tool === 'calibration';
+  const needsMode = tool === 'academy'
+    || tool === 'session'
+    || tool === 'song'
+    || tool === 'tone'
+    || tool === 'audio'
+    || tool === 'calibration';
 
   return (
     <SafeAreaView style={styles.root}>
@@ -103,11 +125,18 @@ export default function CompleteBetaAppV060Plus() {
         ) : needsMode && !mode ? (
           <View style={styles.center}>
             <Text style={styles.infoTitle}>먼저 통기타 또는 일렉기타를 선택하세요</Text>
-            <Text style={styles.infoText}>홈 화면에서 모드를 선택하면 집중 연습·음원 분석·곡 연습·촬영 보정이 해당 기준으로 실행됩니다.</Text>
+            <Text style={styles.infoText}>홈 화면에서 모드를 선택하면 수준 진단·집중 교정·맞춤곡·톤 수업이 해당 기타 기준으로 실행됩니다.</Text>
             <Pressable onPress={() => setTool('app')} style={styles.modeButton}>
               <Text style={styles.modeButtonText}>홈에서 기타 선택</Text>
             </Pressable>
           </View>
+        ) : tool === 'academy' && mode ? (
+          <MasteryAcademyPanel
+            mode={mode}
+            onOpenSession={() => setTool('session')}
+            onOpenSong={() => setTool('song')}
+            onOpenTone={() => setTool('tone')}
+          />
         ) : tool === 'program' ? (
           <MetronomeProgramPanel />
         ) : tool === 'recording' ? (
@@ -128,7 +157,9 @@ export default function CompleteBetaAppV060Plus() {
         ) : tool === 'audio' && mode ? (
           <AudioFileAnalysisPanel mode={mode} />
         ) : tool === 'song' && mode ? (
-          <SongPracticePanel mode={mode} />
+          <MasterSongStudioPanel mode={mode} voiceEnabled={voiceCoachEnabled} />
+        ) : tool === 'tone' && mode ? (
+          <ToneMasterLabPanel mode={mode} />
         ) : tool === 'calibration' && mode ? (
           <CameraCalibrationWizard mode={mode} onSaved={() => setTool('session')} onClose={() => setTool('app')} />
         ) : tool === 'records' ? (
@@ -153,7 +184,7 @@ const styles = StyleSheet.create({
   voiceButtonTextActive: { color: '#ffffff' },
   toolScroll: { maxHeight: 48, backgroundColor: '#0d1117', borderBottomWidth: 1, borderBottomColor: '#30363d' },
   toolRow: { paddingHorizontal: 9, paddingVertical: 6, gap: 6 },
-  toolButton: { minWidth: 66, minHeight: 34, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11 },
+  toolButton: { minWidth: 70, minHeight: 34, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11 },
   toolButtonActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
   toolButtonText: { color: '#b1bac4', fontSize: 9, fontWeight: '900' },
   toolButtonTextActive: { color: '#ffffff' },
