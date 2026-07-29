@@ -36,8 +36,9 @@ class GuitarCoachStringVisionModule : Module() {
       Thread {
         var bitmap: Bitmap? = null
         try {
-          bitmap = decodeBitmap(uri)
-          promise.resolve(detectStrings(bitmap))
+          val decodedBitmap = decodeBitmap(uri)
+          bitmap = decodedBitmap
+          promise.resolve(detectStrings(decodedBitmap))
         } catch (error: Throwable) {
           promise.reject("ERR_STRING_VISION", "기타줄을 자동 분석하지 못했습니다.", error)
         } finally {
@@ -150,7 +151,8 @@ class GuitarCoachStringVisionModule : Module() {
         bestStrengths,
         confidence
       )
-      if (best == null || candidate.confidence > best!!.confidence) best = candidate
+      val currentBest = best
+      if (currentBest == null || candidate.confidence > currentBest.confidence) best = candidate
     }
 
     val candidate = best ?: return emptyResult()
