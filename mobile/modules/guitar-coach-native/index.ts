@@ -3,12 +3,22 @@ import { requireOptionalNativeModule } from 'expo';
 export type PoseLandmarkPoint = {
   name:
     | 'nose'
+    | 'leftEye'
+    | 'rightEye'
+    | 'leftEar'
+    | 'rightEar'
     | 'leftShoulder'
     | 'rightShoulder'
     | 'leftElbow'
     | 'rightElbow'
     | 'leftWrist'
     | 'rightWrist'
+    | 'leftThumb'
+    | 'rightThumb'
+    | 'leftIndex'
+    | 'rightIndex'
+    | 'leftPinky'
+    | 'rightPinky'
     | 'leftHip'
     | 'rightHip';
   x: number;
