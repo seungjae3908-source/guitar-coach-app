@@ -32,6 +32,7 @@ class GuitarCoachMetronomeModule : Module() {
   private var currentSubdivision = 1
   private var currentSoundEnabled = true
   private var currentVoiceEnabled = false
+  private var currentSoundPreset = 0
 
   override fun definition() = ModuleDefinition {
     Name("GuitarCoachMetronome")
@@ -49,14 +50,16 @@ class GuitarCoachMetronomeModule : Module() {
       beatsPerBar: Int,
       subdivision: Int,
       soundEnabled: Boolean,
-      voiceEnabled: Boolean ->
+      voiceEnabled: Boolean,
+      soundPreset: Int ->
       mainHandler.post {
         startInternal(
           bpm = bpm.coerceIn(35, 220),
           beatsPerBar = beatsPerBar.coerceIn(1, 12),
           subdivision = subdivision.coerceIn(1, 4),
           soundEnabled = soundEnabled,
-          voiceEnabled = voiceEnabled
+          voiceEnabled = voiceEnabled,
+          soundPreset = soundPreset.coerceIn(0, 4)
         )
       }
     }
@@ -66,14 +69,16 @@ class GuitarCoachMetronomeModule : Module() {
       beatsPerBar: Int,
       subdivision: Int,
       soundEnabled: Boolean,
-      voiceEnabled: Boolean ->
+      voiceEnabled: Boolean,
+      soundPreset: Int ->
       mainHandler.post {
         updateInternal(
           bpm = bpm.coerceIn(35, 220),
           beatsPerBar = beatsPerBar.coerceIn(1, 12),
           subdivision = subdivision.coerceIn(1, 4),
           soundEnabled = soundEnabled,
-          voiceEnabled = voiceEnabled
+          voiceEnabled = voiceEnabled,
+          soundPreset = soundPreset.coerceIn(0, 4)
         )
       }
     }
@@ -90,6 +95,12 @@ class GuitarCoachMetronomeModule : Module() {
         }
         speakPhrase(voicePhraseForBeat(0, subdivision.coerceIn(1, 4)))
         promise.resolve(null)
+      }
+    }
+
+    AsyncFunction("previewSoundAsync") { soundPreset: Int ->
+      mainHandler.post {
+        playToneWithPreset(accent = true, preset = soundPreset.coerceIn(0, 4))
       }
     }
 
@@ -112,10 +123,11 @@ class GuitarCoachMetronomeModule : Module() {
     beatsPerBar: Int,
     subdivision: Int,
     soundEnabled: Boolean,
-    voiceEnabled: Boolean
+    voiceEnabled: Boolean,
+    soundPreset: Int
   ) {
     stopInternal(stopSpeech = true)
-    applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled)
+    applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset)
 
     pulseIndex = 0
     running = true
@@ -132,9 +144,10 @@ class GuitarCoachMetronomeModule : Module() {
     beatsPerBar: Int,
     subdivision: Int,
     soundEnabled: Boolean,
-    voiceEnabled: Boolean
+    voiceEnabled: Boolean,
+    soundPreset: Int
   ) {
-    applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled)
+    applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset)
     if (voiceEnabled && !ttsReady) ensureTextToSpeech()
     if (!running) return
 
@@ -153,13 +166,15 @@ class GuitarCoachMetronomeModule : Module() {
     beatsPerBar: Int,
     subdivision: Int,
     soundEnabled: Boolean,
-    voiceEnabled: Boolean
+    voiceEnabled: Boolean,
+    soundPreset: Int
   ) {
     currentBpm = bpm
     currentBeatsPerBar = beatsPerBar
     currentSubdivision = subdivision
     currentSoundEnabled = soundEnabled
     currentVoiceEnabled = voiceEnabled
+    currentSoundPreset = soundPreset
   }
 
   private fun stopInternal(stopSpeech: Boolean) {
@@ -179,7 +194,7 @@ class GuitarCoachMetronomeModule : Module() {
       val totalPulses = (currentBeatsPerBar * safeSubdivision).coerceAtLeast(1)
       val accent = pulseIndex == 0
 
-      if (currentSoundEnabled) playTone(accent)
+      if (currentSoundEnabled) playToneWithPreset(accent, currentSoundPreset)
       if (currentVoiceEnabled && ttsReady && pulseIndex % safeSubdivision == 0) {
         val beatIndex = (pulseIndex / safeSubdivision) % currentBeatsPerBar.coerceAtLeast(1)
         speakPhrase(voicePhraseForBeat(beatIndex, safeSubdivision))
@@ -201,14 +216,38 @@ class GuitarCoachMetronomeModule : Module() {
     mainHandler.postAtTime(runnable, scheduledAt)
   }
 
-  private fun playTone(accent: Boolean) {
+  private fun playToneWithPreset(accent: Boolean, preset: Int) {
     val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_MUSIC, 96).also {
       toneGenerator = it
     }
-
+    val spec = toneSpec(preset.coerceIn(0, 4), accent)
     generator.stopTone()
-    val tone = if (accent) ToneGenerator.TONE_PROP_BEEP2 else ToneGenerator.TONE_PROP_BEEP
-    generator.startTone(tone, if (accent) 42 else 30)
+    generator.startTone(spec.tone, spec.durationMs)
+  }
+
+  private fun toneSpec(preset: Int, accent: Boolean): ToneSpec {
+    return when (preset) {
+      1 -> ToneSpec(
+        tone = if (accent) ToneGenerator.TONE_DTMF_9 else ToneGenerator.TONE_DTMF_8,
+        durationMs = if (accent) 34 else 24
+      )
+      2 -> ToneSpec(
+        tone = if (accent) ToneGenerator.TONE_DTMF_3 else ToneGenerator.TONE_DTMF_2,
+        durationMs = if (accent) 42 else 30
+      )
+      3 -> ToneSpec(
+        tone = if (accent) ToneGenerator.TONE_DTMF_A else ToneGenerator.TONE_DTMF_D,
+        durationMs = if (accent) 28 else 20
+      )
+      4 -> ToneSpec(
+        tone = if (accent) ToneGenerator.TONE_DTMF_6 else ToneGenerator.TONE_DTMF_5,
+        durationMs = if (accent) 24 else 17
+      )
+      else -> ToneSpec(
+        tone = if (accent) ToneGenerator.TONE_PROP_BEEP2 else ToneGenerator.TONE_PROP_BEEP,
+        durationMs = if (accent) 42 else 30
+      )
+    }
   }
 
   private fun prepareVoiceInternal(promise: Promise) {
@@ -318,6 +357,8 @@ class GuitarCoachMetronomeModule : Module() {
       else -> "$number 이 앤 어"
     }
   }
+
+  private data class ToneSpec(val tone: Int, val durationMs: Int)
 
   companion object {
     private val KOREAN_COUNT_WORDS = listOf(
