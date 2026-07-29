@@ -1,7 +1,7 @@
 import { requireNativeView, requireOptionalNativeModule } from 'expo';
 import type { NativeSyntheticEvent, ViewProps } from 'react-native';
 
-import { publishLiveAnalysisFrame } from '../../services/analysis-stream';
+import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../services/analysis-stream';
 import type { HandAnalysisResult } from '../guitar-coach-hand';
 
 export type ContinuousStringHit = {
@@ -13,6 +13,9 @@ export type ContinuousStringHit = {
   direction: 'down' | 'up' | 'unknown' | string;
   speed: number;
   confidence: number;
+  audioConfirmed?: boolean;
+  audioOffsetMs?: number;
+  audioSignalToNoiseDb?: number;
 };
 
 export type ContinuousRightHandStats = {
@@ -68,6 +71,34 @@ function normalizeResult(result: ContinuousHandAnalysisResult): ContinuousHandAn
   };
 }
 
+function fuseHitWithAudio(hit: ContinuousStringHit): ContinuousStringHit {
+  const audioFrame = getLatestLiveAnalysisFrames().audio;
+  if (!audioFrame) return hit;
+  const audio = audioFrame.result;
+  if (!audio.running || audio.attackCount <= 0 || audio.lastAttackAtMs <= 0) return hit;
+  if (audio.signalToNoiseDb < 10 || audio.clippingRatio >= 0.03) return hit;
+  const offset = Math.round(hit.capturedAt - audio.lastAttackAtMs);
+  if (Math.abs(offset) > 125) return hit;
+  return {
+    ...hit,
+    audioConfirmed: true,
+    audioOffsetMs: offset,
+    audioSignalToNoiseDb: Math.round(audio.signalToNoiseDb),
+    confidence: Math.min(1, hit.confidence + 0.1),
+  };
+}
+
+function fuseAudio(result: ContinuousHandAnalysisResult): ContinuousHandAnalysisResult {
+  return {
+    ...result,
+    continuous: {
+      ...result.continuous,
+      newHits: result.continuous.newHits.map(fuseHitWithAudio),
+      recentHits: result.continuous.recentHits.map(fuseHitWithAudio),
+    },
+  };
+}
+
 export default function ContinuousRightHandCamera({
   running,
   pickColor = 'auto',
@@ -80,7 +111,7 @@ export default function ContinuousRightHandCamera({
       running={running}
       pickColor={pickColor}
       onAnalysis={(event) => {
-        const result = normalizeResult(event.nativeEvent);
+        const result = fuseAudio(normalizeResult(event.nativeEvent));
         publishLiveAnalysisFrame({ kind: 'hand', capturedAt: Date.now(), result });
         onAnalysis?.({ ...event, nativeEvent: result });
       }}
