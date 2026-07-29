@@ -1,6 +1,6 @@
 import { requireOptionalNativeModule } from 'expo';
 
-import { publishLiveAnalysisFrame } from '../../services/analysis-stream';
+import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../services/analysis-stream';
 
 export type HandLandmarkName =
   | 'wrist'
@@ -25,26 +25,8 @@ export type HandLandmarkName =
   | 'pinkyDip'
   | 'pinkyTip';
 
-export type HandLandmarkPoint = {
-  index: number;
-  name: HandLandmarkName;
-  x: number;
-  y: number;
-  z: number;
-};
-
-export type PickColor =
-  | 'none'
-  | 'auto'
-  | 'red'
-  | 'orange'
-  | 'yellow'
-  | 'green'
-  | 'blue'
-  | 'purple'
-  | 'white'
-  | 'black';
-
+export type HandLandmarkPoint = { index: number; name: HandLandmarkName; x: number; y: number; z: number };
+export type PickColor = 'none' | 'auto' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'white' | 'black';
 export type PickAnalysisResult = {
   detected: boolean;
   color: PickColor | string;
@@ -54,7 +36,6 @@ export type PickAnalysisResult = {
   centerX: number;
   centerY: number;
 };
-
 export type GuitarStringLine = {
   visualIndex: 1 | 2 | 3 | 4 | 5 | 6;
   stringNumber: 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -64,7 +45,6 @@ export type GuitarStringLine = {
   endY: number;
   strength: number;
 };
-
 export type GuitarStringTrackingResult = {
   detected: boolean;
   confidence: number;
@@ -75,9 +55,12 @@ export type GuitarStringTrackingResult = {
   nearestVisualIndex: number;
   nearestStringNumber: number;
   nearestDistanceRatio: number;
+  audioConfirmed?: boolean;
+  audioCandidateStrings?: number[];
+  audioFrequencyHz?: number;
+  audioConfidence?: number;
   lines: GuitarStringLine[];
 };
-
 export type HandAnalysisResult = {
   hasHand: boolean;
   imageWidth: number;
@@ -94,7 +77,6 @@ type GuitarCoachHandModule = {
   androidHandCoachAvailable: boolean;
   analyzeHandAsync(uri: string, pickColor: PickColor): Promise<HandAnalysisResult>;
 };
-
 type GuitarCoachStringVisionModule = {
   androidStringVisionAvailable: boolean;
   analyzeStringsAsync(uri: string): Promise<GuitarStringTrackingResult>;
@@ -102,7 +84,6 @@ type GuitarCoachStringVisionModule = {
 
 const NativeModule = requireOptionalNativeModule<GuitarCoachHandModule>('GuitarCoachHand');
 const StringVisionModule = requireOptionalNativeModule<GuitarCoachStringVisionModule>('GuitarCoachStringVision');
-
 export const isDetailedHandCoachAvailable = Boolean(NativeModule?.androidHandCoachAvailable);
 export const isAutomaticStringVisionAvailable = Boolean(StringVisionModule?.androidStringVisionAvailable);
 
@@ -111,29 +92,23 @@ function pointToLineDistance(point: { x: number; y: number }, line: GuitarString
   const abY = line.endY - line.startY;
   const denominator = Math.max(0.000001, abX * abX + abY * abY);
   const amount = Math.min(1, Math.max(0, ((point.x - line.startX) * abX + (point.y - line.startY) * abY) / denominator));
-  const x = line.startX + abX * amount;
-  const y = line.startY + abY * amount;
-  return Math.hypot(point.x - x, point.y - y);
-}
-
-function lineMidpoint(line: GuitarStringLine) {
-  return { x: (line.startX + line.endX) / 2, y: (line.startY + line.endY) / 2 };
+  return Math.hypot(point.x - (line.startX + abX * amount), point.y - (line.startY + abY * amount));
 }
 
 function averageLineSpacing(lines: GuitarStringLine[]) {
   const ordered = [...lines].sort((a, b) => a.visualIndex - b.visualIndex);
   const distances = ordered.slice(1).map((line, index) => {
-    const current = lineMidpoint(line);
-    const previous = lineMidpoint(ordered[index]);
-    return Math.hypot(current.x - previous.x, current.y - previous.y);
+    const previous = ordered[index];
+    return Math.hypot(
+      (line.startX + line.endX - previous.startX - previous.endX) / 2,
+      (line.startY + line.endY - previous.startY - previous.endY) / 2,
+    );
   }).filter((value) => value > 0.001);
   return distances.length ? distances.reduce((sum, value) => sum + value, 0) / distances.length : 0.03;
 }
 
 function contactPoint(result: HandAnalysisResult) {
-  if (result.pick.detected && result.pick.confidence >= 0.45) {
-    return { x: result.pick.centerX, y: result.pick.centerY };
-  }
+  if (result.pick.detected && result.pick.confidence >= 0.45) return { x: result.pick.centerX, y: result.pick.centerY };
   const tips = [4, 8, 12, 16].map((index) => result.landmarks[index]).filter(Boolean);
   if (!tips.length) return null;
   return {
@@ -142,27 +117,60 @@ function contactPoint(result: HandAnalysisResult) {
   };
 }
 
+function liveAudioCandidates() {
+  const frame = getLatestLiveAnalysisFrames().audio;
+  if (!frame || Date.now() - frame.capturedAt > 850) return null;
+  const audio = frame.result;
+  if (!audio.hasPitch || audio.pitchConfidence < 0.58 || audio.frequencyHz <= 0) return null;
+  const midi = 69 + 12 * Math.log2(audio.frequencyHz / 440);
+  const openMidi = [
+    { stringNumber: 6, midi: 40 },
+    { stringNumber: 5, midi: 45 },
+    { stringNumber: 4, midi: 50 },
+    { stringNumber: 3, midi: 55 },
+    { stringNumber: 2, midi: 59 },
+    { stringNumber: 1, midi: 64 },
+  ];
+  const candidates = openMidi
+    .filter((item) => midi >= item.midi - 0.45 && midi <= item.midi + 24.45)
+    .map((item) => item.stringNumber);
+  return { candidates, frequencyHz: audio.frequencyHz, confidence: audio.pitchConfidence };
+}
+
 function fuseNearestString(tracking: GuitarStringTrackingResult, hand: HandAnalysisResult): GuitarStringTrackingResult {
   if (!tracking.detected || tracking.lines.length < 4 || !hand.hasHand) return tracking;
   const point = contactPoint(hand);
   if (!point) return tracking;
-  const candidates = tracking.lines
+  const nearest = tracking.lines
     .map((line) => ({ line, distance: pointToLineDistance(point, line) }))
-    .sort((a, b) => a.distance - b.distance);
-  const nearest = candidates[0];
+    .sort((a, b) => a.distance - b.distance)[0];
   const distanceRatio = nearest ? nearest.distance / Math.max(0.004, averageLineSpacing(tracking.lines)) : 1;
-  const numberTrusted = Boolean(
+  const visuallyTrusted = Boolean(
     nearest
     && nearest.line.stringNumber > 0
     && tracking.confidence >= 0.58
     && tracking.numberingConfidence >= 0.62
     && distanceRatio <= 0.82
   );
+  const audio = liveAudioCandidates();
+  let nearestStringNumber = visuallyTrusted ? nearest.line.stringNumber : 0;
+  let audioConfirmed = false;
+  if (audio && distanceRatio <= 0.82) {
+    if (nearestStringNumber > 0 && audio.candidates.includes(nearestStringNumber)) audioConfirmed = true;
+    if (nearestStringNumber === 0 && audio.candidates.length === 1) {
+      nearestStringNumber = audio.candidates[0];
+      audioConfirmed = true;
+    }
+  }
   return {
     ...tracking,
     nearestVisualIndex: nearest && distanceRatio <= 1.15 ? nearest.line.visualIndex : 0,
-    nearestStringNumber: numberTrusted ? nearest.line.stringNumber : 0,
+    nearestStringNumber,
     nearestDistanceRatio: Math.round(distanceRatio * 100) / 100,
+    audioConfirmed,
+    audioCandidateStrings: audio?.candidates ?? [],
+    audioFrequencyHz: audio?.frequencyHz,
+    audioConfidence: audio?.confidence,
   };
 }
 
@@ -186,8 +194,7 @@ export async function analyzeHandWithStringsAsync(uri: string, pickColor: PickCo
     }
   }
   const hand = await analyzeHandRawAsync(uri, pickColor);
-  const result = tracking ? { ...hand, stringTracking: fuseNearestString(tracking, hand) } : hand;
-  return publish(result);
+  return publish(tracking ? { ...hand, stringTracking: fuseNearestString(tracking, hand) } : hand);
 }
 
 export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
