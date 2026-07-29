@@ -25,6 +25,7 @@ export type HandLandmarkName =
   | 'pinkyDip'
   | 'pinkyTip';
 
+export type GuitarStringNumber = 1 | 2 | 3 | 4 | 5 | 6;
 export type HandLandmarkPoint = { index: number; name: HandLandmarkName; x: number; y: number; z: number };
 export type PickColor = 'none' | 'auto' | 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'white' | 'black';
 export type PickAnalysisResult = {
@@ -37,8 +38,8 @@ export type PickAnalysisResult = {
   centerY: number;
 };
 export type GuitarStringLine = {
-  visualIndex: 1 | 2 | 3 | 4 | 5 | 6;
-  stringNumber: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  visualIndex: GuitarStringNumber;
+  stringNumber: 0 | GuitarStringNumber;
   startX: number;
   startY: number;
   endX: number;
@@ -53,10 +54,10 @@ export type GuitarStringTrackingResult = {
   stringOrder: 'low-to-high' | 'high-to-low' | 'unknown' | string;
   numberingConfidence: number;
   nearestVisualIndex: number;
-  nearestStringNumber: number;
+  nearestStringNumber: 0 | GuitarStringNumber;
   nearestDistanceRatio: number;
   audioConfirmed?: boolean;
-  audioCandidateStrings?: number[];
+  audioCandidateStrings?: GuitarStringNumber[];
   audioFrequencyHz?: number;
   audioConfidence?: number;
   lines: GuitarStringLine[];
@@ -123,7 +124,7 @@ function liveAudioCandidates() {
   const audio = frame.result;
   if (!audio.hasPitch || audio.pitchConfidence < 0.58 || audio.frequencyHz <= 0) return null;
   const midi = 69 + 12 * Math.log2(audio.frequencyHz / 440);
-  const openMidi = [
+  const openMidi: Array<{ stringNumber: GuitarStringNumber; midi: number }> = [
     { stringNumber: 6, midi: 40 },
     { stringNumber: 5, midi: 45 },
     { stringNumber: 4, midi: 50 },
@@ -131,7 +132,7 @@ function liveAudioCandidates() {
     { stringNumber: 2, midi: 59 },
     { stringNumber: 1, midi: 64 },
   ];
-  const candidates = openMidi
+  const candidates: GuitarStringNumber[] = openMidi
     .filter((item) => midi >= item.midi - 0.45 && midi <= item.midi + 24.45)
     .map((item) => item.stringNumber);
   return { candidates, frequencyHz: audio.frequencyHz, confidence: audio.pitchConfidence };
@@ -153,7 +154,7 @@ function fuseNearestString(tracking: GuitarStringTrackingResult, hand: HandAnaly
     && distanceRatio <= 0.82
   );
   const audio = liveAudioCandidates();
-  let nearestStringNumber = visuallyTrusted ? nearest.line.stringNumber : 0;
+  let nearestStringNumber: 0 | GuitarStringNumber = visuallyTrusted ? nearest.line.stringNumber : 0;
   let audioConfirmed = false;
   if (audio && distanceRatio <= 0.82) {
     if (nearestStringNumber > 0 && audio.candidates.includes(nearestStringNumber)) audioConfirmed = true;
