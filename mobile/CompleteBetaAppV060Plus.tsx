@@ -17,6 +17,7 @@ import MetronomeProgramPanel from './components/MetronomeProgramPanel';
 import PracticeRecordingPanel from './components/PracticeRecordingPanel';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
+import SongPracticePanel from './components/SongPracticePanel';
 import ToneMasterLabPanel from './components/ToneMasterLabPanel';
 import TunerPanel from './components/TunerPanel';
 import VoiceCoachController from './components/VoiceCoachController';
@@ -27,6 +28,7 @@ type GlobalTool =
   | 'academy'
   | 'session'
   | 'song'
+  | 'sheet'
   | 'tone'
   | 'program'
   | 'recording'
@@ -40,6 +42,7 @@ const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'academy', label: '수제자수업' },
   { id: 'session', label: '집중교정' },
   { id: 'song', label: '곡스튜디오' },
+  { id: 'sheet', label: '악보편집' },
   { id: 'tone', label: '톤연구실' },
   { id: 'program', label: '메트로놈' },
   { id: 'recording', label: '영상' },
@@ -53,6 +56,7 @@ function toolTitle(tool: GlobalTool) {
   if (tool === 'academy') return '수준 진단·오늘 수업·맞춤곡·숙제';
   if (tool === 'session') return '실시간 AI 집중 교정과 자동 기록';
   if (tool === 'song') return 'YouTube 재생 동기화·자동 스크롤 정밀 악보';
+  if (tool === 'sheet') return '로컬 분석 악보·코드 수정·메트로놈 연습';
   if (tool === 'tone') return 'THR30·GT-1 A/B/C 톤 메이킹 수업';
   if (tool === 'program') return '카운트인·타이머·자동 BPM 프로그램';
   if (tool === 'recording') return '연습 영상 녹화·갤러리 저장·재생';
@@ -71,6 +75,7 @@ export default function CompleteBetaAppV060Plus() {
   const needsMode = tool === 'academy'
     || tool === 'session'
     || tool === 'song'
+    || tool === 'sheet'
     || tool === 'tone'
     || tool === 'audio'
     || tool === 'calibration';
@@ -158,6 +163,8 @@ export default function CompleteBetaAppV060Plus() {
           <AudioFileAnalysisPanel mode={mode} />
         ) : tool === 'song' && mode ? (
           <MasterSongStudioPanel mode={mode} voiceEnabled={voiceCoachEnabled} />
+        ) : tool === 'sheet' && mode ? (
+          <SongPracticePanel mode={mode} />
         ) : tool === 'tone' && mode ? (
           <ToneMasterLabPanel mode={mode} />
         ) : tool === 'calibration' && mode ? (
