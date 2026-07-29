@@ -263,12 +263,12 @@ function stabilizeTracking(next: GuitarStringTrackingResult): GuitarStringTracki
   const stringOrder = dominantStringOrder(compatible);
   const orderSamples = compatible.filter((sample) => sample.stringOrder === stringOrder);
   const numberingConfidence = stringOrder === 'unknown' ? 0 : mean(orderSamples.map((sample) => sample.numberingConfidence));
-  const normalizedLines = lines.map((line) => ({
-    ...line,
-    stringNumber: numberingConfidence >= 0.62
+  const normalizedLines: GuitarStringLine[] = lines.map((line) => {
+    const stringNumber: 0 | GuitarStringNumber = numberingConfidence >= 0.62
       ? (stringOrder === 'low-to-high' ? 7 - line.visualIndex : line.visualIndex) as GuitarStringNumber
-      : 0,
-  }));
+      : 0;
+    return { ...line, stringNumber };
+  });
   const confidence = mean(compatible.map((sample) => sample.confidence));
   const stabilityConfidence = clamp(
     compatible.length / 5 * 0.46
@@ -399,7 +399,7 @@ function fuseContacts(tracking: GuitarStringTrackingResult, hand: HandAnalysisRe
 
   if (audio?.candidates.length === 1) {
     const closeContacts = contacts.filter((contact) => contact.visualIndex > 0 && contact.distanceRatio <= 0.58);
-    const audioTarget = pickContact?.distanceRatio && pickContact.distanceRatio <= 0.58
+    const audioTarget = pickContact && pickContact.distanceRatio <= 0.58
       ? pickContact
       : closeContacts.length === 1
         ? closeContacts[0]
