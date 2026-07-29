@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 
+import { publishLiveAnalysisFrame } from '../../services/analysis-stream';
+
 export type PoseLandmarkPoint = {
   name:
     | 'nose'
@@ -52,5 +54,11 @@ export async function playNativeClickAsync(accent: boolean) {
 
 export async function analyzePoseAsync(uri: string) {
   if (!NativeModule) throw new Error('카메라 자세 분석 모듈을 사용할 수 없습니다.');
-  return NativeModule.analyzePoseAsync(uri);
+  const result = await NativeModule.analyzePoseAsync(uri);
+  publishLiveAnalysisFrame({
+    kind: 'pose',
+    capturedAt: Date.now(),
+    result,
+  });
+  return result;
 }
