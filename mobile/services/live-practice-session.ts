@@ -240,6 +240,18 @@ export class LivePracticeSessionAccumulator {
     if (pinchVariation > 0.1) this.addIssue('unstable-grip', '피크 그립 간격이 흔들림', 'warn', quality.confidencePercent, frame.capturedAt);
     if (palmVariation > 22) this.addIssue('wrist-angle-variation', '손목 방향 변화가 큼', 'warn', quality.confidencePercent, frame.capturedAt);
 
+    const automaticString = result.stringTracking;
+    const automaticStringReliable = Boolean(
+      automaticString
+      && automaticString.nearestStringNumber > 0
+      && automaticString.nearestDistanceRatio <= 0.82
+      && automaticString.confidence >= 0.58
+      && (automaticString.audioConfirmed || automaticString.numberingConfidence >= 0.62)
+    );
+    if (automaticStringReliable && automaticString) {
+      this.lastStringNumber = automaticString.nearestStringNumber;
+    }
+
     if (result.pick.detected) {
       const pickQuality = evaluateAnalysisQuality({
         source: 'pick',
@@ -258,7 +270,7 @@ export class LivePracticeSessionAccumulator {
         if (result.pick.exposure < 0.1) this.addIssue('pick-hidden', '피크가 손가락 안에 너무 많이 숨음', 'warn', pickQuality.confidencePercent, frame.capturedAt);
         if (result.pick.exposure > 0.9) this.addIssue('pick-exposed', '피크 노출량이 너무 큼', 'high', pickQuality.confidencePercent, frame.capturedAt);
 
-        if (this.options.calibration) {
+        if (!automaticStringReliable && this.options.calibration) {
           const nearest = nearestStringGuide(
             { x: result.pick.centerX, y: result.pick.centerY },
             this.options.calibration,
