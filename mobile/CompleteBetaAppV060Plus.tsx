@@ -18,6 +18,7 @@ import PracticeRecordingPanel from './components/PracticeRecordingPanel';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import SongPracticePanel from './components/SongPracticePanel';
+import SoundConsistencyController from './components/SoundConsistencyController';
 import ToneMasterLabPanel from './components/ToneMasterLabPanel';
 import TunerPanel from './components/TunerPanel';
 import VoiceCoachController from './components/VoiceCoachController';
@@ -54,7 +55,7 @@ const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
 
 function toolTitle(tool: GlobalTool) {
   if (tool === 'academy') return '수준 진단·오늘 수업·맞춤곡·숙제';
-  if (tool === 'session') return '실시간 AI 집중 교정과 자동 기록';
+  if (tool === 'session') return '실시간 자세·박자·톤 일관성 집중 교정';
   if (tool === 'song') return 'YouTube 재생 동기화·자동 스크롤 정밀 악보';
   if (tool === 'sheet') return '로컬 분석 악보·코드 수정·메트로놈 연습';
   if (tool === 'tone') return 'THR30·GT-1 A/B/C 톤 메이킹 수업';
@@ -83,6 +84,7 @@ export default function CompleteBetaAppV060Plus() {
   return (
     <SafeAreaView style={styles.root}>
       <VoiceCoachController enabled={voiceCoachEnabled} />
+      <SoundConsistencyController enabled={voiceCoachEnabled} />
       <View style={styles.toolBar}>
         <View style={styles.toolTextWrap}>
           <Text style={styles.toolEyebrow}>0.6.0 COMPLETE BETA · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
