@@ -81,7 +81,7 @@ class GuitarCoachContinuousCameraView(
 
   private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
   private val eventPending = AtomicBoolean(false)
-  private var latestPayload: Map<String, Any?>? = null
+  private var latestPayload: Map<String, Any>? = null
   private var cameraProvider: ProcessCameraProvider? = null
   private var previewUseCase: Preview? = null
   private var analysisUseCase: ImageAnalysis? = null
@@ -265,7 +265,7 @@ class GuitarCoachContinuousCameraView(
     }
   }
 
-  private fun dispatchCoalesced(payload: Map<String, Any?>) {
+  private fun dispatchCoalesced(payload: Map<String, Any>) {
     latestPayload = payload
     if (!eventPending.compareAndSet(false, true)) return
     post {
@@ -316,7 +316,6 @@ class GuitarCoachContinuousCameraView(
     if (hand?.hasHand != true || hand.landmarks.size < 21) {
       return PixelRegion((width * 0.02).roundToInt(), (height * 0.10).roundToInt(), (width * 0.98).roundToInt(), (height * 0.90).roundToInt(), width * 0.5, height * 0.5)
     }
-    val xs = hand.landmarks.map { it.x * width }
     val ys = hand.landmarks.map { it.y * height }
     val focus = listOf(4, 8, 12, 16).map { hand.landmarks[it] }
     val focusX = focus.map { it.x * width }.average()
@@ -431,17 +430,22 @@ class GuitarCoachContinuousCameraView(
       firstSide > lastSide -> "low-to-high"
       else -> "high-to-low"
     }
-    val lines = candidate.positions.mapIndexedNotNull { index, position ->
+    val lines = ArrayList<LiveLine>()
+    for (index in candidate.positions.indices) {
+      val position = candidate.positions[index]
       val projection = candidate.minProjection + position
       val endpoints = lineEndpoints(candidate.normalX, candidate.normalY, projection, bitmap.width, bitmap.height)
-      if (endpoints.size < 2) null else LiveLine(
-        index + 1,
-        when (order) { "low-to-high" -> 6 - index; "high-to-low" -> index + 1; else -> 0 },
-        endpoints[0].first / bitmap.width,
-        endpoints[0].second / bitmap.height,
-        endpoints[1].first / bitmap.width,
-        endpoints[1].second / bitmap.height,
-        normalized[index]
+      if (endpoints.size < 2) continue
+      lines.add(
+        LiveLine(
+          index + 1,
+          when (order) { "low-to-high" -> 6 - index; "high-to-low" -> index + 1; else -> 0 },
+          endpoints[0].first / bitmap.width,
+          endpoints[0].second / bitmap.height,
+          endpoints[1].first / bitmap.width,
+          endpoints[1].second / bitmap.height,
+          normalized[index]
+        )
       )
     }
     if (lines.size < 5) return null
@@ -608,9 +612,9 @@ class GuitarCoachContinuousCameraView(
     contacts: List<LiveContact>,
     hits: List<Map<String, Any>>,
     latencyMs: Long
-  ): Map<String, Any?> {
+  ): Map<String, Any> {
     val handMap = hand ?: LiveHandResult(false, "Unknown", 0.0, emptyList())
-    return mapOf(
+    val payload = mutableMapOf<String, Any>(
       "hasHand" to handMap.hasHand,
       "imageWidth" to width,
       "imageHeight" to height,
@@ -619,7 +623,6 @@ class GuitarCoachContinuousCameraView(
       "handednessScore" to handMap.score,
       "landmarks" to handMap.landmarks.map { point -> mapOf("index" to point.index, "name" to point.name, "x" to point.x, "y" to point.y, "z" to point.z) },
       "pick" to pick.toMap(),
-      "stringTracking" to strings?.toMap(contacts),
       "continuous" to mapOf(
         "enabled" to true,
         "previewFps" to cameraFps,
@@ -631,6 +634,8 @@ class GuitarCoachContinuousCameraView(
         "recentHits" to recentHits.toList()
       )
     )
+    if (strings != null) payload["stringTracking"] = strings.toMap(contacts)
+    return payload
   }
 
   private fun estimatedPickTip(pick: LivePick, lines: List<LiveLine>): Pair<Double, Double> {
