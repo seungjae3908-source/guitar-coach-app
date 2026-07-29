@@ -11,6 +11,7 @@ import {
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import AudioFileAnalysisPanel from './components/AudioFileAnalysisPanel';
 import CameraCalibrationWizard from './components/CameraCalibrationWizard';
+import MetronomeProgramPanel from './components/MetronomeProgramPanel';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import SongPracticePanel from './components/SongPracticePanel';
@@ -18,10 +19,11 @@ import TunerPanel from './components/TunerPanel';
 import VoiceCoachController from './components/VoiceCoachController';
 import { useGuitarModePreference } from './hooks/use-guitar-mode-preference';
 
-type GlobalTool = 'app' | 'session' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
+type GlobalTool = 'app' | 'program' | 'session' | 'audio' | 'song' | 'calibration' | 'records' | 'tuner';
 
 const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'app', label: '홈' },
+  { id: 'program', label: '메트로놈' },
   { id: 'session', label: '집중연습' },
   { id: 'audio', label: '음원분석' },
   { id: 'song', label: '곡연습' },
@@ -31,6 +33,7 @@ const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
 ];
 
 function toolTitle(tool: GlobalTool) {
+  if (tool === 'program') return '카운트인·타이머·자동 BPM 프로그램';
   if (tool === 'session') return 'AI 집중 연습과 자동 기록';
   if (tool === 'audio') return 'MP3·WAV 로컬 BPM·Key·코드 분석';
   if (tool === 'song') return '악보 초안·A-B 반복·속도 연습';
@@ -102,6 +105,8 @@ export default function CompleteBetaAppV060Plus() {
               <Text style={styles.modeButtonText}>홈에서 기타 선택</Text>
             </Pressable>
           </View>
+        ) : tool === 'program' ? (
+          <MetronomeProgramPanel />
         ) : tool === 'tuner' ? (
           <ScrollView style={styles.tunerScroll} contentContainerStyle={styles.tunerContent} showsVerticalScrollIndicator={false}>
             <TunerPanel />
