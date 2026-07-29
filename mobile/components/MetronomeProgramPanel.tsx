@@ -1,49 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-} from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import {
   getAdvancedMetronomeTimingStateAsync,
   isAdvancedMetronomeAvailable,
-  MetronomeSoundPreset,
+  type MetronomeSoundPreset,
   prepareVoiceCountAsync,
   previewMetronomeSoundAsync,
   startAdvancedMetronomeAsync,
   stopAdvancedMetronomeAsync,
   updateAdvancedMetronomeAsync,
 } from '../modules/guitar-coach-metronome';
-import {
-  isCoachSpeechAvailable,
-  prepareCoachSpeechAsync,
-  speakCoachPhraseAsync,
-} from '../modules/guitar-coach-speech';
 
 type Phase = 'idle' | 'count-in' | 'practice' | 'paused' | 'complete';
 type IncreaseMode = 'off' | 'time' | 'bars';
-
-const METERS = [
-  { label: '2/4', beats: 2 },
-  { label: '3/4', beats: 3 },
-  { label: '4/4', beats: 4 },
-  { label: '5/4', beats: 5 },
-  { label: '6/8', beats: 6 },
-  { label: '7/8', beats: 7 },
-  { label: '9/8', beats: 9 },
-  { label: '12/8', beats: 12 },
-] as const;
-
-const SUBDIVISIONS = [
-  { value: 1 as const, label: '4분' },
-  { value: 2 as const, label: '8분' },
-  { value: 3 as const, label: '셋잇단' },
-  { value: 4 as const, label: '16분' },
-];
 
 const SOUNDS: Array<{ value: MetronomeSoundPreset; label: string }> = [
   { value: 0, label: '클래식' },
@@ -52,32 +22,9 @@ const SOUNDS: Array<{ value: MetronomeSoundPreset; label: string }> = [
   { value: 3, label: '디지털' },
   { value: 4, label: '부드러운' },
 ];
+const SUBDIVISIONS = [1, 2, 3, 4] as const;
 
-const DURATIONS = [30, 60, 180, 300, 600];
-const TIME_INTERVALS = [15, 30, 60, 120];
-const BAR_INTERVALS = [2, 4, 8, 16];
-
-function OptionButton({
-  label,
-  active,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  active?: boolean;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      disabled={disabled}
-      onPress={onPress}
-      style={[styles.optionButton, active && styles.optionButtonActive, disabled && styles.disabled]}
-    >
-      <Text style={[styles.optionText, active && styles.optionTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 function formatDuration(seconds: number) {
   const safe = Math.max(0, Math.round(seconds));
@@ -86,16 +33,63 @@ function formatDuration(seconds: number) {
   return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
 }
 
-function durationLabel(seconds: number) {
-  if (seconds < 60) return `${seconds}초`;
-  return `${seconds / 60}분`;
+function Stepper({
+  label,
+  value,
+  unit,
+  min,
+  max,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  unit?: string;
+  min: number;
+  max: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <View style={styles.stepper}>
+      <Text style={styles.stepperLabel}>{label}</Text>
+      <View style={styles.stepperRow}>
+        <Pressable
+          disabled={disabled || value <= min}
+          onPress={() => onChange(clamp(value - 1, min, max))}
+          style={[styles.stepButton, (disabled || value <= min) && styles.disabled]}
+        >
+          <Text style={styles.stepButtonText}>-1</Text>
+        </Pressable>
+        <View style={styles.stepValueWrap}>
+          <Text style={styles.stepValue}>{value}</Text>
+          {unit ? <Text style={styles.stepUnit}>{unit}</Text> : null}
+        </View>
+        <Pressable
+          disabled={disabled || value >= max}
+          onPress={() => onChange(clamp(value + 1, min, max))}
+          style={[styles.stepButton, (disabled || value >= max) && styles.disabled]}
+        >
+          <Text style={styles.stepButtonText}>+1</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function Choice({ label, active, disabled, onPress }: { label: string; active: boolean; disabled?: boolean; onPress: () => void }) {
+  return (
+    <Pressable disabled={disabled} onPress={onPress} style={[styles.choice, active && styles.choiceActive, disabled && styles.disabled]}>
+      <Text style={[styles.choiceText, active && styles.choiceTextActive]}>{label}</Text>
+    </Pressable>
+  );
 }
 
 export default function MetronomeProgramPanel() {
   const [startBpm, setStartBpm] = useState(60);
-  const [currentBpm, setCurrentBpm] = useState(60);
   const [targetBpm, setTargetBpm] = useState(100);
-  const [meterLabel, setMeterLabel] = useState('4/4');
+  const [currentBpm, setCurrentBpm] = useState(60);
+  const [beatsPerBar, setBeatsPerBar] = useState(4);
   const [subdivision, setSubdivision] = useState<1 | 2 | 3 | 4>(1);
   const [soundPreset, setSoundPreset] = useState<MetronomeSoundPreset>(0);
   const [countInBars, setCountInBars] = useState(2);
@@ -107,128 +101,113 @@ export default function MetronomeProgramPanel() {
   const [barInterval, setBarInterval] = useState(4);
   const [phase, setPhase] = useState<Phase>('idle');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [countInPulsesRemaining, setCountInPulsesRemaining] = useState(0);
   const [completedBars, setCompletedBars] = useState(0);
+  const [countInPulsesRemaining, setCountInPulsesRemaining] = useState(0);
   const [increaseCount, setIncreaseCount] = useState(0);
-  const [status, setStatus] = useState('프로그램을 설정하고 시작하세요.');
+  const [status, setStatus] = useState('모든 숫자는 1단위로 조절할 수 있습니다.');
   const [error, setError] = useState('');
+
   const phaseRef = useRef<Phase>('idle');
+  const busyRef = useRef(false);
+  const currentBpmRef = useRef(60);
+  const completedBarsRef = useRef(0);
   const practiceStartedAtRef = useRef(0);
   const accumulatedBeforePauseRef = useRef(0);
   const countInStartPulseRef = useRef(0);
-  const lastPulseCountRef = useRef(0);
+  const lastPulseRef = useRef(-1);
   const lastBarPulseRef = useRef(-1);
-  const lastIncreaseAtSecondsRef = useRef(0);
-  const lastIncreaseAtBarsRef = useRef(0);
-  const busyRef = useRef(false);
+  const lastIncreaseSecondsRef = useRef(0);
+  const lastIncreaseBarsRef = useRef(0);
 
-  const meter = useMemo(
-    () => METERS.find((item) => item.label === meterLabel) ?? METERS[2],
-    [meterLabel],
-  );
-  const pulsesPerBar = meter.beats * subdivision;
   const running = phase === 'count-in' || phase === 'practice';
   const locked = running || phase === 'paused';
+  const pulsesPerBar = beatsPerBar * subdivision;
   const remainingSeconds = Math.max(0, durationSeconds - elapsedSeconds);
-  const progressPercent = Math.min(100, Math.round(elapsedSeconds / Math.max(1, durationSeconds) * 100));
+  const progressPercent = Math.min(100, elapsedSeconds / Math.max(1, durationSeconds) * 100);
 
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
 
   useEffect(() => {
+    currentBpmRef.current = currentBpm;
+  }, [currentBpm]);
+
+  useEffect(() => {
+    completedBarsRef.current = completedBars;
+  }, [completedBars]);
+
+  useEffect(() => {
     if (!running) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = async () => {
+      await stopAdvancedMetronomeAsync();
+      phaseRef.current = 'complete';
+      setPhase('complete');
+      setElapsedSeconds(durationSeconds);
+      setStatus(`완료 · ${startBpm} → ${currentBpmRef.current} BPM · ${increaseCount}회 증가`);
+    };
 
     const poll = async () => {
       try {
         const timing = await getAdvancedMetronomeTimingStateAsync();
         if (cancelled || !timing.running) return;
-        const currentPhase = phaseRef.current;
 
-        if (currentPhase === 'count-in') {
-          const completed = Math.max(0, Math.floor(timing.absolutePulseCount - countInStartPulseRef.current));
-          const total = countInBars * pulsesPerBar;
-          const remaining = Math.max(0, total - completed);
+        if (phaseRef.current === 'count-in') {
+          const elapsedPulses = Math.max(0, timing.absolutePulseCount - countInStartPulseRef.current);
+          const remaining = Math.max(0, countInBars * pulsesPerBar - elapsedPulses);
           setCountInPulsesRemaining(remaining);
           if (remaining <= 0) {
-            await updateAdvancedMetronomeAsync(
-              currentBpm,
-              meter.beats,
-              subdivision,
-              true,
-              false,
-              soundPreset,
-            );
-            phaseRef.current = 'practice';
-            setPhase('practice');
+            await updateAdvancedMetronomeAsync(currentBpmRef.current, beatsPerBar, subdivision, true, false, soundPreset);
             practiceStartedAtRef.current = Date.now();
             accumulatedBeforePauseRef.current = 0;
-            lastPulseCountRef.current = 0;
+            lastPulseRef.current = -1;
             lastBarPulseRef.current = -1;
+            phaseRef.current = 'practice';
+            setPhase('practice');
             setElapsedSeconds(0);
             setCompletedBars(0);
-            setStatus(`연습 진행 중 · ${currentBpm} BPM`);
+            setStatus(`연습 진행 중 · ${currentBpmRef.current} BPM`);
           }
-        } else if (currentPhase === 'practice') {
+        } else if (phaseRef.current === 'practice') {
           const elapsed = accumulatedBeforePauseRef.current + Math.floor((Date.now() - practiceStartedAtRef.current) / 1000);
           setElapsedSeconds(elapsed);
-
-          if (timing.absolutePulseCount < lastPulseCountRef.current) {
-            lastPulseCountRef.current = 0;
-            lastBarPulseRef.current = -1;
-          }
-          if (
-            timing.absolutePulseCount !== lastPulseCountRef.current &&
-            timing.lastTickPulseIndex === pulsesPerBar - 1 &&
-            timing.absolutePulseCount !== lastBarPulseRef.current
-          ) {
-            lastBarPulseRef.current = timing.absolutePulseCount;
-            setCompletedBars((value) => value + 1);
-          }
-          lastPulseCountRef.current = timing.absolutePulseCount;
-
           if (elapsed >= durationSeconds) {
-            await finishProgram();
+            await finish();
             return;
           }
 
-          const shouldIncreaseByTime = increaseMode === 'time' &&
-            elapsed - lastIncreaseAtSecondsRef.current >= timeIntervalSeconds;
-          const currentBars = completedBars;
-          const shouldIncreaseByBars = increaseMode === 'bars' &&
-            currentBars - lastIncreaseAtBarsRef.current >= barInterval;
-          const atBarBoundary = timing.nextPulseIndex === 0 || timing.lastTickPulseIndex === pulsesPerBar - 1;
+          if (timing.absolutePulseCount !== lastPulseRef.current) {
+            lastPulseRef.current = timing.absolutePulseCount;
+            if (timing.lastTickPulseIndex === pulsesPerBar - 1 && timing.absolutePulseCount !== lastBarPulseRef.current) {
+              lastBarPulseRef.current = timing.absolutePulseCount;
+              const nextBars = completedBarsRef.current + 1;
+              completedBarsRef.current = nextBars;
+              setCompletedBars(nextBars);
+            }
+          }
 
-          if ((shouldIncreaseByTime || shouldIncreaseByBars) && atBarBoundary && currentBpm < targetBpm) {
-            const nextBpm = Math.min(targetBpm, currentBpm + increaseStep);
-            await updateAdvancedMetronomeAsync(
-              nextBpm,
-              meter.beats,
-              subdivision,
-              true,
-              false,
-              soundPreset,
-            );
+          const currentBars = completedBarsRef.current;
+          const timeReady = increaseMode === 'time' && elapsed - lastIncreaseSecondsRef.current >= timeIntervalSeconds;
+          const barsReady = increaseMode === 'bars' && currentBars - lastIncreaseBarsRef.current >= barInterval;
+          const atBoundary = timing.nextPulseIndex === 0 || timing.lastTickPulseIndex === pulsesPerBar - 1;
+          if ((timeReady || barsReady) && atBoundary && currentBpmRef.current < targetBpm) {
+            const nextBpm = Math.min(targetBpm, currentBpmRef.current + increaseStep);
+            await updateAdvancedMetronomeAsync(nextBpm, beatsPerBar, subdivision, true, false, soundPreset);
+            currentBpmRef.current = nextBpm;
             setCurrentBpm(nextBpm);
             setIncreaseCount((value) => value + 1);
-            lastIncreaseAtSecondsRef.current = elapsed;
-            lastIncreaseAtBarsRef.current = currentBars;
-            lastPulseCountRef.current = 0;
-            lastBarPulseRef.current = -1;
+            lastIncreaseSecondsRef.current = elapsed;
+            lastIncreaseBarsRef.current = currentBars;
             setStatus(nextBpm >= targetBpm ? `목표 ${targetBpm} BPM 도달` : `${nextBpm} BPM으로 자동 증가`);
-            if (isCoachSpeechAvailable) {
-              void speakCoachPhraseAsync(`${nextBpm} 비피엠`, { interrupt: true, speechRate: 1.05 }).catch(() => undefined);
-            }
           }
         }
       } catch (caught) {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : '프로그램 상태를 읽지 못했습니다.');
+        if (!cancelled) setError(caught instanceof Error ? caught.message : '메트로놈 상태를 읽지 못했습니다.');
       } finally {
-        if (!cancelled && phaseRef.current !== 'complete' && phaseRef.current !== 'idle') {
-          timer = setTimeout(poll, 80);
-        }
+        if (!cancelled && phaseRef.current !== 'idle' && phaseRef.current !== 'complete') timer = setTimeout(poll, 80);
       }
     };
 
@@ -237,26 +216,26 @@ export default function MetronomeProgramPanel() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [
-    barInterval,
-    completedBars,
-    countInBars,
-    currentBpm,
-    durationSeconds,
-    increaseMode,
-    increaseStep,
-    meter.beats,
-    pulsesPerBar,
-    running,
-    soundPreset,
-    subdivision,
-    targetBpm,
-    timeIntervalSeconds,
-  ]);
+  }, [barInterval, beatsPerBar, countInBars, durationSeconds, increaseCount, increaseMode, increaseStep, pulsesPerBar, running, soundPreset, startBpm, subdivision, targetBpm, timeIntervalSeconds]);
 
   useEffect(() => () => {
     void stopAdvancedMetronomeAsync();
   }, []);
+
+  const resetRuntime = () => {
+    currentBpmRef.current = startBpm;
+    completedBarsRef.current = 0;
+    setCurrentBpm(startBpm);
+    setElapsedSeconds(0);
+    setCompletedBars(0);
+    setIncreaseCount(0);
+    setCountInPulsesRemaining(0);
+    accumulatedBeforePauseRef.current = 0;
+    lastIncreaseSecondsRef.current = 0;
+    lastIncreaseBarsRef.current = 0;
+    lastPulseRef.current = -1;
+    lastBarPulseRef.current = -1;
+  };
 
   const start = async () => {
     if (busyRef.current) return;
@@ -264,34 +243,16 @@ export default function MetronomeProgramPanel() {
     setError('');
     try {
       if (!isAdvancedMetronomeAvailable) throw new Error('고급 메트로놈 모듈이 APK에 없습니다.');
-      if (countInVoice) await prepareVoiceCountAsync();
-      if (isCoachSpeechAvailable) await prepareCoachSpeechAsync().catch(() => undefined);
-      setCurrentBpm(startBpm);
-      setElapsedSeconds(0);
-      setCompletedBars(0);
-      setIncreaseCount(0);
-      accumulatedBeforePauseRef.current = 0;
-      lastIncreaseAtSecondsRef.current = 0;
-      lastIncreaseAtBarsRef.current = 0;
-      lastPulseCountRef.current = 0;
-      lastBarPulseRef.current = -1;
-
+      if (countInVoice && countInBars > 0) await prepareVoiceCountAsync();
+      resetRuntime();
+      await startAdvancedMetronomeAsync(startBpm, beatsPerBar, subdivision, true, countInVoice && countInBars > 0, soundPreset);
       if (countInBars > 0) {
-        await startAdvancedMetronomeAsync(
-          startBpm,
-          meter.beats,
-          subdivision,
-          true,
-          countInVoice,
-          soundPreset,
-        );
         countInStartPulseRef.current = 0;
         setCountInPulsesRemaining(countInBars * pulsesPerBar);
         phaseRef.current = 'count-in';
         setPhase('count-in');
         setStatus(`${countInBars}마디 카운트인`);
       } else {
-        await startAdvancedMetronomeAsync(startBpm, meter.beats, subdivision, true, false, soundPreset);
         practiceStartedAtRef.current = Date.now();
         phaseRef.current = 'practice';
         setPhase('practice');
@@ -301,7 +262,7 @@ export default function MetronomeProgramPanel() {
       await stopAdvancedMetronomeAsync();
       phaseRef.current = 'idle';
       setPhase('idle');
-      setError(caught instanceof Error ? caught.message : '메트로놈 프로그램을 시작하지 못했습니다.');
+      setError(caught instanceof Error ? caught.message : '메트로놈을 시작하지 못했습니다.');
     } finally {
       busyRef.current = false;
     }
@@ -310,42 +271,25 @@ export default function MetronomeProgramPanel() {
   const pause = async () => {
     if (phase !== 'practice' || busyRef.current) return;
     busyRef.current = true;
-    try {
-      accumulatedBeforePauseRef.current += Math.floor((Date.now() - practiceStartedAtRef.current) / 1000);
-      await stopAdvancedMetronomeAsync();
-      phaseRef.current = 'paused';
-      setPhase('paused');
-      setStatus(`일시정지 · ${currentBpm} BPM`);
-    } finally {
-      busyRef.current = false;
-    }
+    accumulatedBeforePauseRef.current += Math.floor((Date.now() - practiceStartedAtRef.current) / 1000);
+    await stopAdvancedMetronomeAsync();
+    phaseRef.current = 'paused';
+    setPhase('paused');
+    setStatus(`일시정지 · ${currentBpmRef.current} BPM`);
+    busyRef.current = false;
   };
 
   const resume = async () => {
     if (phase !== 'paused' || busyRef.current) return;
     busyRef.current = true;
-    setError('');
     try {
-      await startAdvancedMetronomeAsync(currentBpm, meter.beats, subdivision, true, false, soundPreset);
+      await startAdvancedMetronomeAsync(currentBpmRef.current, beatsPerBar, subdivision, true, false, soundPreset);
       practiceStartedAtRef.current = Date.now();
       phaseRef.current = 'practice';
       setPhase('practice');
-      setStatus(`재개 · ${currentBpm} BPM`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '프로그램을 재개하지 못했습니다.');
+      setStatus(`재개 · ${currentBpmRef.current} BPM`);
     } finally {
       busyRef.current = false;
-    }
-  };
-
-  const finishProgram = async () => {
-    await stopAdvancedMetronomeAsync();
-    phaseRef.current = 'complete';
-    setPhase('complete');
-    setElapsedSeconds(durationSeconds);
-    setStatus(`완료 · ${startBpm}에서 ${currentBpm} BPM · ${increaseCount}회 증가`);
-    if (isCoachSpeechAvailable) {
-      void speakCoachPhraseAsync('연습이 끝났습니다. 손과 손목에 힘을 빼고 잠시 쉬세요.', { interrupt: true, speechRate: 1.02 }).catch(() => undefined);
     }
   };
 
@@ -353,131 +297,97 @@ export default function MetronomeProgramPanel() {
     await stopAdvancedMetronomeAsync();
     phaseRef.current = 'idle';
     setPhase('idle');
-    setStatus('프로그램을 정지했습니다.');
+    setStatus('정지했습니다. 설정값은 유지됩니다.');
   };
 
-  const reset = async () => {
-    await stopAdvancedMetronomeAsync();
-    phaseRef.current = 'idle';
-    setPhase('idle');
-    setCurrentBpm(startBpm);
-    setElapsedSeconds(0);
-    setCompletedBars(0);
-    setIncreaseCount(0);
-    setCountInPulsesRemaining(0);
-    setStatus('프로그램을 설정하고 시작하세요.');
-    setError('');
+  const setStart = (value: number) => {
+    const next = clamp(value, 35, 220);
+    setStartBpm(next);
+    if (targetBpm < next) setTargetBpm(next);
+    if (!locked) setCurrentBpm(next);
   };
 
+  const setTarget = (value: number) => setTargetBpm(clamp(value, startBpm, 220));
   const countInBeat = countInPulsesRemaining > 0
-    ? Math.floor((countInBars * pulsesPerBar - countInPulsesRemaining) / subdivision) % meter.beats + 1
+    ? Math.floor((countInBars * pulsesPerBar - countInPulsesRemaining) / subdivision) % beatsPerBar + 1
     : 1;
-  const countInBar = countInPulsesRemaining > 0
-    ? Math.floor((countInBars * pulsesPerBar - countInPulsesRemaining) / pulsesPerBar) + 1
-    : countInBars;
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Text style={styles.eyebrow}>SMART METRONOME PROGRAM</Text>
-      <Text style={styles.title}>카운트인·타이머·자동 BPM</Text>
-      <Text style={styles.subtitle}>카운트인 후 연습을 시작하고, 설정한 시간 또는 마디마다 목표 BPM까지 자동으로 올립니다.</Text>
+      <Text style={styles.eyebrow}>PRECISION SMART METRONOME</Text>
+      <Text style={styles.title}>전 항목 1단위 정밀 조절</Text>
+      <Text style={styles.subtitle}>BPM·시간·카운트인·자동 증가량과 간격을 모두 1단위로 맞춥니다.</Text>
 
       <View style={styles.liveCard}>
         <View style={styles.liveMain}>
-          <Text style={styles.liveLabel}>{phase === 'count-in' ? `카운트인 ${countInBar}마디 ${countInBeat}박` : phase === 'practice' ? '연습 진행' : phase === 'paused' ? '일시정지' : phase === 'complete' ? '완료' : '대기'}</Text>
+          <Text style={styles.liveLabel}>{phase === 'count-in' ? `카운트인 ${countInBeat}박` : phase === 'practice' ? '연습 진행' : phase === 'paused' ? '일시정지' : phase === 'complete' ? '완료' : '대기'}</Text>
           <Text style={styles.liveBpm}>{currentBpm}<Text style={styles.liveUnit}> BPM</Text></Text>
           <Text style={styles.liveStatus}>{status}</Text>
         </View>
         <View style={styles.timeBlock}>
           <Text style={styles.timeValue}>{formatDuration(remainingSeconds)}</Text>
           <Text style={styles.timeLabel}>남은 시간</Text>
-          <Text style={styles.barLabel}>{completedBars}마디 · {increaseCount}회 증가</Text>
+          <Text style={styles.barLabel}>{completedBars}마디 · 증속 {increaseCount}회</Text>
         </View>
       </View>
       <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${progressPercent}%` }]} /></View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>시작 BPM / 목표 BPM</Text>
-        <View style={styles.bpmSettingRow}>
-          <View style={styles.bpmSettingBlock}>
-            <Text style={styles.settingLabel}>시작</Text>
-            <View style={styles.stepRow}>
-              <OptionButton label="-5" onPress={() => setStartBpm((value) => Math.max(35, value - 5))} disabled={locked} />
-              <Text style={styles.settingValue}>{startBpm}</Text>
-              <OptionButton label="+5" onPress={() => setStartBpm((value) => Math.min(targetBpm, value + 5))} disabled={locked} />
-            </View>
-          </View>
-          <View style={styles.bpmSettingBlock}>
-            <Text style={styles.settingLabel}>목표</Text>
-            <View style={styles.stepRow}>
-              <OptionButton label="-5" onPress={() => setTargetBpm((value) => Math.max(startBpm, value - 5))} disabled={locked} />
-              <Text style={styles.settingValue}>{targetBpm}</Text>
-              <OptionButton label="+5" onPress={() => setTargetBpm((value) => Math.min(220, value + 5))} disabled={locked} />
-            </View>
-          </View>
+        <Text style={styles.sectionTitle}>속도</Text>
+        <View style={styles.twoColumn}>
+          <Stepper label="시작 BPM" value={startBpm} unit="BPM" min={35} max={220} disabled={locked} onChange={setStart} />
+          <Stepper label="목표 BPM" value={targetBpm} unit="BPM" min={startBpm} max={220} disabled={locked} onChange={setTarget} />
         </View>
-
-        <Text style={styles.sectionTitle}>박자</Text>
-        <View style={styles.optionWrap}>{METERS.map((item) => <OptionButton key={item.label} label={item.label} active={meter.label === item.label} onPress={() => setMeterLabel(item.label)} disabled={locked} />)}</View>
-
-        <Text style={styles.sectionTitle}>음표 분할</Text>
-        <View style={styles.optionWrap}>{SUBDIVISIONS.map((item) => <OptionButton key={item.value} label={item.label} active={subdivision === item.value} onPress={() => setSubdivision(item.value)} disabled={locked} />)}</View>
-
+        <Text style={styles.sectionTitle}>박자와 분할</Text>
+        <Stepper label="한 마디 박 수" value={beatsPerBar} unit="박" min={1} max={12} disabled={locked} onChange={setBeatsPerBar} />
+        <View style={styles.choiceWrap}>{SUBDIVISIONS.map((value) => <Choice key={value} label={value === 1 ? '4분' : value === 2 ? '8분' : value === 3 ? '셋잇단' : '16분'} active={subdivision === value} disabled={locked} onPress={() => setSubdivision(value)} />)}</View>
         <Text style={styles.sectionTitle}>클릭 음원</Text>
-        <View style={styles.optionWrap}>{SOUNDS.map((item) => <OptionButton key={item.value} label={item.label} active={soundPreset === item.value} onPress={() => setSoundPreset(item.value)} disabled={locked} />)}</View>
+        <View style={styles.choiceWrap}>{SOUNDS.map((item) => <Choice key={item.value} label={item.label} active={soundPreset === item.value} disabled={locked} onPress={() => setSoundPreset(item.value)} />)}</View>
         {!locked ? <Pressable onPress={() => void previewMetronomeSoundAsync(soundPreset)} style={styles.previewButton}><Text style={styles.previewText}>선택 음원 미리듣기</Text></Pressable> : null}
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>카운트인 마디</Text>
-        <View style={styles.optionWrap}>{[0, 1, 2, 4].map((value) => <OptionButton key={value} label={value === 0 ? '없음' : `${value}마디`} active={countInBars === value} onPress={() => setCountInBars(value)} disabled={locked} />)}</View>
+        <Text style={styles.sectionTitle}>시간과 카운트인</Text>
+        <View style={styles.twoColumn}>
+          <Stepper label="전체 연습 시간" value={durationSeconds} unit="초" min={1} max={3600} disabled={locked} onChange={setDurationSeconds} />
+          <Stepper label="카운트인" value={countInBars} unit="마디" min={0} max={16} disabled={locked} onChange={setCountInBars} />
+        </View>
+        <View style={styles.quickRow}>
+          <Pressable disabled={locked} onPress={() => setDurationSeconds((value) => clamp(value - 60, 1, 3600))} style={[styles.quickButton, locked && styles.disabled]}><Text style={styles.quickText}>시간 -60초</Text></Pressable>
+          <Pressable disabled={locked} onPress={() => setDurationSeconds((value) => clamp(value + 60, 1, 3600))} style={[styles.quickButton, locked && styles.disabled]}><Text style={styles.quickText}>시간 +60초</Text></Pressable>
+        </View>
         <View style={styles.switchRow}>
-          <View style={styles.switchTextWrap}><Text style={styles.switchTitle}>카운트인 사람 음성</Text><Text style={styles.switchDetail}>원, 투, 쓰리, 포를 함께 읽습니다.</Text></View>
+          <View style={styles.switchTextWrap}><Text style={styles.switchTitle}>카운트인 음성</Text><Text style={styles.switchDetail}>카운트인 동안 박을 음성으로 읽습니다.</Text></View>
           <Switch disabled={locked || countInBars === 0} value={countInVoice} onValueChange={setCountInVoice} />
         </View>
+      </View>
 
-        <Text style={styles.sectionTitle}>전체 연습 시간</Text>
-        <View style={styles.optionWrap}>{DURATIONS.map((value) => <OptionButton key={value} label={durationLabel(value)} active={durationSeconds === value} onPress={() => setDurationSeconds(value)} disabled={locked} />)}</View>
-
-        <Text style={styles.sectionTitle}>자동 BPM 증가 방식</Text>
-        <View style={styles.optionWrap}>
-          <OptionButton label="사용 안 함" active={increaseMode === 'off'} onPress={() => setIncreaseMode('off')} disabled={locked} />
-          <OptionButton label="시간마다" active={increaseMode === 'time'} onPress={() => setIncreaseMode('time')} disabled={locked} />
-          <OptionButton label="마디마다" active={increaseMode === 'bars'} onPress={() => setIncreaseMode('bars')} disabled={locked} />
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>자동 BPM 증가</Text>
+        <View style={styles.choiceWrap}>
+          <Choice label="사용 안 함" active={increaseMode === 'off'} disabled={locked} onPress={() => setIncreaseMode('off')} />
+          <Choice label="시간마다" active={increaseMode === 'time'} disabled={locked} onPress={() => setIncreaseMode('time')} />
+          <Choice label="마디마다" active={increaseMode === 'bars'} disabled={locked} onPress={() => setIncreaseMode('bars')} />
         </View>
-
         {increaseMode !== 'off' ? (
-          <>
-            <Text style={styles.sectionTitle}>한 번에 증가</Text>
-            <View style={styles.optionWrap}>{[1, 2, 3, 5].map((value) => <OptionButton key={value} label={`+${value}`} active={increaseStep === value} onPress={() => setIncreaseStep(value)} disabled={locked} />)}</View>
-            <Text style={styles.sectionTitle}>{increaseMode === 'time' ? '증가 간격' : '증가 마디'}</Text>
-            <View style={styles.optionWrap}>
-              {(increaseMode === 'time' ? TIME_INTERVALS : BAR_INTERVALS).map((value) => (
-                <OptionButton
-                  key={value}
-                  label={increaseMode === 'time' ? durationLabel(value) : `${value}마디`}
-                  active={increaseMode === 'time' ? timeIntervalSeconds === value : barInterval === value}
-                  onPress={() => increaseMode === 'time' ? setTimeIntervalSeconds(value) : setBarInterval(value)}
-                  disabled={locked}
-                />
-              ))}
-            </View>
-          </>
+          <View style={styles.twoColumn}>
+            <Stepper label="한 번 증가량" value={increaseStep} unit="BPM" min={1} max={30} disabled={locked} onChange={setIncreaseStep} />
+            {increaseMode === 'time'
+              ? <Stepper label="증가 간격" value={timeIntervalSeconds} unit="초" min={1} max={600} disabled={locked} onChange={setTimeIntervalSeconds} />
+              : <Stepper label="증가 간격" value={barInterval} unit="마디" min={1} max={128} disabled={locked} onChange={setBarInterval} />}
+          </View>
         ) : null}
       </View>
 
       <View style={styles.actionRow}>
-        {phase === 'idle' || phase === 'complete' ? (
-          <Pressable onPress={() => void start()} style={styles.startButton}><Text style={styles.startText}>{startBpm} BPM 프로그램 시작</Text></Pressable>
-        ) : phase === 'practice' ? (
-          <Pressable onPress={() => void pause()} style={styles.pauseButton}><Text style={styles.startText}>일시정지</Text></Pressable>
-        ) : phase === 'paused' ? (
-          <Pressable onPress={() => void resume()} style={styles.startButton}><Text style={styles.startText}>재개</Text></Pressable>
-        ) : (
-          <View style={styles.countInButton}><Text style={styles.startText}>카운트인 진행 중</Text></View>
-        )}
-        {phase !== 'idle' && phase !== 'complete' ? <Pressable onPress={() => void stop()} style={styles.stopButton}><Text style={styles.stopText}>정지</Text></Pressable> : null}
-        {phase === 'complete' ? <Pressable onPress={() => void reset()} style={styles.resetButton}><Text style={styles.stopText}>초기화</Text></Pressable> : null}
+        {phase === 'idle' || phase === 'complete'
+          ? <Pressable onPress={() => void start()} style={styles.startButton}><Text style={styles.actionText}>{startBpm} BPM 시작</Text></Pressable>
+          : phase === 'practice'
+            ? <Pressable onPress={() => void pause()} style={styles.pauseButton}><Text style={styles.actionText}>일시정지</Text></Pressable>
+            : phase === 'paused'
+              ? <Pressable onPress={() => void resume()} style={styles.startButton}><Text style={styles.actionText}>재개</Text></Pressable>
+              : <View style={styles.countButton}><Text style={styles.actionText}>카운트인 중</Text></View>}
+        {phase !== 'idle' && phase !== 'complete' ? <Pressable onPress={() => void stop()} style={styles.stopButton}><Text style={styles.actionText}>정지</Text></Pressable> : null}
       </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </ScrollView>
@@ -486,15 +396,15 @@ export default function MetronomeProgramPanel() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0d1117' },
-  content: { padding: 12, paddingBottom: 80 },
+  content: { padding: 12, paddingBottom: 90 },
   eyebrow: { color: '#79c0ff', fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
   title: { color: '#f0f6fc', fontSize: 20, fontWeight: '900', marginTop: 3 },
   subtitle: { color: '#8b949e', fontSize: 9, lineHeight: 15, marginTop: 5 },
-  liveCard: { flexDirection: 'row', backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', borderRadius: 17, padding: 13, marginTop: 12 },
+  liveCard: { flexDirection: 'row', borderRadius: 17, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', padding: 13, marginTop: 12 },
   liveMain: { flex: 1 },
   liveLabel: { color: '#8b949e', fontSize: 8, fontWeight: '900' },
   liveBpm: { color: '#7ee787', fontSize: 36, fontWeight: '900', marginTop: 2 },
-  liveUnit: { fontSize: 11, color: '#b1bac4' },
+  liveUnit: { color: '#b1bac4', fontSize: 11 },
   liveStatus: { color: '#b1bac4', fontSize: 8, lineHeight: 13, marginTop: 3 },
   timeBlock: { alignItems: 'flex-end', justifyContent: 'center' },
   timeValue: { color: '#f0f6fc', fontSize: 22, fontWeight: '900' },
@@ -502,20 +412,27 @@ const styles = StyleSheet.create({
   barLabel: { color: '#79c0ff', fontSize: 7, marginTop: 6 },
   progressTrack: { height: 5, borderRadius: 3, backgroundColor: '#21262d', overflow: 'hidden', marginTop: 7 },
   progressFill: { height: '100%', backgroundColor: '#2ea043' },
-  card: { backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', borderRadius: 16, padding: 11, marginTop: 10 },
-  sectionTitle: { color: '#f0f6fc', fontSize: 10, fontWeight: '900', marginTop: 10, marginBottom: 6 },
-  bpmSettingRow: { flexDirection: 'row', gap: 10 },
-  bpmSettingBlock: { flex: 1 },
-  settingLabel: { color: '#8b949e', fontSize: 7, fontWeight: '900', marginBottom: 4 },
-  stepRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  settingValue: { color: '#f0f6fc', fontSize: 18, fontWeight: '900', minWidth: 42, textAlign: 'center' },
-  optionWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  optionButton: { minHeight: 34, minWidth: 43, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 9 },
-  optionButtonActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
-  optionText: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
-  optionTextActive: { color: '#ffffff' },
+  card: { backgroundColor: '#161b22', borderRadius: 16, borderWidth: 1, borderColor: '#30363d', padding: 11, marginTop: 10 },
+  sectionTitle: { color: '#f0f6fc', fontSize: 10, fontWeight: '900', marginTop: 8, marginBottom: 7 },
+  twoColumn: { flexDirection: 'row', gap: 8 },
+  stepper: { flex: 1, minWidth: 0, borderRadius: 12, backgroundColor: '#0d1117', padding: 8, marginBottom: 7 },
+  stepperLabel: { color: '#8b949e', fontSize: 7, fontWeight: '900', textAlign: 'center' },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
+  stepButton: { width: 40, minHeight: 34, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
+  stepButtonText: { color: '#f0f6fc', fontSize: 9, fontWeight: '900' },
+  stepValueWrap: { flex: 1, alignItems: 'center' },
+  stepValue: { color: '#7ee787', fontSize: 20, fontWeight: '900' },
+  stepUnit: { color: '#8b949e', fontSize: 6 },
+  choiceWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  choice: { minHeight: 34, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  choiceActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
+  choiceText: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
+  choiceTextActive: { color: '#ffffff' },
   previewButton: { minHeight: 35, borderRadius: 10, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#111d2f', alignItems: 'center', justifyContent: 'center', marginTop: 7 },
   previewText: { color: '#79c0ff', fontSize: 8, fontWeight: '900' },
+  quickRow: { flexDirection: 'row', gap: 6 },
+  quickButton: { flex: 1, minHeight: 34, borderRadius: 9, backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
+  quickText: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
   switchRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#30363d', marginTop: 9, paddingTop: 7 },
   switchTextWrap: { flex: 1, paddingRight: 8 },
   switchTitle: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
@@ -523,11 +440,9 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: 6, marginTop: 11 },
   startButton: { flex: 1.4, minHeight: 46, borderRadius: 12, backgroundColor: '#2ea043', alignItems: 'center', justifyContent: 'center' },
   pauseButton: { flex: 1.4, minHeight: 46, borderRadius: 12, backgroundColor: '#d29922', alignItems: 'center', justifyContent: 'center' },
-  countInButton: { flex: 1.4, minHeight: 46, borderRadius: 12, backgroundColor: '#1f6feb', alignItems: 'center', justifyContent: 'center' },
-  stopButton: { flex: 0.7, minHeight: 46, borderRadius: 12, backgroundColor: '#da3633', alignItems: 'center', justifyContent: 'center' },
-  resetButton: { flex: 0.7, minHeight: 46, borderRadius: 12, backgroundColor: '#21262d', borderWidth: 1, borderColor: '#30363d', alignItems: 'center', justifyContent: 'center' },
-  startText: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
-  stopText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
+  countButton: { flex: 1.4, minHeight: 46, borderRadius: 12, backgroundColor: '#1f6feb', alignItems: 'center', justifyContent: 'center' },
+  stopButton: { flex: 0.8, minHeight: 46, borderRadius: 12, backgroundColor: '#da3633', alignItems: 'center', justifyContent: 'center' },
+  actionText: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
   errorText: { color: '#ff7b72', fontSize: 8, lineHeight: 13, marginTop: 8 },
-  disabled: { opacity: 0.4 },
+  disabled: { opacity: 0.38 },
 });
