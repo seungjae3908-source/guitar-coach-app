@@ -89,6 +89,10 @@ const StringVisionModule = requireOptionalNativeModule<GuitarCoachStringVisionMo
 export const isDetailedHandCoachAvailable = Boolean(NativeModule?.androidHandCoachAvailable);
 export const isAutomaticStringVisionAvailable = Boolean(StringVisionModule?.androidStringVisionAvailable);
 
+function isGuitarStringNumber(value: number): value is GuitarStringNumber {
+  return Number.isInteger(value) && value >= 1 && value <= 6;
+}
+
 function pointToLineDistance(point: { x: number; y: number }, line: GuitarStringLine) {
   const abX = line.endX - line.startX;
   const abY = line.endY - line.startY;
@@ -175,18 +179,18 @@ function fuseNearestString(tracking: GuitarStringTrackingResult, hand: HandAnaly
     .map((line) => ({ line, distance: pointToLineDistance(point, line) }))
     .sort((a, b) => a.distance - b.distance)[0];
   const distanceRatio = nearest ? nearest.distance / Math.max(0.004, averageLineSpacing(tracking.lines)) : 1;
-  const visuallyTrusted = Boolean(
-    nearest
-    && nearest.line.stringNumber > 0
+  const visualStringNumber: 0 | GuitarStringNumber = nearest
+    && isGuitarStringNumber(nearest.line.stringNumber)
     && tracking.confidence >= 0.58
     && tracking.numberingConfidence >= 0.62
     && distanceRatio <= 0.82
-  );
+    ? nearest.line.stringNumber
+    : 0;
   const audio = liveAudioCandidates();
-  let nearestStringNumber: 0 | GuitarStringNumber = visuallyTrusted ? nearest.line.stringNumber : 0;
+  let nearestStringNumber: 0 | GuitarStringNumber = visualStringNumber;
   let audioConfirmed = false;
   if (audio && distanceRatio <= 0.82) {
-    if (nearestStringNumber > 0 && audio.candidates.includes(nearestStringNumber)) audioConfirmed = true;
+    if (isGuitarStringNumber(nearestStringNumber) && audio.candidates.includes(nearestStringNumber)) audioConfirmed = true;
     if (nearestStringNumber === 0 && audio.candidates.length === 1) {
       nearestStringNumber = audio.candidates[0];
       audioConfirmed = true;
