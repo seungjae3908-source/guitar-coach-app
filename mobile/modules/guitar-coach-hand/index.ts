@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 
+import { publishLiveAnalysisFrame } from '../../services/analysis-stream';
+
 export type HandLandmarkName =
   | 'wrist'
   | 'thumbCmc'
@@ -75,5 +77,11 @@ export const isDetailedHandCoachAvailable = Boolean(NativeModule?.androidHandCoa
 
 export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
   if (!NativeModule) throw new Error('손가락 상세 분석 모듈을 사용할 수 없습니다.');
-  return NativeModule.analyzeHandAsync(uri, pickColor);
+  const result = await NativeModule.analyzeHandAsync(uri, pickColor);
+  publishLiveAnalysisFrame({
+    kind: 'hand',
+    capturedAt: Date.now(),
+    result,
+  });
+  return result;
 }
