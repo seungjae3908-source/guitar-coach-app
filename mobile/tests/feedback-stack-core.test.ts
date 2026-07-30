@@ -28,9 +28,11 @@ assert(stack[0]?.id === 'pick-depth', '경고가 교정보다 먼저 표시돼�
 assert(stack.some((entry) => entry.id === 'wrist-angle'), '손목 피드백이 다른 판정에 덮어써지면 안 됩니다.');
 
 stack = mergeFeedbackStack(stack, item('wrist-angle', 1_400, 'correction', 11, 92));
+const updatedWrist = stack.find((entry) => entry.id === 'wrist-angle');
 assert(stack.filter((entry) => entry.id === 'wrist-angle').length === 1, '같은 문제는 중복 카드로 쌓이면 안 됩니다.');
-assert(stack[0]?.id === 'wrist-angle', '갱신된 높은 우선순위 교정이 최상단에 와야 합니다.');
-assert(stack[0]?.confidencePercent === 92, '같은 문제의 최신 측정값이 반영돼야 합니다.');
+assert(stack[0]?.id === 'pick-depth', '경고 우선 정책은 높은 교정 우선순위보다 앞서야 합니다.');
+assert(stack[1]?.id === 'wrist-angle', '같은 상태 안에서는 높은 우선순위 교정이 먼저 와야 합니다.');
+assert(updatedWrist?.confidencePercent === 92, '같은 문제의 최신 측정값이 반영돼야 합니다.');
 
 stack = mergeFeedbackStack(stack, item('stable-picking', 1_500, 'success', 2));
 assert(!stack.some((entry) => entry.status === 'success'), '해결되지 않은 문제가 있으면 성공 메시지가 문제를 가리면 안 됩니다.');
@@ -53,4 +55,4 @@ let successOnly: FeedbackStackEntry[] = [];
 successOnly = mergeFeedbackStack(successOnly, item('stable', 30_000, 'success', 2));
 assert(successOnly.length === 1 && successOnly[0]?.status === 'success', '문제가 없을 때는 성공 피드백을 표시해야 합니다.');
 
-console.log('feedback-stack quality gate: 8 checks passed');
+console.log('feedback-stack quality gate: 9 checks passed');
