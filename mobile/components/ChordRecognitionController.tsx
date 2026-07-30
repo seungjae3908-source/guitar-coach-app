@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import type { HandAnalysisResult } from '../modules/guitar-coach-hand';
 import type { NativeAudioReading } from '../modules/guitar-coach-audio';
-import { subscribeLiveAnalysis } from '../services/analysis-stream';
+import { publishLiveAnalysisFrame, subscribeLiveAnalysis } from '../services/analysis-stream';
 import {
   ChordRecognitionTracker,
   recognizeChord,
@@ -143,6 +143,13 @@ export default function ChordRecognitionController() {
       ),
       frame.capturedAt,
     );
+
+    publishLiveAnalysisFrame({
+      kind: 'chord',
+      capturedAt: frame.capturedAt,
+      result,
+    });
+
     const signature = `${result.status}:${result.chordName ?? 'none'}:${result.score ?? 'none'}:${result.corrections.join('|')}`;
     const interval = result.status === 'confirmed' ? 1_250 : 700;
     if (signature === lastSignatureRef.current && frame.capturedAt - lastPublishedAtRef.current < interval) return;
