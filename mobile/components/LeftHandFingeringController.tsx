@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import type { HandAnalysisResult } from '../modules/guitar-coach-hand';
+import type { HandAnalysisResult, HandLandmarkName } from '../modules/guitar-coach-hand';
 import type { NativeAudioReading } from '../modules/guitar-coach-audio';
 import { publishLiveAnalysisFrame, subscribeLiveAnalysis } from '../services/analysis-stream';
 import { loadBestFretboardCalibration } from '../services/fretboard-calibration-store';
@@ -25,7 +25,7 @@ import {
 } from '../services/practice-session-context';
 
 const FINGERING_CATEGORIES = new Set(['fingering', 'scales', 'leadTechnique']);
-const FINGER_TIPS: Array<{ finger: FrettingFingerId; landmark: string }> = [
+const FINGER_TIPS: Array<{ finger: FrettingFingerId; landmark: HandLandmarkName }> = [
   { finger: 'index', landmark: 'indexTip' },
   { finger: 'middle', landmark: 'middleTip' },
   { finger: 'ring', landmark: 'ringTip' },
