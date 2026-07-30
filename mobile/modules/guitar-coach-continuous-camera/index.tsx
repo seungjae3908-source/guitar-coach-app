@@ -108,7 +108,10 @@ export default function ContinuousRightHandCamera({
   return (
     <NativeContinuousCameraView
       {...props}
-      running={running}
+      // Keep CameraX preview, autofocus and auto-framing alive as soon as the
+      // precision screen mounts. Practice controllers still ignore frames until
+      // the live practice context becomes active, so no score is fabricated.
+      running={true}
       pickColor={verifiedPickColor}
       onAnalysis={(event) => {
         const normalized = normalizeResult(event.nativeEvent);
