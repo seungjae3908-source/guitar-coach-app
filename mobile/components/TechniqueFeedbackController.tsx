@@ -13,6 +13,7 @@ import {
   type RightHandFingerSample,
   type RightHandTechniqueSample,
 } from '../services/right-hand-technique-engine';
+import { analyzeRightHandStringRoles } from '../services/right-hand-string-role-engine';
 import {
   analyzeTechniqueWindow,
   type TechniqueFrameSample,
@@ -252,7 +253,12 @@ export default function TechniqueFeedbackController() {
         || (rightHandSamplesRef.current[0] && frame.capturedAt - rightHandSamplesRef.current[0].capturedAt > 4_000)
       ) rightHandSamplesRef.current.shift();
 
-      analyzeRightHandTechniqueWindow(rightHandSamplesRef.current).forEach((issue) => {
+      const rightHandFeedback = [
+        ...analyzeRightHandTechniqueWindow(rightHandSamplesRef.current),
+        ...analyzeRightHandStringRoles(rightHandSamplesRef.current),
+      ];
+      const uniqueFeedback = [...new Map(rightHandFeedback.map((item) => [item.id, item])).values()];
+      uniqueFeedback.forEach((issue) => {
         const previousAt = lastPublishedAtRef.current.get(issue.id) ?? 0;
         const interval = issue.status === 'success' ? 1_500 : 550;
         if (frame.capturedAt - previousAt < interval) return;
@@ -267,7 +273,7 @@ export default function TechniqueFeedbackController() {
           evidence: issue.evidence,
           nextGoal: issue.nextGoal,
           confidencePercent: issue.confidencePercent,
-          stableCount: 0,
+          stableCount: issue.status === 'success' ? 1 : 0,
           priority: issue.priority,
           measurements: issue.measurements,
         });
@@ -297,7 +303,7 @@ export default function TechniqueFeedbackController() {
         evidence: issue.evidence,
         nextGoal: issue.nextGoal,
         confidencePercent: issue.confidencePercent,
-        stableCount: 0,
+        stableCount: issue.status === 'success' ? 1 : 0,
         priority: issue.priority,
         measurements: issue.measurements,
       });
