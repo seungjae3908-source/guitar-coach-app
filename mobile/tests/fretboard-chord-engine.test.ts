@@ -1,3 +1,4 @@
+import { POWER_CHORD_TEMPLATES } from '../config/power-chord-templates';
 import {
   ChordRecognitionTracker,
   recognizeChord,
@@ -97,6 +98,23 @@ const cAudio = {
   assert(result.status === 'candidate', '필수 프렛이 누락되면 소리가 맞아도 코드를 확정하면 안 됩니다.');
   assert(result.score == null, '필수 프렛이 누락된 코드는 점수가 없어야 합니다.');
   assert(result.corrections.some((item) => item.includes('5번 줄 3프렛')), '누락된 C 코드 위치를 구체적으로 알려야 합니다.');
+}
+
+{
+  const g5Observations: FrettingFingerObservation[] = [
+    observation('index', 6, 3),
+    observation('ring', 5, 5),
+    observation('pinky', 4, 5),
+  ];
+  const result = recognizeChord(g5Observations, calibration, {
+    pitchClasses: [7, 2],
+    confidence: 0.94,
+    signalToNoiseDb: 25,
+    clippingRatio: 0.001,
+  }, POWER_CHORD_TEMPLATES);
+  assert(result.chordName === 'G5', 'G5 운지와 G·D 음군은 G5로 인식해야 합니다.');
+  assert(result.status === 'confirmed', '완성된 G5 영상·소리는 확인 상태여야 합니다.');
+  assert(result.score != null && result.score >= 80, '확인된 파워코드에도 근거 기반 점수가 있어야 합니다.');
 }
 
 {
