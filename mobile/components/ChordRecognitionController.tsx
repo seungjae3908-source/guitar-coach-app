@@ -16,8 +16,9 @@ import {
   getLivePracticeContext,
   subscribeLivePracticeContext,
 } from '../services/practice-session-context';
+import LeftHandFingeringController from './LeftHandFingeringController';
 
-const LEFT_HAND_CATEGORIES = new Set(['chords', 'fingering', 'powerChords', 'scales', 'leadTechnique']);
+const CHORD_CATEGORIES = new Set(['chords', 'powerChords']);
 
 type AudioPitchSample = {
   capturedAt: number;
@@ -75,7 +76,7 @@ export default function ChordRecognitionController() {
 
   const reloadCalibration = async () => {
     const context = getLivePracticeContext();
-    if (!context?.active || !LEFT_HAND_CATEGORIES.has(context.category) || calibrationLoadingRef.current) {
+    if (!context?.active || !CHORD_CATEGORIES.has(context.category) || calibrationLoadingRef.current) {
       calibrationRef.current = null;
       return;
     }
@@ -103,7 +104,7 @@ export default function ChordRecognitionController() {
 
   useEffect(() => subscribeLiveAnalysis((frame) => {
     const context = getLivePracticeContext();
-    if (!context?.active || !LEFT_HAND_CATEGORIES.has(context.category)) return;
+    if (!context?.active || !CHORD_CATEGORIES.has(context.category)) return;
 
     if (frame.kind === 'audio') {
       const audio = frame.result as NativeAudioReading;
@@ -205,5 +206,5 @@ export default function ChordRecognitionController() {
     });
   }), []);
 
-  return null;
+  return <LeftHandFingeringController />;
 }
