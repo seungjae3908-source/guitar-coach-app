@@ -9,7 +9,7 @@ import {
   type ChordAudioEvidence,
   type FretboardCalibration,
   type FrettingFingerObservation,
-} from '../services/fretboard-chord-engine';
+} from '../services/fretboard-chord-recognizer';
 import { loadBestFretboardCalibration } from '../services/fretboard-calibration-store';
 import { publishLiveCoachFeedback } from '../services/live-coach-feedback';
 import {
