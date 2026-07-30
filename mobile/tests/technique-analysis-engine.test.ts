@@ -41,7 +41,7 @@ function makeSample(
 }
 
 const multiIssueSamples = Array.from({ length: 10 }, (_, index) => makeSample(index, 'strumming', {
-  wristAngle: index % 2 === 0 ? -28 : 34,
+  wristAngle: index % 2 === 0 ? -44 : 48,
   wristX: index % 2 === 0 ? 0.39 : 0.65,
   pickExposure: 0.96,
   stringConfidence: 0.31,
