@@ -1,1 +1,1 @@
-trigger continuous CameraX left-hand analysis
+trigger continuous CameraX hand analysis, navigation remount, scroll repair, and song fallback
