@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 
 export type YouTubePlayerState = 'unstarted' | 'ended' | 'playing' | 'paused' | 'buffering' | 'cued' | 'unknown';
+
+type PlayerLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export function extractYouTubeVideoId(input: string) {
   const value = input.trim();
@@ -37,6 +39,14 @@ function stateFromCode(code: number): YouTubePlayerState {
   return 'unknown';
 }
 
+function youtubeErrorMessage(code: number | undefined) {
+  if (code === 2) return 'YouTube 영상 주소가 올바르지 않습니다.';
+  if (code === 5) return '이 영상은 휴대폰 HTML5 플레이어에서 재생할 수 없습니다.';
+  if (code === 100) return '삭제되었거나 비공개인 영상입니다.';
+  if (code === 101 || code === 150) return '영상 소유자가 앱 안에서의 재생을 허용하지 않았습니다. 다른 공식 영상을 선택하세요.';
+  return `YouTube 재생 오류${code == null ? '' : ` 코드 ${code}`}가 발생했습니다.`;
+}
+
 function playerHtml(videoId: string) {
   return `<!doctype html>
 <html>
@@ -50,6 +60,7 @@ function playerHtml(videoId: string) {
 <div id="player"></div>
 <script>
   let player = null;
+  let desiredRate = 1;
   let loopEnabled = false;
   let loopStart = 0;
   let loopEnd = 0;
@@ -57,18 +68,36 @@ function playerHtml(videoId: string) {
   function send(payload) {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(payload));
   }
+  function applySettings() {
+    if (!player) return;
+    try {
+      const available = player.getAvailablePlaybackRates ? player.getAvailablePlaybackRates() : [];
+      if (!available.length || available.indexOf(desiredRate) >= 0) player.setPlaybackRate(desiredRate);
+    } catch (_) {}
+  }
   function onYouTubeIframeAPIReady() {
     player = new YT.Player('player', {
       videoId: '${videoId}',
       width: '100%',
       height: '100%',
-      playerVars: { playsinline: 1, rel: 0, controls: 1, fs: 1 },
+      playerVars: {
+        playsinline: 1,
+        rel: 0,
+        controls: 1,
+        fs: 1,
+        enablejsapi: 1,
+        origin: 'https://www.youtube.com'
+      },
       events: {
         onReady: function () {
+          applySettings();
           send({ type: 'ready', duration: player.getDuration() || 0 });
         },
         onStateChange: function (event) {
           send({ type: 'state', state: event.data });
+        },
+        onPlaybackRateChange: function (event) {
+          send({ type: 'rate', rate: event.data });
         },
         onError: function (event) {
           send({ type: 'error', code: event.data });
@@ -78,17 +107,18 @@ function playerHtml(videoId: string) {
   }
   const tag = document.createElement('script');
   tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = function () { send({ type: 'network-error' }); };
   document.head.appendChild(tag);
 
   function handleCommand(raw) {
     try {
       const message = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (!player || !message) return;
+      if (!message) return;
       if (message.type === 'rate') {
-        const available = player.getAvailablePlaybackRates ? player.getAvailablePlaybackRates() : [];
-        if (!available.length || available.indexOf(message.value) >= 0) player.setPlaybackRate(message.value);
+        desiredRate = Math.max(0.25, Math.min(2, Number(message.value) || 1));
+        applySettings();
       }
-      if (message.type === 'seek') player.seekTo(Math.max(0, Number(message.seconds) || 0), true);
+      if (message.type === 'seek' && player) player.seekTo(Math.max(0, Number(message.seconds) || 0), true);
       if (message.type === 'loop') {
         loopEnabled = Boolean(message.enabled);
         loopStart = Math.max(0, Number(message.start) || 0);
@@ -113,7 +143,7 @@ function playerHtml(videoId: string) {
         type: 'time',
         currentTime: currentTime,
         duration: duration,
-        rate: player.getPlaybackRate ? player.getPlaybackRate() : 1
+        rate: player.getPlaybackRate ? player.getPlaybackRate() : desiredRate
       });
     }
   }, 100);
@@ -144,23 +174,55 @@ export default function YouTubePracticePlayer({
   onError?: (message: string) => void;
 }) {
   const webRef = useRef<WebView>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [loadState, setLoadState] = useState<PlayerLoadState>('idle');
+  const [loadError, setLoadError] = useState('');
   const videoId = useMemo(() => extractYouTubeVideoId(url), [url]);
   const html = useMemo(() => videoId ? playerHtml(videoId) : '', [videoId]);
 
-  useEffect(() => {
-    if (!videoId) return;
-    webRef.current?.postMessage(JSON.stringify({ type: 'rate', value: playbackRate }));
-  }, [playbackRate, videoId]);
+  const fail = (message: string) => {
+    setLoadState('error');
+    setLoadError(message);
+    onError?.(message);
+  };
 
   useEffect(() => {
-    if (!videoId) return;
+    if (!videoId) {
+      setLoadState('idle');
+      setLoadError('');
+      return;
+    }
+    setLoadState('loading');
+    setLoadError('');
+    onTimeChange(0);
+    onDurationChange(0);
+    onStateChange?.('unstarted');
+    const timeout = setTimeout(() => {
+      setLoadState((current) => {
+        if (current === 'ready') return current;
+        const message = 'YouTube 플레이어 준비 시간이 초과되었습니다. 네트워크를 확인하고 다시 시도하세요.';
+        setLoadError(message);
+        onError?.(message);
+        return 'error';
+      });
+    }, 12_000);
+    return () => clearTimeout(timeout);
+  }, [reloadKey, videoId]);
+
+  useEffect(() => {
+    if (!videoId || loadState !== 'ready') return;
+    webRef.current?.postMessage(JSON.stringify({ type: 'rate', value: playbackRate }));
+  }, [loadState, playbackRate, videoId]);
+
+  useEffect(() => {
+    if (!videoId || loadState !== 'ready') return;
     webRef.current?.postMessage(JSON.stringify({
       type: 'loop',
       enabled: loopEnabled,
       start: loopStartSeconds,
       end: loopEndSeconds,
     }));
-  }, [loopEnabled, loopEndSeconds, loopStartSeconds, videoId]);
+  }, [loadState, loopEnabled, loopEndSeconds, loopStartSeconds, videoId]);
 
   const onMessage = (event: WebViewMessageEvent) => {
     try {
@@ -175,14 +237,29 @@ export default function YouTubePracticePlayer({
         if (Number.isFinite(message.currentTime)) onTimeChange(message.currentTime ?? 0);
         if (Number.isFinite(message.duration) && (message.duration ?? 0) > 0) onDurationChange(message.duration ?? 0);
       } else if (message.type === 'ready') {
+        setLoadState('ready');
+        setLoadError('');
         if (Number.isFinite(message.duration)) onDurationChange(message.duration ?? 0);
+        onStateChange?.('cued');
+        requestAnimationFrame(() => {
+          webRef.current?.postMessage(JSON.stringify({ type: 'rate', value: playbackRate }));
+          webRef.current?.postMessage(JSON.stringify({
+            type: 'loop',
+            enabled: loopEnabled,
+            start: loopStartSeconds,
+            end: loopEndSeconds,
+          }));
+        });
       } else if (message.type === 'state') {
+        setLoadState('ready');
         onStateChange?.(stateFromCode(message.state ?? -99));
+      } else if (message.type === 'network-error') {
+        fail('YouTube 플레이어 스크립트를 불러오지 못했습니다. 인터넷 연결을 확인하세요.');
       } else if (message.type === 'error') {
-        onError?.(`YouTube 재생 오류 코드 ${message.code ?? '-'}`);
+        fail(youtubeErrorMessage(message.code));
       }
     } catch {
-      onError?.('YouTube 재생 상태를 읽지 못했습니다.');
+      fail('YouTube 재생 상태를 읽지 못했습니다.');
     }
   };
 
@@ -198,6 +275,7 @@ export default function YouTubePracticePlayer({
   return (
     <View style={styles.frame}>
       <WebView
+        key={`${videoId}-${reloadKey}`}
         ref={webRef}
         source={{ html, baseUrl: 'https://www.youtube.com' }}
         originWhitelist={['https://*', 'http://*']}
@@ -205,10 +283,29 @@ export default function YouTubePracticePlayer({
         domStorageEnabled
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction
+        mixedContentMode="compatibility"
+        onLoadStart={() => setLoadState('loading')}
         onMessage={onMessage}
-        onError={() => onError?.('YouTube 플레이어를 불러오지 못했습니다.')}
+        onError={() => fail('YouTube 플레이어를 불러오지 못했습니다.')}
+        onHttpError={(event) => fail(`YouTube 네트워크 응답 오류 ${event.nativeEvent.statusCode}`)}
         style={styles.webView}
       />
+      {loadState === 'loading' ? (
+        <View pointerEvents="none" style={styles.overlay}>
+          <ActivityIndicator />
+          <Text style={styles.overlayTitle}>영상 플레이어 준비 중</Text>
+          <Text style={styles.overlayText}>재생 준비와 속도·구간 반복 설정을 연결하고 있습니다.</Text>
+        </View>
+      ) : null}
+      {loadState === 'error' ? (
+        <View style={styles.overlay}>
+          <Text style={styles.errorTitle}>영상을 재생하지 못했습니다</Text>
+          <Text style={styles.overlayText}>{loadError}</Text>
+          <Pressable onPress={() => setReloadKey((value) => value + 1)} style={styles.retryButton}>
+            <Text style={styles.retryText}>다시 불러오기</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -216,6 +313,12 @@ export default function YouTubePracticePlayer({
 const styles = StyleSheet.create({
   frame: { width: '100%', aspectRatio: 16 / 9, borderRadius: 15, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
   webView: { flex: 1, backgroundColor: '#000000' },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.86)', alignItems: 'center', justifyContent: 'center', padding: 18 },
+  overlayTitle: { color: '#ffffff', fontSize: 12, fontWeight: '900', marginTop: 9 },
+  errorTitle: { color: '#ff7b72', fontSize: 13, fontWeight: '900', textAlign: 'center' },
+  overlayText: { color: '#b1bac4', fontSize: 9, lineHeight: 14, textAlign: 'center', marginTop: 6 },
+  retryButton: { minHeight: 38, borderRadius: 10, backgroundColor: '#2ea043', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12 },
+  retryText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
   empty: { minHeight: 180, borderRadius: 15, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', alignItems: 'center', justifyContent: 'center', padding: 20 },
   emptyTitle: { color: '#f0f6fc', fontSize: 13, fontWeight: '900', textAlign: 'center' },
   emptyText: { color: '#8b949e', fontSize: 9, lineHeight: 15, textAlign: 'center', marginTop: 7 },
