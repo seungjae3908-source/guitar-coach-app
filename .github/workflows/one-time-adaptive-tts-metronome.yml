@@ -1,0 +1,665 @@
+name: Apply adaptive TTS metronome timing
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'guitar-coach-quality-bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Replace metronome with measured TTS onset compensation
+        run: |
+          cat > mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachMetronomeModule.kt <<'KOTLIN'
+          package expo.modules.guitarcoachnative
+
+          import android.media.AudioAttributes
+          import android.media.AudioFormat
+          import android.media.AudioManager
+          import android.media.AudioTrack
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.HandlerThread
+          import android.os.Looper
+          import android.os.Process
+          import android.os.SystemClock
+          import android.speech.tts.TextToSpeech
+          import android.speech.tts.UtteranceProgressListener
+          import expo.modules.kotlin.Promise
+          import expo.modules.kotlin.modules.Module
+          import expo.modules.kotlin.modules.ModuleDefinition
+          import java.util.Locale
+          import java.util.concurrent.ConcurrentHashMap
+          import kotlin.math.PI
+          import kotlin.math.abs
+          import kotlin.math.max
+          import kotlin.math.min
+          import kotlin.math.roundToLong
+          import kotlin.math.sin
+          import kotlin.math.sqrt
+
+          class GuitarCoachMetronomeModule : Module() {
+            private val mainHandler = Handler(Looper.getMainLooper())
+            private val schedulerThread = HandlerThread(
+              "GuitarCoachMetronomeScheduler",
+              Process.THREAD_PRIORITY_URGENT_AUDIO
+            ).apply { start() }
+            private val schedulerHandler = Handler(schedulerThread.looper)
+
+            private var normalTrack: AudioTrack? = null
+            private var accentTrack: AudioTrack? = null
+            private var loadedSoundPreset = -1
+            private var textToSpeech: TextToSpeech? = null
+            @Volatile private var ttsReady = false
+            @Volatile private var ttsInitializing = false
+            private val voiceWaiters = mutableListOf<Promise>()
+            private val voiceRequests = ConcurrentHashMap<String, VoiceRequest>()
+
+            @Volatile private var running = false
+            @Volatile private var generation = 0
+            @Volatile private var pulseIndex = 0
+            @Volatile private var nextTickAt = 0L
+            private var tickRunnable: Runnable? = null
+            private var voiceRunnable: Runnable? = null
+            @Volatile private var lastTickElapsedRealtime = 0L
+            @Volatile private var lastTickUptime = 0L
+            @Volatile private var lastTickPulseIndex = -1
+            @Volatile private var absolutePulseCount = 0L
+
+            @Volatile private var currentBpm = 70
+            @Volatile private var currentBeatsPerBar = 4
+            @Volatile private var currentSubdivision = 1
+            @Volatile private var currentSoundEnabled = true
+            @Volatile private var currentVoiceEnabled = false
+            @Volatile private var currentSoundPreset = 0
+
+            @Volatile private var schedulerJitterLastMs = 0.0
+            @Volatile private var schedulerJitterMaxMs = 0.0
+            @Volatile private var schedulerJitterSquaredSum = 0.0
+            @Volatile private var schedulerJitterSamples = 0L
+
+            @Volatile private var voiceLeadMs = DEFAULT_VOICE_LEAD_MS
+            @Volatile private var voiceOnsetLatencyLastMs = 0.0
+            @Volatile private var voiceOnsetLatencyAverageMs = 0.0
+            @Volatile private var voiceOnsetOffsetLastMs = 0.0
+            @Volatile private var voiceOnsetOffsetAverageMs = 0.0
+            @Volatile private var voiceOnsetSamples = 0L
+
+            override fun definition() = ModuleDefinition {
+              Name("GuitarCoachMetronome")
+
+              Constant("androidMetronomeAvailable") { true }
+
+              AsyncFunction("prepareVoiceAsync") { promise: Promise ->
+                mainHandler.post { prepareVoiceInternal(promise) }
+              }
+
+              AsyncFunction("startAsync") {
+                bpm: Int,
+                beatsPerBar: Int,
+                subdivision: Int,
+                soundEnabled: Boolean,
+                voiceEnabled: Boolean,
+                soundPreset: Int ->
+                schedulerHandler.post {
+                  startInternal(
+                    bpm.coerceIn(35, 220),
+                    beatsPerBar.coerceIn(1, 12),
+                    subdivision.coerceIn(1, 4),
+                    soundEnabled,
+                    voiceEnabled,
+                    soundPreset.coerceIn(0, 4)
+                  )
+                }
+              }
+
+              AsyncFunction("updateAsync") {
+                bpm: Int,
+                beatsPerBar: Int,
+                subdivision: Int,
+                soundEnabled: Boolean,
+                voiceEnabled: Boolean,
+                soundPreset: Int ->
+                schedulerHandler.post {
+                  updateInternal(
+                    bpm.coerceIn(35, 220),
+                    beatsPerBar.coerceIn(1, 12),
+                    subdivision.coerceIn(1, 4),
+                    soundEnabled,
+                    voiceEnabled,
+                    soundPreset.coerceIn(0, 4)
+                  )
+                }
+              }
+
+              AsyncFunction("getTimingStateAsync") { promise: Promise ->
+                val jitterRms = if (schedulerJitterSamples > 0) {
+                  sqrt(schedulerJitterSquaredSum / schedulerJitterSamples.toDouble())
+                } else 0.0
+                promise.resolve(
+                  mapOf(
+                    "running" to running,
+                    "bpm" to currentBpm,
+                    "beatsPerBar" to currentBeatsPerBar,
+                    "subdivision" to currentSubdivision.coerceIn(1, 4),
+                    "intervalMs" to pulseIntervalMs(),
+                    "lastTickElapsedRealtimeMs" to lastTickElapsedRealtime.toDouble(),
+                    "lastTickUptimeMs" to lastTickUptime.toDouble(),
+                    "nextTickUptimeMs" to nextTickAt.toDouble(),
+                    "lastTickPulseIndex" to lastTickPulseIndex,
+                    "nextPulseIndex" to pulseIndex,
+                    "absolutePulseCount" to absolutePulseCount.toDouble(),
+                    "elapsedRealtimeNowMs" to SystemClock.elapsedRealtime().toDouble(),
+                    "uptimeNowMs" to SystemClock.uptimeMillis().toDouble(),
+                    "schedulerJitterLastMs" to schedulerJitterLastMs,
+                    "schedulerJitterMaxMs" to schedulerJitterMaxMs,
+                    "schedulerJitterRmsMs" to jitterRms,
+                    "voiceLeadMs" to voiceLeadMs,
+                    "voiceOnsetLatencyLastMs" to voiceOnsetLatencyLastMs,
+                    "voiceOnsetLatencyAverageMs" to voiceOnsetLatencyAverageMs,
+                    "voiceOnsetOffsetLastMs" to voiceOnsetOffsetLastMs,
+                    "voiceOnsetOffsetAverageMs" to voiceOnsetOffsetAverageMs,
+                    "voiceOnsetSamples" to voiceOnsetSamples.toDouble()
+                  )
+                )
+              }
+
+              AsyncFunction("stopAsync") {
+                schedulerHandler.post { stopInternal(stopSpeech = true) }
+              }
+
+              AsyncFunction("previewVoiceAsync") { subdivision: Int, promise: Promise ->
+                mainHandler.post {
+                  if (!ttsReady) {
+                    promise.reject("ERR_TTS_NOT_READY", "음성 엔진이 아직 준비되지 않았습니다.", null)
+                    return@post
+                  }
+                  speakPhrase(
+                    voicePhraseForBeat(0, subdivision.coerceIn(1, 4)),
+                    SystemClock.uptimeMillis() + voiceLeadMs.roundToLong()
+                  )
+                  promise.resolve(null)
+                }
+              }
+
+              AsyncFunction("previewSoundAsync") { soundPreset: Int ->
+                schedulerHandler.post {
+                  ensureClickTracks(soundPreset.coerceIn(0, 4))
+                  playClick(accent = true)
+                }
+              }
+
+              OnDestroy {
+                schedulerHandler.post {
+                  stopInternal(stopSpeech = true)
+                  releaseClickTracks()
+                }
+                mainHandler.post {
+                  textToSpeech?.stop()
+                  textToSpeech?.shutdown()
+                  textToSpeech = null
+                  ttsReady = false
+                  ttsInitializing = false
+                  voiceRequests.clear()
+                  rejectVoiceWaiters("ERR_TTS_DESTROYED", "음성 엔진이 종료되었습니다.")
+                  schedulerThread.quitSafely()
+                }
+              }
+            }
+
+            private fun startInternal(
+              bpm: Int,
+              beatsPerBar: Int,
+              subdivision: Int,
+              soundEnabled: Boolean,
+              voiceEnabled: Boolean,
+              soundPreset: Int
+            ) {
+              stopInternal(stopSpeech = true)
+              applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset)
+              ensureClickTracks(soundPreset)
+
+              pulseIndex = 0
+              absolutePulseCount = 0L
+              lastTickElapsedRealtime = 0L
+              lastTickUptime = 0L
+              lastTickPulseIndex = -1
+              resetSchedulerDiagnostics()
+              running = true
+              generation += 1
+
+              if (voiceEnabled && !ttsReady) mainHandler.post { ensureTextToSpeech() }
+
+              nextTickAt = SystemClock.uptimeMillis() + START_DELAY_MS
+              scheduleTick(generation, nextTickAt)
+            }
+
+            private fun updateInternal(
+              bpm: Int,
+              beatsPerBar: Int,
+              subdivision: Int,
+              soundEnabled: Boolean,
+              voiceEnabled: Boolean,
+              soundPreset: Int
+            ) {
+              val oldInterval = pulseIntervalMs()
+              val oldNow = SystemClock.uptimeMillis()
+              val remainingRatio = if (running && oldInterval > 0) {
+                ((nextTickAt - oldNow).toDouble() / oldInterval).coerceIn(0.0, 1.0)
+              } else 1.0
+
+              applyConfiguration(bpm, beatsPerBar, subdivision, soundEnabled, voiceEnabled, soundPreset)
+              ensureClickTracks(soundPreset)
+              if (voiceEnabled && !ttsReady) mainHandler.post { ensureTextToSpeech() }
+              if (!running) return
+
+              generation += 1
+              tickRunnable?.let(schedulerHandler::removeCallbacks)
+              voiceRunnable?.let(schedulerHandler::removeCallbacks)
+              tickRunnable = null
+              voiceRunnable = null
+
+              val newInterval = pulseIntervalMs()
+              nextTickAt = max(SystemClock.uptimeMillis() + 4L, SystemClock.uptimeMillis() + (newInterval * remainingRatio).roundToLong())
+              val totalPulses = totalPulses()
+              pulseIndex %= totalPulses
+              scheduleTick(generation, nextTickAt)
+            }
+
+            private fun applyConfiguration(
+              bpm: Int,
+              beatsPerBar: Int,
+              subdivision: Int,
+              soundEnabled: Boolean,
+              voiceEnabled: Boolean,
+              soundPreset: Int
+            ) {
+              currentBpm = bpm
+              currentBeatsPerBar = beatsPerBar
+              currentSubdivision = subdivision
+              currentSoundEnabled = soundEnabled
+              currentVoiceEnabled = voiceEnabled
+              currentSoundPreset = soundPreset
+            }
+
+            private fun stopInternal(stopSpeech: Boolean) {
+              running = false
+              generation += 1
+              tickRunnable?.let(schedulerHandler::removeCallbacks)
+              voiceRunnable?.let(schedulerHandler::removeCallbacks)
+              tickRunnable = null
+              voiceRunnable = null
+              voiceRequests.clear()
+              if (stopSpeech) mainHandler.post { textToSpeech?.stop() }
+            }
+
+            private fun pulseIntervalMs(): Double =
+              60000.0 / currentBpm.toDouble() / currentSubdivision.coerceIn(1, 4).toDouble()
+
+            private fun totalPulses(): Int =
+              (currentBeatsPerBar.coerceAtLeast(1) * currentSubdivision.coerceIn(1, 4)).coerceAtLeast(1)
+
+            private fun scheduleTick(expectedGeneration: Int, scheduledAt: Long) {
+              if (!running || expectedGeneration != generation) return
+              scheduleVoiceForPulse(expectedGeneration, pulseIndex, scheduledAt)
+
+              val runnable = Runnable {
+                if (!running || expectedGeneration != generation) return@Runnable
+
+                val actualUptime = SystemClock.uptimeMillis()
+                val jitter = (actualUptime - scheduledAt).toDouble()
+                schedulerJitterLastMs = jitter
+                schedulerJitterMaxMs = max(schedulerJitterMaxMs, abs(jitter))
+                schedulerJitterSquaredSum += jitter * jitter
+                schedulerJitterSamples += 1L
+
+                val safeSubdivision = currentSubdivision.coerceIn(1, 4)
+                val firedPulseIndex = pulseIndex
+                val accent = firedPulseIndex == 0
+
+                lastTickElapsedRealtime = SystemClock.elapsedRealtime()
+                lastTickUptime = actualUptime
+                lastTickPulseIndex = firedPulseIndex
+                absolutePulseCount += 1L
+
+                if (currentSoundEnabled) playClick(accent)
+
+                pulseIndex = (firedPulseIndex + 1) % totalPulses()
+                val interval = pulseIntervalMs()
+                nextTickAt = (scheduledAt.toDouble() + interval).roundToLong()
+                val now = SystemClock.uptimeMillis()
+                if (nextTickAt < now - interval.roundToLong()) {
+                  nextTickAt = now + interval.roundToLong()
+                }
+                scheduleTick(expectedGeneration, nextTickAt)
+              }
+
+              tickRunnable = runnable
+              schedulerHandler.postAtTime(runnable, scheduledAt)
+            }
+
+            private fun scheduleVoiceForPulse(expectedGeneration: Int, upcomingPulseIndex: Int, beatAtUptime: Long) {
+              if (!currentVoiceEnabled || !ttsReady) return
+              val safeSubdivision = currentSubdivision.coerceIn(1, 4)
+              if (upcomingPulseIndex % safeSubdivision != 0) return
+              val beatIndex = (upcomingPulseIndex / safeSubdivision) % currentBeatsPerBar.coerceAtLeast(1)
+              val requestAt = max(SystemClock.uptimeMillis(), beatAtUptime - voiceLeadMs.roundToLong())
+              val runnable = Runnable {
+                if (!running || expectedGeneration != generation || !currentVoiceEnabled || !ttsReady) return@Runnable
+                mainHandler.post {
+                  if (running && expectedGeneration == generation && currentVoiceEnabled && ttsReady) {
+                    speakPhrase(voicePhraseForBeat(beatIndex, safeSubdivision), beatAtUptime)
+                  }
+                }
+              }
+              voiceRunnable = runnable
+              schedulerHandler.postAtTime(runnable, requestAt)
+            }
+
+            private fun ensureClickTracks(preset: Int) {
+              if (loadedSoundPreset == preset && normalTrack?.state == AudioTrack.STATE_INITIALIZED && accentTrack?.state == AudioTrack.STATE_INITIALIZED) return
+              releaseClickTracks()
+              val frequencies = when (preset.coerceIn(0, 4)) {
+                1 -> 820.0 to 1240.0
+                2 -> 1120.0 to 1760.0
+                3 -> 1480.0 to 2240.0
+                4 -> 620.0 to 980.0
+                else -> 980.0 to 1560.0
+              }
+              normalTrack = buildStaticTrack(buildClickPcm(frequencies.first, 22, 0.56))
+              accentTrack = buildStaticTrack(buildClickPcm(frequencies.second, 30, 0.82))
+              loadedSoundPreset = preset
+            }
+
+            private fun buildClickPcm(frequency: Double, durationMs: Int, amplitude: Double): ShortArray {
+              val count = max(1, SAMPLE_RATE * durationMs / 1000)
+              return ShortArray(count) { index ->
+                val time = index.toDouble() / SAMPLE_RATE.toDouble()
+                val progress = index.toDouble() / max(1, count - 1).toDouble()
+                val envelope = (1.0 - progress) * (1.0 - progress)
+                val primary = sin(2.0 * PI * frequency * time)
+                val overtone = sin(2.0 * PI * frequency * 2.1 * time) * 0.22
+                ((primary + overtone) * envelope * amplitude * Short.MAX_VALUE)
+                  .toInt()
+                  .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                  .toShort()
+              }
+            }
+
+            private fun buildStaticTrack(samples: ShortArray): AudioTrack {
+              val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+              val format = AudioFormat.Builder()
+                .setSampleRate(SAMPLE_RATE)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build()
+              val builder = AudioTrack.Builder()
+                .setAudioAttributes(attributes)
+                .setAudioFormat(format)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(samples.size * 2)
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+              }
+              return builder.build().also { track ->
+                val written = track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+                if (written <= 0) {
+                  track.release()
+                  throw IllegalStateException("메트로놈 클릭 음원을 준비하지 못했습니다.")
+                }
+              }
+            }
+
+            private fun playClick(accent: Boolean) {
+              val track = if (accent) accentTrack else normalTrack
+              if (track?.state != AudioTrack.STATE_INITIALIZED) return
+              runCatching {
+                track.stop()
+                track.reloadStaticData()
+                track.play()
+              }
+            }
+
+            private fun releaseClickTracks() {
+              listOf(normalTrack, accentTrack).forEach { track ->
+                runCatching { track?.stop() }
+                runCatching { track?.release() }
+              }
+              normalTrack = null
+              accentTrack = null
+              loadedSoundPreset = -1
+            }
+
+            private fun resetSchedulerDiagnostics() {
+              schedulerJitterLastMs = 0.0
+              schedulerJitterMaxMs = 0.0
+              schedulerJitterSquaredSum = 0.0
+              schedulerJitterSamples = 0L
+            }
+
+            private fun prepareVoiceInternal(promise: Promise) {
+              if (ttsReady) {
+                promise.resolve(voiceReadyPayload())
+                return
+              }
+              voiceWaiters.add(promise)
+              ensureTextToSpeech()
+            }
+
+            private fun ensureTextToSpeech() {
+              if (ttsReady || ttsInitializing) return
+              val context = appContext.reactContext?.applicationContext
+              if (context == null) {
+                rejectVoiceWaiters("ERR_TTS_CONTEXT", "Android 음성엔진을 시작할 수 없습니다.")
+                return
+              }
+
+              ttsInitializing = true
+              textToSpeech = TextToSpeech(context) { status ->
+                mainHandler.post {
+                  ttsInitializing = false
+                  if (status != TextToSpeech.SUCCESS) {
+                    textToSpeech?.shutdown()
+                    textToSpeech = null
+                    ttsReady = false
+                    rejectVoiceWaiters("ERR_TTS_INIT", "휴대폰의 사람 음성엔진을 초기화하지 못했습니다.")
+                    return@post
+                  }
+
+                  val engine = textToSpeech
+                  if (engine == null) {
+                    rejectVoiceWaiters("ERR_TTS_INIT", "휴대폰의 사람 음성엔진을 찾지 못했습니다.")
+                    return@post
+                  }
+
+                  val koreanResult = engine.setLanguage(Locale.KOREA)
+                  val koreanAvailable = koreanResult != TextToSpeech.LANG_MISSING_DATA && koreanResult != TextToSpeech.LANG_NOT_SUPPORTED
+                  if (!koreanAvailable) {
+                    val englishResult = engine.setLanguage(Locale.US)
+                    val englishAvailable = englishResult != TextToSpeech.LANG_MISSING_DATA && englishResult != TextToSpeech.LANG_NOT_SUPPORTED
+                    if (!englishAvailable) {
+                      engine.shutdown()
+                      textToSpeech = null
+                      ttsReady = false
+                      rejectVoiceWaiters("ERR_TTS_LANGUAGE", "한국어 또는 영어 사람 음성이 휴대폰에 설치되어 있지 않습니다.")
+                      return@post
+                    }
+                  }
+
+                  engine.setSpeechRate(1.55f)
+                  engine.setPitch(1.0f)
+                  engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                      if (utteranceId == null) return
+                      val request = voiceRequests.remove(utteranceId) ?: return
+                      val now = SystemClock.elapsedRealtime()
+                      val latency = max(0L, now - request.requestedAtElapsedMs).toDouble()
+                      val offset = (now - request.targetBeatElapsedMs).toDouble()
+                      voiceOnsetLatencyLastMs = latency
+                      voiceOnsetOffsetLastMs = offset
+                      voiceOnsetSamples += 1L
+                      voiceOnsetLatencyAverageMs = if (voiceOnsetSamples == 1L) latency else voiceOnsetLatencyAverageMs * 0.78 + latency * 0.22
+                      voiceOnsetOffsetAverageMs = if (voiceOnsetSamples == 1L) offset else voiceOnsetOffsetAverageMs * 0.78 + offset * 0.22
+                      if (voiceOnsetSamples >= 2L && latency in 35.0..700.0) {
+                        val desired = (voiceOnsetLatencyAverageMs + VOICE_SAFETY_COMPENSATION_MS).coerceIn(MIN_VOICE_LEAD_MS, MAX_VOICE_LEAD_MS)
+                        voiceLeadMs = (voiceLeadMs * 0.72 + desired * 0.28).coerceIn(MIN_VOICE_LEAD_MS, MAX_VOICE_LEAD_MS)
+                      }
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                      if (utteranceId != null) voiceRequests.remove(utteranceId)
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                      if (utteranceId != null) voiceRequests.remove(utteranceId)
+                    }
+
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                      if (utteranceId != null) voiceRequests.remove(utteranceId)
+                    }
+                  })
+                  ttsReady = true
+                  resolveVoiceWaiters()
+                }
+              }
+            }
+
+            private fun speakPhrase(phrase: String, targetBeatUptimeMs: Long) {
+              if (!ttsReady || phrase.isBlank()) return
+              val engine = textToSpeech ?: return
+              val requestedElapsed = SystemClock.elapsedRealtime()
+              val uptimeToElapsedOffset = requestedElapsed - SystemClock.uptimeMillis()
+              val targetElapsed = targetBeatUptimeMs + uptimeToElapsedOffset
+              val utteranceId = "guitar-coach-count-${absolutePulseCount}-${requestedElapsed}"
+              voiceRequests[utteranceId] = VoiceRequest(requestedElapsed, targetElapsed)
+              val params = Bundle().apply {
+                putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+              }
+              val result = engine.speak(phrase, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+              if (result == TextToSpeech.ERROR) voiceRequests.remove(utteranceId)
+            }
+
+            private fun resolveVoiceWaiters() {
+              val payload = voiceReadyPayload()
+              val waiters = voiceWaiters.toList()
+              voiceWaiters.clear()
+              waiters.forEach { it.resolve(payload) }
+            }
+
+            private fun rejectVoiceWaiters(code: String, message: String) {
+              val waiters = voiceWaiters.toList()
+              voiceWaiters.clear()
+              waiters.forEach { it.reject(code, message, null) }
+            }
+
+            private fun voiceReadyPayload(): Map<String, Any> {
+              val language = textToSpeech?.language?.toLanguageTag().orEmpty().ifBlank { "system" }
+              return mapOf(
+                "ready" to true,
+                "language" to language,
+                "message" to "사람 음성 준비 완료 · 실제 발음 시작 자동 보정"
+              )
+            }
+
+            private fun voicePhraseForBeat(beatIndex: Int, subdivision: Int): String {
+              return KOREAN_COUNT_WORDS[beatIndex.coerceIn(KOREAN_COUNT_WORDS.indices)]
+            }
+
+            private data class VoiceRequest(
+              val requestedAtElapsedMs: Long,
+              val targetBeatElapsedMs: Long
+            )
+
+            companion object {
+              private const val SAMPLE_RATE = 48_000
+              private const val START_DELAY_MS = 360L
+              private const val DEFAULT_VOICE_LEAD_MS = 170.0
+              private const val MIN_VOICE_LEAD_MS = 90.0
+              private const val MAX_VOICE_LEAD_MS = 350.0
+              private const val VOICE_SAFETY_COMPENSATION_MS = 8.0
+              private val KOREAN_COUNT_WORDS = listOf(
+                "원", "투", "쓰리", "포", "파이브", "식스",
+                "세븐", "에잇", "나인", "텐", "일레븐", "트웰브"
+              )
+            }
+          }
+          KOTLIN
+
+          python - <<'PY'
+          from pathlib import Path
+
+          wrapper = Path('mobile/modules/guitar-coach-metronome/index.ts')
+          text = wrapper.read_text(encoding='utf-8')
+          marker = '''  voiceLeadMs?: number;
+};'''
+          replacement = '''  voiceLeadMs?: number;
+  voiceOnsetLatencyLastMs?: number;
+  voiceOnsetLatencyAverageMs?: number;
+  voiceOnsetOffsetLastMs?: number;
+  voiceOnsetOffsetAverageMs?: number;
+  voiceOnsetSamples?: number;
+};'''
+          if marker not in text:
+              raise SystemExit('metronome TypeScript timing marker not found')
+          wrapper.write_text(text.replace(marker, replacement, 1), encoding='utf-8')
+
+          panel = Path('mobile/components/MetronomeProgramPanel.tsx')
+          text = panel.read_text(encoding='utf-8')
+          marker = '''          <Text style={styles.diagnosticDetail}>최근 오차 {(timingState?.schedulerJitterLastMs ?? 0).toFixed(1)}ms · 음성 선행 {Math.round(timingState?.voiceLeadMs ?? 0)}ms · 펄스 {Math.round(timingState?.absolutePulseCount ?? 0)}</Text>'''
+          replacement = '''          <Text style={styles.diagnosticDetail}>최근 오차 {(timingState?.schedulerJitterLastMs ?? 0).toFixed(1)}ms · 음성 선행 {Math.round(timingState?.voiceLeadMs ?? 0)}ms · 펄스 {Math.round(timingState?.absolutePulseCount ?? 0)}</Text>
+          <Text style={styles.diagnosticDetail}>음성 실제 시작 지연 {timingState?.voiceOnsetSamples ? `${(timingState.voiceOnsetLatencyAverageMs ?? 0).toFixed(0)}ms` : '측정 중'} · 박 기준 오프셋 {timingState?.voiceOnsetSamples ? `${(timingState.voiceOnsetOffsetAverageMs ?? 0).toFixed(0)}ms` : '-'} · 표본 {Math.round(timingState?.voiceOnsetSamples ?? 0)}</Text>'''
+          if marker not in text:
+              raise SystemExit('metronome diagnostic UI marker not found')
+          panel.write_text(text.replace(marker, replacement, 1), encoding='utf-8')
+          PY
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run TypeScript and executable quality gates
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Compile release Kotlin
+        working-directory: mobile/android
+        run: ./gradlew :app:compileReleaseKotlin --no-daemon
+
+      - name: Commit verified adaptive voice timing
+        run: |
+          rm -f .github/workflows/one-time-adaptive-tts-metronome.yml .github/adaptive-tts-trigger.txt
+          git config user.name "guitar-coach-quality-bot"
+          git config user.email "guitar-coach-quality-bot@users.noreply.github.com"
+          git add mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachMetronomeModule.kt mobile/modules/guitar-coach-metronome/index.ts mobile/components/MetronomeProgramPanel.tsx .github/workflows/one-time-adaptive-tts-metronome.yml .github/adaptive-tts-trigger.txt
+          git commit -m "Measure and adapt TTS onset timing"
+          git push origin HEAD:agent/live-coach-compat-v055
