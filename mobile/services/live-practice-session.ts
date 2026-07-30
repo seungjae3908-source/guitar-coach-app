@@ -25,10 +25,13 @@ export type LiveSessionSnapshot = {
     hand: number;
     audio: number;
     validScore: number;
+    chord?: number;
   };
   lastStringNumber: number | null;
   timingOffsetMs: number | null;
   timingJitterMs: number | null;
+  recognizedChord?: string | null;
+  chordStatus?: 'cannot-judge' | 'candidate' | 'confirmed' | null;
 };
 
 type MetricSample = {
@@ -53,6 +56,28 @@ type IssueCounter = {
   severity: SessionIssue['severity'];
   confidenceTotal: number;
 };
+
+const RIGHT_HAND_SCORE_CATEGORIES = new Set<PracticeCategoryId>([
+  'arpeggio',
+  'fingerstyle',
+  'strumming',
+  'downPicking',
+  'alternatePicking',
+  'palmMute',
+]);
+
+const CHORD_SCORE_CATEGORIES = new Set<PracticeCategoryId>([
+  'chords',
+  'powerChords',
+]);
+
+const LEFT_HAND_UNVERIFIED_CATEGORIES = new Set<PracticeCategoryId>([
+  'chords',
+  'fingering',
+  'powerChords',
+  'scales',
+  'leadTechnique',
+]);
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -86,6 +111,7 @@ export class LivePracticeSessionAccumulator {
   private readonly handSamples: MetricSample[] = [];
   private readonly pickSamples: MetricSample[] = [];
   private readonly timingSamples: MetricSample[] = [];
+  private readonly chordSamples: MetricSample[] = [];
   private readonly timingOffsets: number[] = [];
   private readonly handTemporalSamples: HandTemporalSample[] = [];
   private readonly issueCounters = new Map<string, IssueCounter>();
@@ -95,6 +121,8 @@ export class LivePracticeSessionAccumulator {
   private latestTimingOffsetMs: number | null = null;
   private latestMetronome: MetronomeTimingState | null = null;
   private lastProcessedAttackCount = -1;
+  private latestChordName: string | null = null;
+  private latestChordStatus: LiveSessionSnapshot['chordStatus'] = null;
 
   constructor(options: LiveSessionOptions) {
     this.options = options;
@@ -108,7 +136,8 @@ export class LivePracticeSessionAccumulator {
     if (frame.kind === 'pose') this.addPoseFrame(frame);
     else if (frame.kind === 'hand') this.addHandFrame(frame);
     else if (frame.kind === 'audio') this.addAudioFrame(frame);
-    else this.addMetronomeFrame(frame);
+    else if (frame.kind === 'metronome') this.addMetronomeFrame(frame);
+    else this.addChordFrame(frame);
   }
 
   private addIssue(
@@ -133,6 +162,37 @@ export class LivePracticeSessionAccumulator {
   private addMetronomeFrame(frame: Extract<LiveAnalysisFrame, { kind: 'metronome' }>) {
     this.latestMetronome = frame.result;
     if (frame.result.running) this.options.bpm = clamp(Math.round(frame.result.bpm), 35, 220);
+  }
+
+  private addChordFrame(frame: Extract<LiveAnalysisFrame, { kind: 'chord' }>) {
+    if (!CHORD_SCORE_CATEGORIES.has(this.options.category)) return;
+    const result = frame.result;
+    this.latestChordName = result.chordName;
+    this.latestChordStatus = result.status;
+
+    if (
+      result.status === 'confirmed'
+      && result.score != null
+      && result.confidencePercent >= 65
+    ) {
+      this.chordSamples.push({
+        score: clamp(result.score, 0, 100),
+        confidence: result.confidencePercent,
+        capturedAt: frame.capturedAt,
+      });
+      if (this.chordSamples.length > 80) this.chordSamples.shift();
+      return;
+    }
+
+    if (result.status === 'candidate' && result.corrections[0]) {
+      this.addIssue(
+        `chord-correction-${result.chordName ?? 'candidate'}`,
+        result.corrections[0],
+        'warn',
+        result.confidencePercent,
+        frame.capturedAt,
+      );
+    }
   }
 
   private addPoseFrame(frame: Extract<LiveAnalysisFrame, { kind: 'pose' }>) {
@@ -165,11 +225,11 @@ export class LivePracticeSessionAccumulator {
     const torsoOffset = Math.abs(shoulderCenterX - hipCenterX);
 
     const score = clamp(Math.round(
-      100 -
-      Math.max(0, shoulderTiltRatio - 0.04) * 230 -
-      Math.max(0, Math.abs(shoulderCenterX - 0.5) - 0.05) * 180 -
-      Math.max(0, headOffsetRatio - 0.18) * 80 -
-      Math.max(0, torsoOffset - 0.04) * 160
+      100
+      - Math.max(0, shoulderTiltRatio - 0.04) * 230
+      - Math.max(0, Math.abs(shoulderCenterX - 0.5) - 0.05) * 180
+      - Math.max(0, headOffsetRatio - 0.18) * 80
+      - Math.max(0, torsoOffset - 0.04) * 160
     ), 0, 100);
 
     this.poseSamples.push({ score, confidence: quality.confidencePercent, capturedAt: frame.capturedAt });
@@ -180,6 +240,8 @@ export class LivePracticeSessionAccumulator {
   }
 
   private addHandFrame(frame: Extract<LiveAnalysisFrame, { kind: 'hand' }>) {
+    if (!RIGHT_HAND_SCORE_CATEGORIES.has(this.options.category)) return;
+
     const result = frame.result;
     if (!result.hasHand || result.landmarks.length < 21) return;
     const points = landmarkMap(result.landmarks);
@@ -223,7 +285,9 @@ export class LivePracticeSessionAccumulator {
     const recent = this.handTemporalSamples.slice(-12);
     const pinchVariation = standardDeviation(recent.map((sample) => sample.pinchRatio));
     const palmVariation = standardDeviation(recent.map((sample) => sample.palmAngle));
-    const motionPenalty = this.options.category === 'strumming' || this.options.category === 'alternatePicking' || this.options.category === 'downPicking'
+    const motionPenalty = this.options.category === 'strumming'
+      || this.options.category === 'alternatePicking'
+      || this.options.category === 'downPicking'
       ? Math.max(0, motion - 0.12) * 120
       : motion * 90;
     const gripPenalty = pinchVariation * 170 + Math.max(0, palmVariation - 8) * 0.7;
@@ -328,12 +392,29 @@ export class LivePracticeSessionAccumulator {
   }
 
   snapshot(): LiveSessionSnapshot {
-    const metricGroups = [
-      { samples: this.poseSamples, weight: 0.2 },
-      { samples: this.handSamples, weight: 0.4 },
-      { samples: this.pickSamples, weight: 0.15 },
-      { samples: this.timingSamples, weight: 0.25 },
-    ].filter((group) => group.samples.length >= 4);
+    const rightHandSession = RIGHT_HAND_SCORE_CATEGORIES.has(this.options.category);
+    const chordSession = CHORD_SCORE_CATEGORIES.has(this.options.category);
+    const unverifiedLeftSession = LEFT_HAND_UNVERIFIED_CATEGORIES.has(this.options.category) && !chordSession;
+
+    let metricGroups: Array<{ samples: MetricSample[]; weight: number }> = [];
+    if (rightHandSession) {
+      metricGroups = [
+        { samples: this.poseSamples, weight: 0.2 },
+        { samples: this.handSamples, weight: 0.4 },
+        { samples: this.pickSamples, weight: 0.15 },
+        { samples: this.timingSamples, weight: 0.25 },
+      ].filter((group) => group.samples.length >= 4);
+    } else if (chordSession && this.chordSamples.length >= 2) {
+      metricGroups = [
+        { samples: this.chordSamples, weight: 0.82 },
+        { samples: this.timingSamples, weight: 0.18 },
+      ].filter((group) => group.samples.length >= 2);
+    } else if (!unverifiedLeftSession && !chordSession) {
+      metricGroups = [
+        { samples: this.poseSamples, weight: 0.5 },
+        { samples: this.timingSamples, weight: 0.5 },
+      ].filter((group) => group.samples.length >= 4);
+    }
 
     const weightedScores: Array<{ score: number; confidence: number; weight: number }> = metricGroups.map((group) => ({
       score: average(group.samples.map((sample) => sample.score)),
@@ -349,13 +430,8 @@ export class LivePracticeSessionAccumulator {
       : 0;
 
     if (averageScore != null && averageScore >= 82 && confidencePercent >= 65) this.stableFrameCount += 1;
-    const allSamples = [
-      ...this.poseSamples,
-      ...this.handSamples,
-      ...this.pickSamples,
-      ...this.timingSamples,
-    ];
-    const bestScore = allSamples.length ? Math.max(...allSamples.map((sample) => sample.score)) : null;
+    const scoredSamples = metricGroups.flatMap((group) => group.samples);
+    const bestScore = scoredSamples.length ? Math.max(...scoredSamples.map((sample) => sample.score)) : null;
     const issues = [...this.issueCounters.entries()]
       .map(([id, issue]) => ({
         id,
@@ -382,13 +458,16 @@ export class LivePracticeSessionAccumulator {
         pose: this.poseSamples.length,
         hand: this.handSamples.length,
         audio: this.timingSamples.length,
-        validScore: allSamples.length,
+        chord: this.chordSamples.length,
+        validScore: scoredSamples.length,
       },
       lastStringNumber: this.lastStringNumber,
       timingOffsetMs: this.latestTimingOffsetMs,
       timingJitterMs: this.timingOffsets.length >= 2
         ? Math.round(standardDeviation(this.timingOffsets.slice(-20)))
         : null,
+      recognizedChord: this.latestChordName,
+      chordStatus: this.latestChordStatus,
     };
   }
 }
