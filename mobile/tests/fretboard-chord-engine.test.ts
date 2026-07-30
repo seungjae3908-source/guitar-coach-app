@@ -5,7 +5,7 @@ import {
   type FrettingFingerId,
   type FrettingFingerObservation,
   type GuitarStringNumber,
-} from '../services/fretboard-chord-engine';
+} from '../services/fretboard-chord-recognizer';
 
 let checks = 0;
 
@@ -59,6 +59,13 @@ const cObservations: FrettingFingerObservation[] = [
   observation('index', 2, 1),
 ];
 
+const cAudio = {
+  pitchClasses: [0, 4, 7],
+  confidence: 0.92,
+  signalToNoiseDb: 24,
+  clippingRatio: 0.001,
+};
+
 {
   const result = recognizeChord(cObservations, null, null);
   assert(result.status === 'cannot-judge', '지판 보정 없이 코드 이름이나 점수를 만들면 안 됩니다.');
@@ -73,12 +80,7 @@ const cObservations: FrettingFingerObservation[] = [
 }
 
 {
-  const result = recognizeChord(cObservations, calibration, {
-    pitchClasses: [0, 4, 7],
-    confidence: 0.92,
-    signalToNoiseDb: 24,
-    clippingRatio: 0.001,
-  });
+  const result = recognizeChord(cObservations, calibration, cAudio);
   assert(result.chordName === 'C', 'C 운지와 C 음군이 일치하면 C 코드여야 합니다.');
   assert(result.status === 'confirmed', '영상과 소리가 일치하면 확인 상태여야 합니다.');
   assert(result.score != null && result.score >= 75, '확인된 C 코드는 근거 기반 점수가 있어야 합니다.');
@@ -90,8 +92,10 @@ const cObservations: FrettingFingerObservation[] = [
     observation('middle', 4, 2),
     observation('index', 2, 1),
   ];
-  const result = recognizeChord(incomplete, calibration, null);
-  assert(result.status !== 'confirmed', '누락된 손가락이 있으면 코드를 확정하면 안 됩니다.');
+  const result = recognizeChord(incomplete, calibration, cAudio);
+  assert(result.chordName === 'C', 'C 음군과 두 개의 C 프렛이 일치하면 가장 가까운 후보를 C로 표시해야 합니다.');
+  assert(result.status === 'candidate', '필수 프렛이 누락되면 소리가 맞아도 코드를 확정하면 안 됩니다.');
+  assert(result.score == null, '필수 프렛이 누락된 코드는 점수가 없어야 합니다.');
   assert(result.corrections.some((item) => item.includes('5번 줄 3프렛')), '누락된 C 코드 위치를 구체적으로 알려야 합니다.');
 }
 
