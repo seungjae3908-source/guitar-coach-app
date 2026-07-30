@@ -1,0 +1,168 @@
+name: Run self-cleaning CameraX auto framing patch
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Apply guarded native camera patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachContinuousCameraModule.kt')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              ('import androidx.camera.core.CameraSelector\nimport androidx.camera.core.ImageAnalysis', 'import androidx.camera.core.Camera\nimport androidx.camera.core.CameraSelector\nimport androidx.camera.core.FocusMeteringAction\nimport androidx.camera.core.ImageAnalysis'),
+              ('import java.util.concurrent.ExecutorService\nimport java.util.concurrent.Executors', 'import java.util.concurrent.ExecutorService\nimport java.util.concurrent.Executors\nimport java.util.concurrent.TimeUnit'),
+              ('import kotlin.math.min\nimport kotlin.math.roundToInt', 'import kotlin.math.min\nimport kotlin.math.pow\nimport kotlin.math.roundToInt'),
+              ('    it.scaleType = PreviewView.ScaleType.FILL_CENTER\n    it.implementationMode = PreviewView.ImplementationMode.PERFORMANCE', '    it.scaleType = PreviewView.ScaleType.FILL_CENTER\n    it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE'),
+              ('  private val eventPending = AtomicBoolean(false)\n  private var latestPayload: Map<String, Any>? = null\n  private var cameraProvider: ProcessCameraProvider? = null', '  private val eventPending = AtomicBoolean(false)\n  private val spatialResetRequested = AtomicBoolean(false)\n  private var latestPayload: Map<String, Any>? = null\n  private var cameraProvider: ProcessCameraProvider? = null\n  private var boundCamera: Camera? = null'),
+              ('  private var consecutiveStringMisses = 0\n  private val previousContacts = mutableMapOf<String, PreviousContact>()', '  private var consecutiveStringMisses = 0\n  private var currentZoomRatio = 1.0f\n  private var lastAutoFrameAdjustmentAt = 0L\n  private var lastFocusAt = 0L\n  private var noHandFrames = 0\n  private var autoFramingState = "searching"\n  private val previousContacts = mutableMapOf<String, PreviousContact>()'),
+              ('  fun setPickColor(value: String) {\n    pickColor = value.lowercase()\n  }\n\n  private fun startCamera() {', '''  fun setPickColor(value: String) {
+    pickColor = value.lowercase()
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    if (running && !destroyed) post { startCamera() }
+  }
+
+  override fun onDetachedFromWindow() {
+    stopCamera()
+    super.onDetachedFromWindow()
+  }
+
+  private fun startCamera() {'''),
+              ('        provider.unbindAll()\n        provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)\n        cameraProvider = provider', '''        provider.unbindAll()
+        val camera = provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+        cameraProvider = provider
+        boundCamera = camera
+        currentZoomRatio = camera.cameraInfo.zoomState.value?.zoomRatio ?: 1.0f'''),
+              ('    cameraProvider = null\n    previewUseCase = null', '    cameraProvider = null\n    boundCamera = null\n    previewUseCase = null'),
+              ('    consecutiveStringMisses = 0\n    previousContacts.clear()', '    consecutiveStringMisses = 0\n    lastAutoFrameAdjustmentAt = 0\n    lastFocusAt = 0\n    noHandFrames = 0\n    autoFramingState = "searching"\n    spatialResetRequested.set(false)\n    previousContacts.clear()'),
+              ('  private fun analyzeFrame(image: ImageProxy) {\n    if (!running || destroyed) {', '''  private fun resetSpatialTracking() {
+    lastHandResult = null
+    lastStringState = null
+    lastStringRefreshFrame = frameCount
+    consecutiveStringMisses = 0
+    previousContacts.clear()
+    recentHits.clear()
+  }
+
+  private fun analyzeFrame(image: ImageProxy) {
+    if (!running || destroyed) {'''),
+              ('    val startedAt = SystemClock.elapsedRealtime()\n    frameCount += 1', '    val startedAt = SystemClock.elapsedRealtime()\n    if (spatialResetRequested.compareAndSet(true, false)) resetSpatialTracking()\n    frameCount += 1'),
+              ('      val hand = lastHandResult\n      if (hand?.hasHand != true) previousContacts.clear()', '      val hand = lastHandResult\n      updateAutoFraming(hand, startedAt)\n      if (hand?.hasHand != true) previousContacts.clear()'),
+              ('  private fun updateCameraFps(now: Long) {', '''  private fun updateAutoFraming(hand: LiveHandResult?, now: Long) {
+    val camera = boundCamera ?: return
+    val zoomState = camera.cameraInfo.zoomState.value ?: return
+    val minZoom = zoomState.minZoomRatio
+    val maxZoom = zoomState.maxZoomRatio
+
+    if (hand?.hasHand != true || hand.landmarks.size < 21) {
+      noHandFrames += 1
+      autoFramingState = "searching"
+      if (noHandFrames >= 12 && now - lastAutoFrameAdjustmentAt >= 850 && currentZoomRatio > minZoom * 1.04f) {
+        requestZoom((currentZoomRatio * 0.82f).coerceAtLeast(minZoom), now, "searching")
+      }
+      return
+    }
+
+    noHandFrames = 0
+    val wrist = hand.landmarks[0]
+    val middleMcp = hand.landmarks[9]
+    val palm = hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y).coerceAtLeast(0.001)
+    val xs = hand.landmarks.map { it.x }
+    val ys = hand.landmarks.map { it.y }
+    val centerX = ((xs.minOrNull() ?: wrist.x) + (xs.maxOrNull() ?: wrist.x)) / 2.0
+    val centerY = ((ys.minOrNull() ?: wrist.y) + (ys.maxOrNull() ?: wrist.y)) / 2.0
+
+    if (now - lastFocusAt >= 1_250) requestFocus(centerX, centerY, now)
+
+    val desired = when {
+      palm < 0.115 -> currentZoomRatio * min(1.38, (0.235 / palm).pow(0.42)).toFloat()
+      palm < 0.165 -> currentZoomRatio * 1.18f
+      palm < 0.205 -> currentZoomRatio * 1.08f
+      palm > 0.54 -> currentZoomRatio * 0.76f
+      palm > 0.43 -> currentZoomRatio * 0.88f
+      else -> currentZoomRatio
+    }.coerceIn(minZoom, maxZoom)
+
+    autoFramingState = when {
+      palm < 0.205 && currentZoomRatio >= maxZoom * 0.98f -> "max-zoom-too-small"
+      palm < 0.205 -> "zooming-in"
+      palm > 0.43 -> "zooming-out"
+      else -> "locked"
+    }
+
+    val changeRatio = abs(desired - currentZoomRatio) / max(0.01f, currentZoomRatio)
+    if (changeRatio >= 0.045f && now - lastAutoFrameAdjustmentAt >= 720) requestZoom(desired, now, autoFramingState)
+  }
+
+  private fun requestZoom(target: Float, now: Long, state: String) {
+    lastAutoFrameAdjustmentAt = now
+    autoFramingState = state
+    post {
+      val camera = boundCamera ?: return@post
+      val zoomState = camera.cameraInfo.zoomState.value ?: return@post
+      val clamped = target.coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+      if (abs(clamped - currentZoomRatio) / max(0.01f, currentZoomRatio) < 0.025f) return@post
+      currentZoomRatio = clamped
+      camera.cameraControl.setZoomRatio(clamped)
+      spatialResetRequested.set(true)
+    }
+  }
+
+  private fun requestFocus(normalizedX: Double, normalizedY: Double, now: Long) {
+    lastFocusAt = now
+    post {
+      val camera = boundCamera ?: return@post
+      if (previewView.width <= 0 || previewView.height <= 0) return@post
+      val point = previewView.meteringPointFactory.createPoint(
+        (normalizedX.coerceIn(0.05, 0.95) * previewView.width).toFloat(),
+        (normalizedY.coerceIn(0.05, 0.95) * previewView.height).toFloat(),
+        0.22f
+      )
+      val flags = FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB
+      val action = FocusMeteringAction.Builder(point, flags).setAutoCancelDuration(4, TimeUnit.SECONDS).build()
+      camera.cameraControl.startFocusAndMetering(action)
+    }
+  }
+
+  private fun updateCameraFps(now: Long) {'''),
+              ('        "stringRefreshAgeFrames" to max(0, frameCount - lastStringRefreshFrame),\n        "newHits" to hits,', '        "stringRefreshAgeFrames" to max(0, frameCount - lastStringRefreshFrame),\n        "autoZoomRatio" to currentZoomRatio.toDouble(),\n        "autoFramingState" to autoFramingState,\n        "newHits" to hits,'),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one native match, found {count}: {old[:100]!r}')
+              text = text.replace(old, new)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Remove one-time workflows and commit
+        run: |
+          rm -f .github/workflows/one-time-auto-framing-camera-patch.yml
+          rm -f .github/workflows/one-time-auto-framing-camera-patch-v2.yml
+          rm -f .github/workflows/one-time-auto-framing-camera-patch-v3.yml
+          git config user.name "guitar-coach-quality-bot"
+          git config user.email "guitar-coach-quality-bot@users.noreply.github.com"
+          git add mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachContinuousCameraModule.kt .github/workflows
+          git commit -m "Auto frame distant hands and harden CameraX preview"
+          git push origin HEAD:agent/live-coach-compat-v055
