@@ -303,7 +303,7 @@ export default function TechniqueFeedbackController() {
         evidence: issue.evidence,
         nextGoal: issue.nextGoal,
         confidencePercent: issue.confidencePercent,
-        stableCount: issue.status === 'success' ? 1 : 0,
+        stableCount: 0,
         priority: issue.priority,
         measurements: issue.measurements,
       });
