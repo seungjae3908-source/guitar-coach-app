@@ -1,1 +1,0 @@
-trigger continuous CameraX hand analysis, navigation remount, scroll repair, and song fallback
