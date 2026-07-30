@@ -13,6 +13,7 @@ import {
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import AudioFileAnalysisPanel from './components/AudioFileAnalysisPanel';
 import CalibrationHub from './components/CalibrationHub';
+import ChordRecognitionController from './components/ChordRecognitionController';
 import MasterSongStudioPanel from './components/MasterSongStudioPanel';
 import MasteryAcademyPanel from './components/MasteryAcademyPanel';
 import MetronomeProgramPanel from './components/MetronomeProgramPanel';
@@ -89,6 +90,7 @@ export default function CompleteBetaAppV060Plus() {
       <StatusBar barStyle="light-content" backgroundColor="#161b22" translucent={false} />
       <VoiceCoachController enabled={voiceCoachEnabled} />
       <TechniqueFeedbackController />
+      <ChordRecognitionController />
       <SoundConsistencyController enabled={voiceCoachEnabled} />
 
       <View style={styles.toolBar}>
