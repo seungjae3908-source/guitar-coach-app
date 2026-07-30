@@ -1,37 +1,18 @@
 import { requireNativeView, requireOptionalNativeModule } from 'expo';
+import { useEffect, useRef } from 'react';
 import type { NativeSyntheticEvent, ViewProps } from 'react-native';
 
+import {
+  ContinuousTrackingQualityGate,
+  type QualityContinuousHandResult,
+  type QualityContinuousStats,
+  type QualityStringHit,
+} from '../../services/continuous-tracking-quality';
 import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../services/analysis-stream';
-import type { HandAnalysisResult } from '../guitar-coach-hand';
 
-export type ContinuousStringHit = {
-  capturedAt: number;
-  contactId: string;
-  label: string;
-  visualIndex: number;
-  stringNumber: number;
-  direction: 'down' | 'up' | 'unknown' | string;
-  speed: number;
-  confidence: number;
-  audioConfirmed?: boolean;
-  audioOffsetMs?: number;
-  audioSignalToNoiseDb?: number;
-};
-
-export type ContinuousRightHandStats = {
-  enabled: true;
-  previewFps: number;
-  analysisFps: number;
-  frameCount: number;
-  analyzedFrameCount: number;
-  stringRefreshAgeFrames: number;
-  newHits: ContinuousStringHit[];
-  recentHits: ContinuousStringHit[];
-};
-
-export type ContinuousHandAnalysisResult = HandAnalysisResult & {
-  continuous: ContinuousRightHandStats;
-};
+export type ContinuousStringHit = QualityStringHit;
+export type ContinuousRightHandStats = QualityContinuousStats;
+export type ContinuousHandAnalysisResult = QualityContinuousHandResult;
 
 type ContinuousCameraModule = {
   androidContinuousRightHandAvailable: boolean;
@@ -90,7 +71,11 @@ function fuseHitWithAudio(hit: ContinuousStringHit): ContinuousStringHit {
 
 function fuseAudio(result: ContinuousHandAnalysisResult): ContinuousHandAnalysisResult {
   const newHits = result.continuous.newHits.map(fuseHitWithAudio);
-  const recentHits = result.continuous.recentHits.map(fuseHitWithAudio);
+  const newHitKeys = new Set(newHits.map((hit) => `${hit.capturedAt}-${hit.contactId}-${hit.visualIndex}`));
+  const recentHits = result.continuous.recentHits.map((hit) => {
+    const key = `${hit.capturedAt}-${hit.contactId}-${hit.visualIndex}`;
+    return newHitKeys.has(key) ? newHits.find((candidate) => `${candidate.capturedAt}-${candidate.contactId}-${candidate.visualIndex}` === key) ?? hit : hit;
+  });
   const currentAudioConfirmed = newHits.some((hit) => hit.audioConfirmed);
   return {
     ...result,
@@ -111,13 +96,23 @@ export default function ContinuousRightHandCamera({
   onAnalysis,
   ...props
 }: NativeContinuousCameraProps) {
+  const qualityGateRef = useRef(new ContinuousTrackingQualityGate());
+
+  useEffect(() => {
+    if (!running) qualityGateRef.current.reset();
+  }, [running]);
+
+  useEffect(() => () => qualityGateRef.current.reset(), []);
+
   return (
     <NativeContinuousCameraView
       {...props}
       running={running}
       pickColor={pickColor}
       onAnalysis={(event) => {
-        const result = fuseAudio(normalizeResult(event.nativeEvent));
+        const normalized = normalizeResult(event.nativeEvent);
+        const qualityChecked = qualityGateRef.current.process(normalized, Date.now());
+        const result = fuseAudio(qualityChecked);
         publishLiveAnalysisFrame({ kind: 'hand', capturedAt: Date.now(), result });
         onAnalysis?.({ ...event, nativeEvent: result });
       }}
