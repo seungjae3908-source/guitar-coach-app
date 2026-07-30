@@ -62,7 +62,7 @@ function fingerLabel(finger: RightHandFingerId) {
   return '새끼손가락';
 }
 
-function parseExpectedFingers(pattern: string | undefined) {
+function parseExpectedFingers(pattern: string | undefined): RightHandFingerId[] {
   const ids: RightHandFingerId[] = [];
   (pattern?.match(/[Ppima]/g) ?? []).forEach((token) => {
     const normalized = token.toLowerCase();
