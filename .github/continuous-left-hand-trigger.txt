@@ -1,0 +1,1 @@
+trigger continuous CameraX left-hand analysis
