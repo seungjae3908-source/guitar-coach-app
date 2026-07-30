@@ -20,11 +20,17 @@ export type LivePracticeContext = {
 
 type Listener = (context: LivePracticeContext | null) => void;
 
+const PRESET_PATTERN_FALLBACKS: Record<string, string> = {
+  'acoustic-d-to-g': 'D→G',
+};
 let currentContext: LivePracticeContext | null = null;
 const listeners = new Set<Listener>();
 
 export function setLivePracticeContext(context: LivePracticeContext) {
-  currentContext = context;
+  currentContext = {
+    ...context,
+    pattern: context.pattern ?? PRESET_PATTERN_FALLBACKS[context.presetId],
+  };
   listeners.forEach((listener) => {
     try {
       listener(currentContext);
