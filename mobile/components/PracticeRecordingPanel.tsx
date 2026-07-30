@@ -82,7 +82,9 @@ export default function PracticeRecordingPanel({ mode }: { mode: GuitarModeId | 
   const recordingPromiseRef = useRef<Promise<{ uri: string } | undefined> | null>(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
+  const [cameraKey, setCameraKey] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState('');
   const [recording, setRecording] = useState(false);
   const [saving, setSaving] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -236,6 +238,21 @@ export default function PracticeRecordingPanel({ mode }: { mode: GuitarModeId | 
     }
   };
 
+  const remountCamera = (nextFacing = facing) => {
+    setCameraReady(false);
+    setCameraError('');
+    setError('');
+    setStatus(`${nextFacing === 'back' ? '후면' : '전면'} 카메라를 다시 연결하는 중입니다.`);
+    setCameraKey((value) => value + 1);
+  };
+
+  const switchCamera = () => {
+    if (recording || saving) return;
+    const nextFacing: CameraType = facing === 'back' ? 'front' : 'back';
+    setFacing(nextFacing);
+    remountCamera(nextFacing);
+  };
+
   const selected = recordings.find((item) => item.id === selectedId) ?? null;
 
   if (!cameraPermission) {
@@ -255,25 +272,51 @@ export default function PracticeRecordingPanel({ mode }: { mode: GuitarModeId | 
   }
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator nestedScrollEnabled keyboardShouldPersistTaps="handled">
       <Text style={styles.eyebrow}>SAFE PRACTICE RECORDING</Text>
       <Text style={styles.title}>연습 영상 녹화·재생</Text>
       <Text style={styles.subtitle}>녹화 중에는 카메라 AI와 마이크 박자 분석을 동시에 실행하지 않는 안전 모드입니다. 녹화 후 영상과 AI 집중 연습을 따로 비교하세요.</Text>
 
       <View style={styles.cameraCard}>
         <CameraView
+          key={`${facing}-${cameraKey}`}
           ref={cameraRef}
           style={styles.camera}
           facing={facing}
           mode="video"
-          onCameraReady={() => setCameraReady(true)}
-          onMountError={(event) => setError(event.message)}
+          onCameraReady={() => {
+            setCameraReady(true);
+            setCameraError('');
+            setError('');
+            setStatus('카메라 준비 완료 · 녹화 시간을 선택하고 시작하세요.');
+          }}
+          onMountError={(event) => {
+            setCameraReady(false);
+            setCameraError(event.message);
+            setError(event.message);
+            setStatus('카메라 연결 실패');
+          }}
         />
         <View pointerEvents="none" style={styles.bodyGuide} />
         <View pointerEvents="none" style={styles.recordBadgeWrap}>
           <Text style={[styles.recordBadge, recording && styles.recordBadgeActive]}>{recording ? `● REC ${formatTime(elapsedSeconds)}` : cameraReady ? '촬영 준비 완료' : '카메라 준비 중'}</Text>
           <Text style={styles.recordBadge}>{facing === 'back' ? '후면' : '전면'}</Text>
         </View>
+        {!cameraReady ? (
+          <View style={styles.cameraOverlay}>
+            {cameraError ? (
+              <>
+                <Text style={styles.cameraErrorTitle}>카메라를 열지 못했습니다</Text>
+                <Text style={styles.cameraErrorText}>{cameraError}</Text>
+                <Pressable onPress={() => remountCamera()} style={styles.retryButton}>
+                  <Text style={styles.retryText}>카메라 다시 연결</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Text style={styles.cameraWaitingText}>카메라 준비 중</Text>
+            )}
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.controlCard}>
@@ -293,7 +336,7 @@ export default function PracticeRecordingPanel({ mode }: { mode: GuitarModeId | 
         />
 
         <View style={styles.actionRow}>
-          <Pressable disabled={recording || saving} onPress={() => { setCameraReady(false); setFacing((value) => value === 'back' ? 'front' : 'back'); }} style={[styles.switchCameraButton, (recording || saving) && styles.disabled]}>
+          <Pressable disabled={recording || saving} onPress={switchCamera} style={[styles.switchCameraButton, (recording || saving) && styles.disabled]}>
             <Text style={styles.switchCameraText}>카메라 전환</Text>
           </Pressable>
           <Pressable disabled={!cameraReady || saving} onPress={() => recording ? stopRecording() : void startRecording()} style={[styles.recordButton, recording && styles.stopButton, (!cameraReady || saving) && styles.disabled]}>
@@ -329,7 +372,7 @@ export default function PracticeRecordingPanel({ mode }: { mode: GuitarModeId | 
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0d1117' },
-  content: { padding: 12, paddingBottom: 80 },
+  content: { padding: 12, paddingBottom: 110 },
   center: { flex: 1, minHeight: 420, backgroundColor: '#0d1117', alignItems: 'center', justifyContent: 'center', padding: 24 },
   centerText: { color: '#8b949e', fontSize: 10, lineHeight: 16, textAlign: 'center', marginTop: 7 },
   permissionTitle: { color: '#f0f6fc', fontSize: 16, fontWeight: '900', textAlign: 'center' },
@@ -344,6 +387,12 @@ const styles = StyleSheet.create({
   recordBadgeWrap: { position: 'absolute', left: 8, right: 8, top: 8, flexDirection: 'row', justifyContent: 'space-between' },
   recordBadge: { color: '#ffffff', backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 5, fontSize: 7, fontWeight: '900' },
   recordBadgeActive: { backgroundColor: 'rgba(218,54,51,0.92)' },
+  cameraOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.78)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  cameraWaitingText: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
+  cameraErrorTitle: { color: '#ff7b72', fontSize: 14, fontWeight: '900', textAlign: 'center' },
+  cameraErrorText: { color: '#b1bac4', fontSize: 9, lineHeight: 14, textAlign: 'center', marginTop: 6 },
+  retryButton: { minHeight: 40, borderRadius: 11, backgroundColor: '#2ea043', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, marginTop: 12 },
+  retryText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
   controlCard: { backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', borderRadius: 15, padding: 11, marginTop: 9 },
   sectionTitle: { color: '#f0f6fc', fontSize: 10, fontWeight: '900', marginTop: 7, marginBottom: 6 },
   durationRow: { flexDirection: 'row', gap: 5 },
