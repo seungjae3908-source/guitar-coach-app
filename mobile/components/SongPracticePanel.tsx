@@ -23,9 +23,13 @@ import {
   saveSongProject,
 } from '../services/song-project-store';
 import {
+  compactBarNotation,
+  ensureStructuredSongSheet,
+  eventsAtBeat,
   generateSongSheetDraft,
   nextChordInPalette,
   replaceSongBarChord,
+  SongBeatEvent,
   SongKey,
   SongPracticeStyle,
   SongSheetDraft,
@@ -61,6 +65,24 @@ function SmallButton({
   );
 }
 
+function eventMainText(event: SongBeatEvent | null) {
+  if (!event) return '—';
+  if (event.kind === 'tab') return `${event.strings[0]}번 줄 · ${event.frets[0]}프렛`;
+  if (event.kind === 'finger') return `${event.label} · ${event.strings[0]}번 줄`;
+  if (event.kind === 'hold') return '유지';
+  return event.label === 'D' ? '다운 스트럼' : '업 스트럼';
+}
+
+function eventTargetText(event: SongBeatEvent | null) {
+  if (!event) return '현재 박의 연주 이벤트가 없습니다.';
+  if (event.kind === 'tab') return `TAB ${event.strings[0]}-${event.frets[0]} · ${event.accent ? '악센트' : '일반'}`;
+  if (event.kind === 'finger') return `${event.label} 손가락으로 ${event.strings[0]}번 줄 탄현`;
+  if (event.kind === 'hold') return '직전 소리를 유지하고 새로 치지 않습니다.';
+  return event.label === 'D'
+    ? '저음줄에서 고음줄 방향 · 6~1번 줄 범위'
+    : '고음줄 중심으로 돌아오기 · 1~3번 줄 범위';
+}
+
 export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
   const [projects, setProjects] = useState<SongSheetDraft[]>([]);
   const [draft, setDraft] = useState<SongSheetDraft | null>(null);
@@ -75,13 +97,14 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
   const [loopEnd, setLoopEnd] = useState(7);
   const [currentBarIndex, setCurrentBarIndex] = useState(0);
   const [currentBeat, setCurrentBeat] = useState(1);
+  const [currentSubdivision, setCurrentSubdivision] = useState<1 | 2>(1);
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState('곡 정보를 입력하고 악보 초안을 만드세요.');
+  const [status, setStatus] = useState('곡 정보를 입력하고 구조화된 연습 악보를 만드세요.');
   const [error, setError] = useState('');
 
   const reload = useCallback(async () => {
     try {
-      setProjects(await loadSongProjects());
+      setProjects((await loadSongProjects()).map(ensureStructuredSongSheet));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '저장된 곡을 불러오지 못했습니다.');
     }
@@ -96,6 +119,8 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
     setStyle(mode === 'acoustic' ? 'strum' : 'riff');
     setDraft(null);
     setCurrentBarIndex(0);
+    setCurrentBeat(1);
+    setCurrentSubdivision(1);
     setLoopStart(0);
     setLoopEnd(7);
     void stopAdvancedMetronomeAsync();
@@ -113,15 +138,18 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
           const pulsesPerBar = Math.max(1, draft.beatsPerBar * timing.subdivision);
           const loopLength = Math.max(1, loopEnd - loopStart + 1);
           const completedPulses = Math.max(0, Math.floor(timing.absolutePulseCount - 1));
+          const pulseInBar = completedPulses % pulsesPerBar;
           const nextBar = loopStart + Math.floor(completedPulses / pulsesPerBar) % loopLength;
-          const nextBeat = Math.floor((completedPulses % pulsesPerBar) / timing.subdivision) + 1;
+          const nextBeat = Math.floor(pulseInBar / timing.subdivision) + 1;
+          const nextSubdivision = Math.min(2, pulseInBar % timing.subdivision + 1) as 1 | 2;
           setCurrentBarIndex(nextBar);
           setCurrentBeat(nextBeat);
+          setCurrentSubdivision(nextSubdivision);
         }
       } catch (caught) {
         if (!cancelled) setError(caught instanceof Error ? caught.message : '곡 연습 위치를 읽지 못했습니다.');
       } finally {
-        if (!cancelled) timer = setTimeout(poll, 80);
+        if (!cancelled) timer = setTimeout(poll, 60);
       }
     };
     void poll();
@@ -140,6 +168,13 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
   const nextBar = draft
     ? draft.bars[currentBarIndex >= loopEnd ? loopStart : currentBarIndex + 1]
     : null;
+  const currentBeatEvents = useMemo(
+    () => eventsAtBeat(currentBar, currentBeat),
+    [currentBar, currentBeat],
+  );
+  const currentEvent = currentBeatEvents.find((event) => event.subdivision === currentSubdivision)
+    ?? currentBeatEvents[0]
+    ?? null;
 
   const generate = () => {
     const next = generateSongSheetDraft({
@@ -157,44 +192,47 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
     setLoopEnd(next.bars.length - 1);
     setCurrentBarIndex(0);
     setCurrentBeat(1);
-    setStatus('연습용 악보 초안을 만들었습니다. 마디를 누르면 코드를 바꿀 수 있습니다.');
+    setCurrentSubdivision(1);
+    setStatus('박·반박, 스트럼 방향, 손가락 또는 TAB 줄·프렛이 포함된 연습 악보를 만들었습니다.');
     setError('');
   };
 
   const save = async () => {
     if (!draft) return;
-    const next: SongSheetDraft = {
+    const next = ensureStructuredSongSheet({
       ...draft,
       title: title.trim() || draft.title,
       artist: artist.trim(),
       bpm,
       updatedAt: new Date().toISOString(),
-    };
+    });
     try {
       await saveSongProject(next);
       setDraft(next);
       await reload();
-      setStatus('곡과 악보 초안을 휴대폰에 저장했습니다.');
+      setStatus('구조화된 악보와 연습 설정을 휴대폰에 저장했습니다.');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '곡을 저장하지 못했습니다.');
     }
   };
 
   const loadProject = (project: SongSheetDraft) => {
+    const structured = ensureStructuredSongSheet(project);
     void stopAdvancedMetronomeAsync();
     setRunning(false);
-    setDraft(project);
-    setTitle(project.title);
-    setArtist(project.artist);
-    setKeyName(project.key);
-    setStyle(project.style);
-    setBpm(project.bpm);
-    setBarCount(project.bars.length);
+    setDraft(structured);
+    setTitle(structured.title);
+    setArtist(structured.artist);
+    setKeyName(structured.key);
+    setStyle(structured.style);
+    setBpm(structured.bpm);
+    setBarCount(structured.bars.length);
     setLoopStart(0);
-    setLoopEnd(project.bars.length - 1);
+    setLoopEnd(structured.bars.length - 1);
     setCurrentBarIndex(0);
     setCurrentBeat(1);
-    setStatus('저장된 악보를 불러왔습니다.');
+    setCurrentSubdivision(1);
+    setStatus('저장된 악보를 구조화된 박 단위 악보로 불러왔습니다.');
   };
 
   const cycleChord = (barId: string, currentChord: string) => {
@@ -204,7 +242,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
 
   const toggleRunning = async () => {
     if (!draft) {
-      setError('먼저 악보 초안을 만드세요.');
+      setError('먼저 악보를 만드세요.');
       return;
     }
     setError('');
@@ -218,9 +256,10 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
       if (!isAdvancedMetronomeAvailable) throw new Error('고급 메트로놈 모듈이 APK에 없습니다.');
       setCurrentBarIndex(loopStart);
       setCurrentBeat(1);
-      await startAdvancedMetronomeAsync(effectiveBpm, draft.beatsPerBar, 1, true, false, 0);
+      setCurrentSubdivision(1);
+      await startAdvancedMetronomeAsync(effectiveBpm, draft.beatsPerBar, 2, true, false, 0);
       setRunning(true);
-      setStatus(`${loopStart + 1}~${loopEnd + 1}마디 반복 · ${effectiveBpm} BPM`);
+      setStatus(`${loopStart + 1}~${loopEnd + 1}마디 반복 · ${effectiveBpm} BPM · 8분음표 악보 커서`);
     } catch (caught) {
       setRunning(false);
       setError(caught instanceof Error ? caught.message : '곡 연습을 시작하지 못했습니다.');
@@ -248,7 +287,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
   const duplicate = async () => {
     if (!draft) return;
     try {
-      const copy = await duplicateSongProject(draft);
+      const copy = ensureStructuredSongSheet(await duplicateSongProject(draft));
       await reload();
       loadProject(copy);
       setStatus('악보를 복제했습니다.');
@@ -259,9 +298,9 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Text style={styles.eyebrow}>OFFLINE SHEET & SONG PRACTICE</Text>
-      <Text style={styles.title}>{mode === 'acoustic' ? '통기타' : '일렉기타'} 악보 초안·곡 연습</Text>
-      <Text style={styles.subtitle}>입력한 조건으로 연습용 초안을 만드는 기능입니다. 원곡 음원을 분석한 결과나 원곡과 동일한 TAB이라고 표시하지 않습니다.</Text>
+      <Text style={styles.eyebrow}>STRUCTURED OFFLINE SHEET & SONG PRACTICE</Text>
+      <Text style={styles.title}>{mode === 'acoustic' ? '통기타' : '일렉기타'} 박 단위 악보·곡 연습</Text>
+      <Text style={styles.subtitle}>입력 조건으로 만드는 연습용 악보입니다. 원곡 음원 분석이나 원곡과 동일한 TAB으로 표시하지 않으며, 각 박의 실제 연습 동작을 구조화해 메트로놈과 연결합니다.</Text>
 
       <View style={styles.formCard}>
         <Text style={styles.label}>곡 제목</Text>
@@ -283,23 +322,23 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
           <View style={styles.numberBlock}>
             <Text style={styles.label}>BPM</Text>
             <View style={styles.stepRow}>
-              <SmallButton label="-5" onPress={() => setBpm((value) => Math.max(35, value - 5))} disabled={running} />
+              <SmallButton label="-1" onPress={() => setBpm((value) => Math.max(35, value - 1))} disabled={running} />
               <Text style={styles.numberValue}>{bpm}</Text>
-              <SmallButton label="+5" onPress={() => setBpm((value) => Math.min(220, value + 5))} disabled={running} />
+              <SmallButton label="+1" onPress={() => setBpm((value) => Math.min(220, value + 1))} disabled={running} />
             </View>
           </View>
           <View style={styles.numberBlock}>
             <Text style={styles.label}>마디 수</Text>
             <View style={styles.stepRow}>
-              <SmallButton label="-4" onPress={() => setBarCount((value) => Math.max(4, value - 4))} disabled={running} />
+              <SmallButton label="-1" onPress={() => setBarCount((value) => Math.max(4, value - 1))} disabled={running} />
               <Text style={styles.numberValue}>{barCount}</Text>
-              <SmallButton label="+4" onPress={() => setBarCount((value) => Math.min(32, value + 4))} disabled={running} />
+              <SmallButton label="+1" onPress={() => setBarCount((value) => Math.min(32, value + 1))} disabled={running} />
             </View>
           </View>
         </View>
 
         <View style={styles.mainActionRow}>
-          <Pressable disabled={running} onPress={generate} style={[styles.primaryButton, running && styles.disabled]}><Text style={styles.primaryText}>악보 초안 만들기</Text></Pressable>
+          <Pressable disabled={running} onPress={generate} style={[styles.primaryButton, running && styles.disabled]}><Text style={styles.primaryText}>구조 악보 만들기</Text></Pressable>
           <Pressable disabled={!draft || running} onPress={() => void save()} style={[styles.secondaryButton, (!draft || running) && styles.disabled]}><Text style={styles.secondaryText}>저장</Text></Pressable>
           <Pressable disabled={!draft || running} onPress={() => void duplicate()} style={[styles.secondaryButton, (!draft || running) && styles.disabled]}><Text style={styles.secondaryText}>복제</Text></Pressable>
         </View>
@@ -310,21 +349,35 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
           <View style={styles.songHeader}>
             <View style={styles.songHeaderText}>
               <Text style={styles.songTitle}>{draft.title}</Text>
-              <Text style={styles.songMeta}>{draft.artist || '연습용 초안'} · Key {draft.key} · {draft.bpm} BPM · {draft.style}</Text>
+              <Text style={styles.songMeta}>{draft.artist || '연습용 생성 악보'} · Key {draft.key} · {draft.bpm} BPM · {draft.style}</Text>
             </View>
-            <View style={styles.sourceBadge}><Text style={styles.sourceText}>오프라인 초안</Text></View>
+            <View style={styles.sourceBadge}><Text style={styles.sourceText}>생성 악보 V2</Text></View>
           </View>
 
           <View style={styles.nowCard}>
             <View style={styles.nowBlock}>
-              <Text style={styles.nowLabel}>현재 · {currentBarIndex + 1}마디 {currentBeat}박</Text>
+              <Text style={styles.nowLabel}>현재 · {currentBarIndex + 1}마디 {currentBeat}박 {currentSubdivision === 1 ? '앞' : '뒤'}</Text>
               <Text style={styles.currentChord}>{currentBar?.chord ?? '-'}</Text>
-              <Text style={styles.instruction}>{currentBar?.instruction}</Text>
+              <Text style={styles.currentEvent}>{eventMainText(currentEvent)}</Text>
+              <Text style={styles.instruction}>{eventTargetText(currentEvent)}</Text>
             </View>
             <View style={styles.nextBlock}>
               <Text style={styles.nowLabel}>다음 코드</Text>
               <Text style={styles.nextChord}>{nextBar?.chord ?? '-'}</Text>
             </View>
+          </View>
+
+          <Text style={styles.label}>현재 마디 8분음표 악보</Text>
+          <View style={styles.eventGrid}>
+            {(currentBar?.events ?? []).map((event) => {
+              const active = running && event.beat === currentBeat && event.subdivision === currentSubdivision;
+              return (
+                <View key={event.id} style={[styles.eventCell, active && styles.eventCellActive]}>
+                  <Text style={styles.eventPosition}>{event.beat}{event.subdivision === 1 ? '' : '&'}</Text>
+                  <Text style={[styles.eventLabel, active && styles.eventLabelActive]}>{event.kind === 'tab' ? `${event.strings[0]}-${event.frets[0]}` : event.label}</Text>
+                </View>
+              );
+            })}
           </View>
 
           <Text style={styles.label}>재생 속도 · 실제 {effectiveBpm} BPM</Text>
@@ -336,22 +389,22 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
             <View style={styles.loopBlock}>
               <Text style={styles.label}>A 시작 마디</Text>
               <View style={styles.stepRow}>
-                <SmallButton label="-" onPress={() => setLoopStart((value) => Math.max(0, value - 1))} disabled={running} />
+                <SmallButton label="-1" onPress={() => setLoopStart((value) => Math.max(0, value - 1))} disabled={running} />
                 <Text style={styles.numberValue}>{loopStart + 1}</Text>
-                <SmallButton label="+" onPress={() => setLoopStart((value) => Math.min(loopEnd, value + 1))} disabled={running} />
+                <SmallButton label="+1" onPress={() => setLoopStart((value) => Math.min(loopEnd, value + 1))} disabled={running} />
               </View>
             </View>
             <View style={styles.loopBlock}>
               <Text style={styles.label}>B 끝 마디</Text>
               <View style={styles.stepRow}>
-                <SmallButton label="-" onPress={() => setLoopEnd((value) => Math.max(loopStart, value - 1))} disabled={running} />
+                <SmallButton label="-1" onPress={() => setLoopEnd((value) => Math.max(loopStart, value - 1))} disabled={running} />
                 <Text style={styles.numberValue}>{loopEnd + 1}</Text>
-                <SmallButton label="+" onPress={() => setLoopEnd((value) => Math.min(draft.bars.length - 1, value + 1))} disabled={running} />
+                <SmallButton label="+1" onPress={() => setLoopEnd((value) => Math.min(draft.bars.length - 1, value + 1))} disabled={running} />
               </View>
             </View>
           </View>
 
-          <Text style={styles.label}>마디 악보 · 정지 중 마디를 누르면 코드 변경</Text>
+          <Text style={styles.label}>전체 마디 · 정지 중 마디를 누르면 코드와 이벤트가 함께 변경</Text>
           <View style={styles.barGrid}>
             {draft.bars.map((bar, index) => (
               <Pressable
@@ -363,9 +416,9 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
                   index === currentBarIndex && running && styles.barCurrent,
                 ]}
               >
-                <Text style={styles.barNumber}>{index + 1}</Text>
+                <Text style={styles.barNumber}>{index + 1} · {bar.section}</Text>
                 <Text style={styles.barChord}>{bar.chord}</Text>
-                <Text style={styles.barInstruction} numberOfLines={2}>{bar.instruction}</Text>
+                <Text style={styles.barInstruction} numberOfLines={3}>{compactBarNotation(bar)}</Text>
               </Pressable>
             ))}
           </View>
@@ -383,7 +436,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
             <View key={project.id} style={styles.projectRow}>
               <Pressable onPress={() => loadProject(project)} style={styles.projectMain}>
                 <Text style={styles.projectTitle}>{project.title}</Text>
-                <Text style={styles.projectMeta}>{project.guitarMode === 'acoustic' ? '통기타' : '일렉'} · {project.key} · {project.bpm} BPM · {project.bars.length}마디</Text>
+                <Text style={styles.projectMeta}>{project.guitarMode === 'acoustic' ? '통기타' : '일렉'} · {project.key} · {project.bpm} BPM · {project.bars.length}마디 · 악보 V{project.notationVersion ?? 1}</Text>
               </Pressable>
               <Pressable onPress={() => removeProject(project)} style={styles.deleteButton}><Text style={styles.deleteText}>삭제</Text></Pressable>
             </View>
@@ -432,12 +485,19 @@ const styles = StyleSheet.create({
   nextBlock: { width: 82, alignItems: 'flex-end' },
   nowLabel: { color: '#8b949e', fontSize: 7, fontWeight: '900' },
   currentChord: { color: '#7ee787', fontSize: 31, fontWeight: '900', marginTop: 2 },
+  currentEvent: { color: '#f2cc60', fontSize: 13, fontWeight: '900', marginTop: 2 },
   nextChord: { color: '#79c0ff', fontSize: 22, fontWeight: '900', marginTop: 5 },
-  instruction: { color: '#b1bac4', fontSize: 8, marginTop: 2 },
+  instruction: { color: '#b1bac4', fontSize: 8, lineHeight: 13, marginTop: 2 },
+  eventGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  eventCell: { width: '11.5%', minHeight: 43, borderRadius: 8, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#0d1117', alignItems: 'center', justifyContent: 'center', padding: 3 },
+  eventCellActive: { backgroundColor: '#238636', borderColor: '#7ee787' },
+  eventPosition: { color: '#6e7681', fontSize: 6, fontWeight: '900' },
+  eventLabel: { color: '#f0f6fc', fontSize: 8, fontWeight: '900', marginTop: 2 },
+  eventLabelActive: { color: '#ffffff' },
   loopRow: { flexDirection: 'row', gap: 10 },
   loopBlock: { flex: 1 },
   barGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  barCard: { width: '23.5%', minHeight: 80, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#0d1117', padding: 7 },
+  barCard: { width: '23.5%', minHeight: 88, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#0d1117', padding: 7 },
   barInLoop: { borderColor: '#1f6feb' },
   barCurrent: { backgroundColor: '#238636', borderColor: '#7ee787' },
   barNumber: { color: '#6e7681', fontSize: 6, fontWeight: '900' },
