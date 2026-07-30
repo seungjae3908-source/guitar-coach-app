@@ -26,12 +26,14 @@ export type LiveSessionSnapshot = {
     audio: number;
     validScore: number;
     chord?: number;
+    fingering?: number;
   };
   lastStringNumber: number | null;
   timingOffsetMs: number | null;
   timingJitterMs: number | null;
   recognizedChord?: string | null;
   chordStatus?: 'cannot-judge' | 'candidate' | 'confirmed' | null;
+  fingeringStatus?: 'cannot-judge' | 'candidate' | 'confirmed' | null;
 };
 
 type MetricSample = {
@@ -71,7 +73,13 @@ const CHORD_SCORE_CATEGORIES = new Set<PracticeCategoryId>([
   'powerChords',
 ]);
 
-const LEFT_HAND_UNVERIFIED_CATEGORIES = new Set<PracticeCategoryId>([
+const FINGERING_SCORE_CATEGORIES = new Set<PracticeCategoryId>([
+  'fingering',
+  'scales',
+  'leadTechnique',
+]);
+
+const LEFT_HAND_CATEGORIES = new Set<PracticeCategoryId>([
   'chords',
   'fingering',
   'powerChords',
@@ -112,6 +120,7 @@ export class LivePracticeSessionAccumulator {
   private readonly pickSamples: MetricSample[] = [];
   private readonly timingSamples: MetricSample[] = [];
   private readonly chordSamples: MetricSample[] = [];
+  private readonly fingeringSamples: MetricSample[] = [];
   private readonly timingOffsets: number[] = [];
   private readonly handTemporalSamples: HandTemporalSample[] = [];
   private readonly issueCounters = new Map<string, IssueCounter>();
@@ -123,6 +132,7 @@ export class LivePracticeSessionAccumulator {
   private lastProcessedAttackCount = -1;
   private latestChordName: string | null = null;
   private latestChordStatus: LiveSessionSnapshot['chordStatus'] = null;
+  private latestFingeringStatus: LiveSessionSnapshot['fingeringStatus'] = null;
 
   constructor(options: LiveSessionOptions) {
     this.options = options;
@@ -137,7 +147,8 @@ export class LivePracticeSessionAccumulator {
     else if (frame.kind === 'hand') this.addHandFrame(frame);
     else if (frame.kind === 'audio') this.addAudioFrame(frame);
     else if (frame.kind === 'metronome') this.addMetronomeFrame(frame);
-    else this.addChordFrame(frame);
+    else if (frame.kind === 'chord') this.addChordFrame(frame);
+    else this.addFingeringFrame(frame);
   }
 
   private addIssue(
@@ -187,6 +198,36 @@ export class LivePracticeSessionAccumulator {
     if (result.status === 'candidate' && result.corrections[0]) {
       this.addIssue(
         `chord-correction-${result.chordName ?? 'candidate'}`,
+        result.corrections[0],
+        'warn',
+        result.confidencePercent,
+        frame.capturedAt,
+      );
+    }
+  }
+
+  private addFingeringFrame(frame: Extract<LiveAnalysisFrame, { kind: 'fingering' }>) {
+    if (!FINGERING_SCORE_CATEGORIES.has(this.options.category)) return;
+    const result = frame.result;
+    this.latestFingeringStatus = result.status;
+
+    if (
+      result.status === 'confirmed'
+      && result.score != null
+      && result.confidencePercent >= 65
+    ) {
+      this.fingeringSamples.push({
+        score: clamp(result.score, 0, 100),
+        confidence: result.confidencePercent,
+        capturedAt: frame.capturedAt,
+      });
+      if (this.fingeringSamples.length > 80) this.fingeringSamples.shift();
+      return;
+    }
+
+    if (result.status === 'candidate' && result.corrections[0]) {
+      this.addIssue(
+        `fingering-correction-${result.targetLabel}`,
         result.corrections[0],
         'warn',
         result.confidencePercent,
@@ -394,7 +435,8 @@ export class LivePracticeSessionAccumulator {
   snapshot(): LiveSessionSnapshot {
     const rightHandSession = RIGHT_HAND_SCORE_CATEGORIES.has(this.options.category);
     const chordSession = CHORD_SCORE_CATEGORIES.has(this.options.category);
-    const unverifiedLeftSession = LEFT_HAND_UNVERIFIED_CATEGORIES.has(this.options.category) && !chordSession;
+    const fingeringSession = FINGERING_SCORE_CATEGORIES.has(this.options.category);
+    const leftHandSession = LEFT_HAND_CATEGORIES.has(this.options.category);
 
     let metricGroups: Array<{ samples: MetricSample[]; weight: number }> = [];
     if (rightHandSession) {
@@ -409,7 +451,12 @@ export class LivePracticeSessionAccumulator {
         { samples: this.chordSamples, weight: 0.82 },
         { samples: this.timingSamples, weight: 0.18 },
       ].filter((group) => group.samples.length >= 2);
-    } else if (!unverifiedLeftSession && !chordSession) {
+    } else if (fingeringSession && this.fingeringSamples.length >= 2) {
+      metricGroups = [
+        { samples: this.fingeringSamples, weight: 0.82 },
+        { samples: this.timingSamples, weight: 0.18 },
+      ].filter((group) => group.samples.length >= 2);
+    } else if (!leftHandSession) {
       metricGroups = [
         { samples: this.poseSamples, weight: 0.5 },
         { samples: this.timingSamples, weight: 0.5 },
@@ -459,6 +506,7 @@ export class LivePracticeSessionAccumulator {
         hand: this.handSamples.length,
         audio: this.timingSamples.length,
         chord: this.chordSamples.length,
+        fingering: this.fingeringSamples.length,
         validScore: scoredSamples.length,
       },
       lastStringNumber: this.lastStringNumber,
@@ -468,6 +516,7 @@ export class LivePracticeSessionAccumulator {
         : null,
       recognizedChord: this.latestChordName,
       chordStatus: this.latestChordStatus,
+      fingeringStatus: this.latestFingeringStatus,
     };
   }
 }
