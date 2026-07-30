@@ -4,6 +4,7 @@ import { POWER_CHORD_TEMPLATES } from '../config/power-chord-templates';
 import type { HandAnalysisResult } from '../modules/guitar-coach-hand';
 import type { NativeAudioReading } from '../modules/guitar-coach-audio';
 import { publishLiveAnalysisFrame, subscribeLiveAnalysis } from '../services/analysis-stream';
+import { ChordTransitionTracker } from '../services/chord-transition-engine';
 import {
   ChordRecognitionTracker,
   recognizeChord,
@@ -72,6 +73,7 @@ export default function ChordRecognitionController() {
   const calibrationLoadingRef = useRef(false);
   const audioSamplesRef = useRef<AudioPitchSample[]>([]);
   const trackerRef = useRef(new ChordRecognitionTracker());
+  const transitionTrackerRef = useRef(new ChordTransitionTracker());
   const lastPublishedAtRef = useRef(0);
   const lastSignatureRef = useRef('');
 
@@ -97,6 +99,7 @@ export default function ChordRecognitionController() {
 
   useEffect(() => subscribeLivePracticeContext(() => {
     trackerRef.current.reset();
+    transitionTrackerRef.current.reset();
     audioSamplesRef.current = [];
     lastPublishedAtRef.current = 0;
     lastSignatureRef.current = '';
@@ -153,6 +156,26 @@ export default function ChordRecognitionController() {
       capturedAt: frame.capturedAt,
       result,
     });
+
+    const transition = transitionTrackerRef.current.process(result, context.pattern, frame.capturedAt);
+    if (transition && transition.status !== 'waiting') {
+      publishLiveCoachFeedback({
+        id: `chord-transition-${transition.fromChord}-${transition.toChord}`,
+        capturedAt: frame.capturedAt,
+        status: transition.status === 'success' ? 'success' : 'correction',
+        category: context.category,
+        title: transition.title,
+        instruction: transition.instruction,
+        evidence: transition.evidence,
+        nextGoal: transition.nextGoal,
+        confidencePercent: transition.confidencePercent,
+        stableCount: transition.status === 'success' ? 3 : 0,
+        priority: transition.status === 'success' ? 7 : 14,
+        measurements: transition.transitionMs == null
+          ? []
+          : [{ label: '전환 시간', value: `${transition.transitionMs}ms` }],
+      });
+    }
 
     const signature = `${result.status}:${result.chordName ?? 'none'}:${result.score ?? 'none'}:${result.corrections.join('|')}`;
     const interval = result.status === 'confirmed' ? 1_250 : 700;
