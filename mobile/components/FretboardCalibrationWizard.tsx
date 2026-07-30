@@ -5,6 +5,7 @@ import {
   Alert,
   LayoutChangeEvent,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -78,7 +79,9 @@ export default function FretboardCalibrationWizard({
   onClose?: () => void;
 }) {
   const [permission, requestPermission] = useCameraPermissions();
+  const [cameraKey, setCameraKey] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState('');
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [stepIndex, setStepIndex] = useState(0);
   const [draft, setDraft] = useState<Draft>({});
@@ -139,6 +142,13 @@ export default function FretboardCalibrationWizard({
     setMessage(`${item.title}부터 다시 지정합니다.`);
   };
 
+  const retryCamera = () => {
+    setCameraReady(false);
+    setCameraError('');
+    setMessage('후면 카메라를 다시 연결하는 중입니다.');
+    setCameraKey((value) => value + 1);
+  };
+
   const save = async () => {
     if (!candidate || !validation?.valid || saving) return;
     setSaving(true);
@@ -173,7 +183,13 @@ export default function FretboardCalibrationWizard({
   }
 
   return (
-    <View style={styles.root}>
+    <ScrollView
+      style={styles.root}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.eyebrow}>LEFT HAND · FRETBOARD CALIBRATION</Text>
@@ -210,13 +226,22 @@ export default function FretboardCalibrationWizard({
 
       <Pressable onPress={onPreviewPress} onLayout={onLayout} style={styles.preview}>
         <CameraView
+          key={`fretboard-back-${cameraKey}`}
           style={StyleSheet.absoluteFill}
           facing="back"
           mode="picture"
           ratio="4:3"
           animateShutter={false}
-          onCameraReady={() => setCameraReady(true)}
-          onMountError={(event) => setMessage(event.message)}
+          onCameraReady={() => {
+            setCameraReady(true);
+            setCameraError('');
+            setMessage('카메라 준비 완료 · 안내된 지판 지점을 누르세요.');
+          }}
+          onMountError={(event) => {
+            setCameraReady(false);
+            setCameraError(event.message);
+            setMessage(`카메라 연결 실패 · ${event.message}`);
+          }}
         />
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
           {draft.nutSixth && draft.nutFirst ? <Segment start={draft.nutSixth} end={draft.nutFirst} width={previewSize.width} height={previewSize.height} style={styles.nutLine} /> : null}
@@ -242,7 +267,21 @@ export default function FretboardCalibrationWizard({
             );
           })}
         </View>
-        {!cameraReady ? <View style={styles.loading}><ActivityIndicator /><Text style={styles.loadingText}>카메라 준비 중</Text></View> : null}
+        {!cameraReady ? (
+          <View style={styles.loading}>
+            {cameraError ? (
+              <>
+                <Text style={styles.cameraErrorTitle}>후면 카메라 연결 실패</Text>
+                <Text style={styles.cameraErrorText}>{cameraError}</Text>
+                <Pressable onPress={retryCamera} style={styles.retryButton}>
+                  <Text style={styles.retryText}>카메라 다시 연결</Text>
+                </Pressable>
+              </>
+            ) : (
+              <><ActivityIndicator /><Text style={styles.loadingText}>카메라 준비 중</Text></>
+            )}
+          </View>
+        ) : null}
       </Pressable>
 
       <Text style={[styles.status, validation?.valid && styles.statusGood]}>{validation?.message ?? message}</Text>
@@ -253,12 +292,13 @@ export default function FretboardCalibrationWizard({
           <Text style={styles.primaryText}>{saving ? '저장 중' : '지판 보정 저장'}</Text>
         </Pressable>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0d1117', padding: 12, paddingBottom: 80 },
+  root: { flex: 1, backgroundColor: '#0d1117' },
+  content: { padding: 12, paddingBottom: 110 },
   center: { flex: 1, backgroundColor: '#0d1117', alignItems: 'center', justifyContent: 'center', padding: 24 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 9 },
   headerText: { flex: 1, paddingRight: 8 },
@@ -278,14 +318,18 @@ const styles = StyleSheet.create({
   stepper: { width: 34, height: 30, borderRadius: 9, backgroundColor: '#21262d', borderWidth: 1, borderColor: '#30363d', alignItems: 'center', justifyContent: 'center' },
   stepperText: { color: '#ffffff', fontSize: 15, fontWeight: '900' },
   numberValue: { minWidth: 30, color: '#7ee787', fontSize: 15, fontWeight: '900', textAlign: 'center' },
-  preview: { flex: 1, minHeight: 350, borderRadius: 17, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
+  preview: { height: 430, borderRadius: 17, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
   nutLine: { position: 'absolute', height: 4, backgroundColor: '#ff7b72' },
   referenceLine: { position: 'absolute', height: 3, backgroundColor: '#f2cc60' },
   neckEdge: { position: 'absolute', height: 2, backgroundColor: '#79c0ff' },
   marker: { position: 'absolute', width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#ffffff', backgroundColor: '#1f6feb', alignItems: 'center', justifyContent: 'center' },
   markerText: { color: '#ffffff', fontSize: 8, fontWeight: '900' },
-  loading: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center' },
+  loading: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.76)', alignItems: 'center', justifyContent: 'center', padding: 18 },
   loadingText: { color: '#ffffff', fontSize: 9, fontWeight: '900', marginTop: 6 },
+  cameraErrorTitle: { color: '#ff7b72', fontSize: 13, fontWeight: '900', textAlign: 'center' },
+  cameraErrorText: { color: '#b1bac4', fontSize: 9, lineHeight: 14, textAlign: 'center', marginTop: 6 },
+  retryButton: { minHeight: 40, borderRadius: 11, backgroundColor: '#2ea043', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, marginTop: 12 },
+  retryText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
   status: { color: '#f2cc60', fontSize: 9, lineHeight: 14, marginTop: 8, textAlign: 'center' },
   statusGood: { color: '#7ee787' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 8 },
