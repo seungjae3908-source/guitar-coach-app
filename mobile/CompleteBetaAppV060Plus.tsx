@@ -12,7 +12,7 @@ import {
 
 import CompleteBetaAppV060 from './CompleteBetaAppV060';
 import AudioFileAnalysisPanel from './components/AudioFileAnalysisPanel';
-import CameraCalibrationWizard from './components/CameraCalibrationWizard';
+import CalibrationHub from './components/CalibrationHub';
 import MasterSongStudioPanel from './components/MasterSongStudioPanel';
 import MasteryAcademyPanel from './components/MasteryAcademyPanel';
 import MetronomeProgramPanel from './components/MetronomeProgramPanel';
@@ -65,7 +65,7 @@ function toolTitle(tool: GlobalTool) {
   if (tool === 'program') return '카운트인·타이머·자동 BPM 프로그램';
   if (tool === 'recording') return '연습 영상 녹화·갤러리 저장·재생';
   if (tool === 'audio') return 'MP3·WAV 로컬 BPM·Key·코드 분석';
-  if (tool === 'calibration') return '손·줄·브리지 촬영 보정';
+  if (tool === 'calibration') return '오른손 줄·피크 / 왼손 코드·지판 촬영 보정';
   if (tool === 'records') return '세션별 점수·박자·반복 문제 비교';
   if (tool === 'tuner') return '실시간 기타 튜너';
   return '통기타 · 일렉기타 AI 코치';
@@ -186,7 +186,7 @@ export default function CompleteBetaAppV060Plus() {
         ) : tool === 'tone' && mode ? (
           <ToneMasterLabPanel mode={mode} />
         ) : tool === 'calibration' && mode ? (
-          <CameraCalibrationWizard
+          <CalibrationHub
             mode={mode}
             onSaved={() => setTool('session')}
             onClose={() => setTool('app')}
