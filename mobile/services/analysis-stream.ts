@@ -2,6 +2,7 @@ import type { HandAnalysisResult } from '../modules/guitar-coach-hand';
 import type { NativeAudioReading } from '../modules/guitar-coach-audio';
 import type { MetronomeTimingState } from '../modules/guitar-coach-metronome';
 import type { PoseAnalysisResult } from '../modules/guitar-coach-native';
+import type { ChordRecognitionResult } from './fretboard-chord-engine';
 
 export type PoseAnalysisFrame = {
   kind: 'pose';
@@ -27,11 +28,18 @@ export type MetronomeAnalysisFrame = {
   result: MetronomeTimingState;
 };
 
+export type ChordAnalysisFrame = {
+  kind: 'chord';
+  capturedAt: number;
+  result: ChordRecognitionResult;
+};
+
 export type LiveAnalysisFrame =
   | PoseAnalysisFrame
   | HandAnalysisFrame
   | AudioAnalysisFrame
-  | MetronomeAnalysisFrame;
+  | MetronomeAnalysisFrame
+  | ChordAnalysisFrame;
 export type LiveAnalysisListener = (frame: LiveAnalysisFrame) => void;
 
 const listeners = new Set<LiveAnalysisListener>();
@@ -39,12 +47,14 @@ let latestPoseFrame: PoseAnalysisFrame | null = null;
 let latestHandFrame: HandAnalysisFrame | null = null;
 let latestAudioFrame: AudioAnalysisFrame | null = null;
 let latestMetronomeFrame: MetronomeAnalysisFrame | null = null;
+let latestChordFrame: ChordAnalysisFrame | null = null;
 
 export function publishLiveAnalysisFrame(frame: LiveAnalysisFrame) {
   if (frame.kind === 'pose') latestPoseFrame = frame;
   else if (frame.kind === 'hand') latestHandFrame = frame;
   else if (frame.kind === 'audio') latestAudioFrame = frame;
-  else latestMetronomeFrame = frame;
+  else if (frame.kind === 'metronome') latestMetronomeFrame = frame;
+  else latestChordFrame = frame;
 
   listeners.forEach((listener) => {
     try {
@@ -68,6 +78,7 @@ export function getLatestLiveAnalysisFrames() {
     hand: latestHandFrame,
     audio: latestAudioFrame,
     metronome: latestMetronomeFrame,
+    chord: latestChordFrame,
   };
 }
 
@@ -76,4 +87,5 @@ export function clearLatestLiveAnalysisFrames() {
   latestHandFrame = null;
   latestAudioFrame = null;
   latestMetronomeFrame = null;
+  latestChordFrame = null;
 }
