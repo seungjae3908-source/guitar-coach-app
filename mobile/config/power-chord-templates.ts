@@ -2,6 +2,7 @@ import type { ChordTemplate } from '../services/fretboard-chord-engine';
 
 export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
   {
+    id: 'e5-open',
     name: 'E5',
     aliases: ['E power chord'],
     strings: [0, 2, 2, -1, -1, -1],
@@ -11,6 +12,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'f5-sixth-root',
     name: 'F5',
     aliases: ['F power chord'],
     strings: [1, 3, 3, -1, -1, -1],
@@ -21,6 +23,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'g5-sixth-root',
     name: 'G5',
     aliases: ['G power chord'],
     strings: [3, 5, 5, -1, -1, -1],
@@ -31,6 +34,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'a5-open',
     name: 'A5',
     aliases: ['A power chord', 'open A5'],
     strings: [-1, 0, 2, 2, -1, -1],
@@ -40,6 +44,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'a5-sixth-root',
     name: 'A5',
     aliases: ['A power chord', 'sixth-string A5'],
     strings: [5, 7, 7, -1, -1, -1],
@@ -50,6 +55,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'b5-fifth-root',
     name: 'B5',
     aliases: ['B power chord'],
     strings: [-1, 2, 4, 4, -1, -1],
@@ -60,6 +66,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'c5-fifth-root',
     name: 'C5',
     aliases: ['C power chord'],
     strings: [-1, 3, 5, 5, -1, -1],
@@ -70,6 +77,7 @@ export const POWER_CHORD_TEMPLATES: ChordTemplate[] = [
     },
   },
   {
+    id: 'd5-fifth-root',
     name: 'D5',
     aliases: ['D power chord'],
     strings: [-1, 5, 7, 7, -1, -1],
