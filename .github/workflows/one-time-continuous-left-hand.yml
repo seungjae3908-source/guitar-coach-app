@@ -1,0 +1,120 @@
+name: Enable continuous left hand camera analysis
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'guitar-coach-quality-bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Route left-hand sessions through continuous CameraX
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('mobile/components/SessionCoachCamera.tsx')
+          text = path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  "  const useContinuousRightHand = activeMode === 'right-hand' && isContinuousRightHandCameraAvailable;",
+                  "  const useContinuousHand = activeMode !== 'full' && isContinuousRightHandCameraAvailable;\n  const useContinuousRightHand = activeMode === 'right-hand' && useContinuousHand;",
+              ),
+              (
+                  "    if (useContinuousRightHand) return;\n    if (!running || !cameraReady || !permission?.granted) return;",
+                  "    if (useContinuousHand) return;\n    if (!running || !cameraReady || !permission?.granted) return;",
+              ),
+              (
+                  "  }, [activeMode, cameraReady, facing, permission?.granted, running, useContinuousRightHand]);",
+                  "  }, [activeMode, cameraReady, facing, permission?.granted, running, useContinuousHand]);",
+              ),
+              (
+                  "    if (useContinuousRightHand) return;\n    setCameraReady(false);",
+                  "    if (useContinuousHand) return;\n    setCameraReady(false);",
+              ),
+              (
+                  "<Text style={styles.eyebrow}>{useContinuousRightHand ? 'CONTINUOUS CAMERAX AI' : 'ADAPTIVE CAMERA AI'}</Text>",
+                  "<Text style={styles.eyebrow}>{useContinuousHand ? 'CONTINUOUS CAMERAX AI' : 'ADAPTIVE CAMERA AI'}</Text>",
+              ),
+              (
+                  "        {useContinuousRightHand ? (\n          <View style={styles.fixedCameraBadge}><Text style={styles.fixedCameraText}>후면 연속</Text></View>",
+                  "        {useContinuousHand ? (\n          <View style={styles.fixedCameraBadge}><Text style={styles.fixedCameraText}>후면 연속</Text></View>",
+              ),
+              (
+                  "        {useContinuousRightHand ? (\n          <ContinuousRightHandCamera",
+                  "        {useContinuousHand ? (\n          <ContinuousRightHandCamera",
+              ),
+              (
+                  "            pickColor=\"auto\"",
+                  "            pickColor={activeMode === 'right-hand' ? 'auto' : 'none'}",
+              ),
+              (
+                  "        {useContinuousRightHand && cameraReady ? (",
+                  "        {useContinuousHand && cameraReady ? (",
+              ),
+              (
+                  "{running ? `${activeMode === 'full' ? '전체' : activeMode === 'right-hand' ? '오른손' : '왼손'} ${useContinuousRightHand ? '연속 분석' : '자동 추적'}` : useContinuousRightHand ? '연속 정렬·분석 대기' : '세션 시작 대기'}",
+                  "{running ? `${activeMode === 'full' ? '전체' : activeMode === 'right-hand' ? '오른손' : '왼손'} ${useContinuousHand ? '연속 분석' : '자동 추적'}` : useContinuousHand ? '연속 정렬·분석 대기' : '세션 시작 대기'}",
+              ),
+              (
+                  "        <Text style={styles.resultDetail}>{useContinuousRightHand ? '미리보기는 계속 유지하고 오래된 분석 프레임은 쌓지 않습니다. 피크와 각 손가락의 최근 궤적이 줄을 통과할 때만 탄현 후보로 기록합니다.' : '전체·왼손 모드는 현재 안정된 촬영 분석을 유지합니다.'}</Text>",
+                  "        <Text style={styles.resultDetail}>{useContinuousRightHand ? '미리보기는 계속 유지하고 오래된 분석 프레임은 쌓지 않습니다. 피크와 각 손가락의 최근 궤적이 줄을 통과할 때만 탄현 후보로 기록합니다.' : activeMode === 'left-hand' && useContinuousHand ? '왼손 관절을 연속 추적해 탄현 순간의 지판 좌표와 마이크 음정을 결합합니다.' : '전체 모드는 자세와 양손을 교차 수집합니다.'}</Text>",
+              ),
+              (
+                  "        {!isContinuousRightHandCameraAvailable && activeMode === 'right-hand' ? <Text style={styles.warningText}>연속 카메라 모듈이 없어 사진 분석으로 대체되었습니다.</Text> : null}",
+                  "        {!isContinuousRightHandCameraAvailable && activeMode !== 'full' ? <Text style={styles.warningText}>연속 카메라 모듈이 없어 사진 분석으로 대체되었습니다. 빠른 동작은 판정 불가가 될 수 있습니다.</Text> : null}",
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one SessionCoachCamera match, found {count}: {old[:120]!r}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run TypeScript and executable quality gates
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Compile release Kotlin
+        working-directory: mobile/android
+        run: ./gradlew :app:compileReleaseKotlin --no-daemon
+
+      - name: Commit continuous left-hand analysis
+        run: |
+          rm -f .github/workflows/one-time-continuous-left-hand.yml .github/continuous-left-hand-trigger.txt
+          git config user.name "guitar-coach-quality-bot"
+          git config user.email "guitar-coach-quality-bot@users.noreply.github.com"
+          git add mobile/components/SessionCoachCamera.tsx .github/workflows/one-time-continuous-left-hand.yml .github/continuous-left-hand-trigger.txt
+          git commit -m "Use continuous CameraX for left-hand fingering"
+          git push origin HEAD:agent/live-coach-compat-v055
