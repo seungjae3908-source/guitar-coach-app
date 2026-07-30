@@ -97,6 +97,7 @@ export default function ContinuousRightHandCamera({
   ...props
 }: NativeContinuousCameraProps) {
   const qualityGateRef = useRef(new ContinuousTrackingQualityGate());
+  const verifiedPickColor = pickColor === 'auto' ? 'green' : pickColor;
 
   useEffect(() => {
     if (!running) qualityGateRef.current.reset();
@@ -108,7 +109,7 @@ export default function ContinuousRightHandCamera({
     <NativeContinuousCameraView
       {...props}
       running={running}
-      pickColor={pickColor}
+      pickColor={verifiedPickColor}
       onAnalysis={(event) => {
         const normalized = normalizeResult(event.nativeEvent);
         const qualityChecked = qualityGateRef.current.process(normalized, Date.now());
