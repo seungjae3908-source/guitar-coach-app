@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import {
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -45,13 +47,13 @@ const TOOL_LABELS: Array<{ id: GlobalTool; label: string }> = [
   { id: 'session', label: '집중교정' },
   { id: 'song', label: '곡스튜디오' },
   { id: 'sheet', label: '악보편집' },
-  { id: 'tone', label: '톤연구실' },
-  { id: 'program', label: '메트로놈' },
-  { id: 'recording', label: '영상' },
   { id: 'audio', label: '음원분석' },
   { id: 'calibration', label: '촬영보정' },
+  { id: 'recording', label: '영상' },
   { id: 'records', label: '상세기록' },
+  { id: 'program', label: '메트로놈' },
   { id: 'tuner', label: '튜너' },
+  { id: 'tone', label: '톤연구실' },
 ];
 
 function toolTitle(tool: GlobalTool) {
@@ -84,13 +86,15 @@ export default function CompleteBetaAppV060Plus() {
 
   return (
     <SafeAreaView style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor="#161b22" translucent={false} />
       <VoiceCoachController enabled={voiceCoachEnabled} />
       <TechniqueFeedbackController />
       <SoundConsistencyController enabled={voiceCoachEnabled} />
+
       <View style={styles.toolBar}>
         <View style={styles.toolTextWrap}>
           <Text style={styles.toolEyebrow}>0.6.0 PRODUCT QUALITY BUILD · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
-          <Text style={styles.toolTitle}>{toolTitle(tool)}</Text>
+          <Text style={styles.toolTitle} numberOfLines={2}>{toolTitle(tool)}</Text>
         </View>
         <Pressable
           accessibilityRole="switch"
@@ -109,6 +113,7 @@ export default function CompleteBetaAppV060Plus() {
         style={styles.toolScroll}
         contentContainerStyle={styles.toolRow}
         showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {TOOL_LABELS.map((item) => (
           <Pressable
@@ -151,7 +156,12 @@ export default function CompleteBetaAppV060Plus() {
         ) : tool === 'recording' ? (
           <PracticeRecordingPanel mode={mode} />
         ) : tool === 'tuner' ? (
-          <ScrollView style={styles.tunerScroll} contentContainerStyle={styles.tunerContent} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={styles.tunerScroll}
+            contentContainerStyle={styles.tunerContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
             <TunerPanel />
             <View style={styles.infoCard}>
               <Text style={styles.infoTitle}>튜너 사용 순서</Text>
@@ -162,7 +172,11 @@ export default function CompleteBetaAppV060Plus() {
             </View>
           </ScrollView>
         ) : tool === 'session' && mode ? (
-          <PracticeSessionRunnerV2 mode={mode} voiceCoachEnabled={voiceCoachEnabled} onClose={() => setTool('records')} />
+          <PracticeSessionRunnerV2
+            mode={mode}
+            voiceCoachEnabled={voiceCoachEnabled}
+            onClose={() => setTool('records')}
+          />
         ) : tool === 'audio' && mode ? (
           <AudioFileAnalysisPanel mode={mode} />
         ) : tool === 'song' && mode ? (
@@ -172,7 +186,11 @@ export default function CompleteBetaAppV060Plus() {
         ) : tool === 'tone' && mode ? (
           <ToneMasterLabPanel mode={mode} />
         ) : tool === 'calibration' && mode ? (
-          <CameraCalibrationWizard mode={mode} onSaved={() => setTool('session')} onClose={() => setTool('app')} />
+          <CameraCalibrationWizard
+            mode={mode}
+            onSaved={() => setTool('session')}
+            onClose={() => setTool('app')}
+          />
         ) : tool === 'records' ? (
           <PracticeRecordsPanel initialMode={mode} />
         ) : (
@@ -184,25 +202,58 @@ export default function CompleteBetaAppV060Plus() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0d1117' },
-  toolBar: { flexDirection: 'row', alignItems: 'center', minHeight: 51, paddingHorizontal: 13, paddingVertical: 7, backgroundColor: '#161b22', borderBottomWidth: 1, borderBottomColor: '#30363d' },
+  root: {
+    flex: 1,
+    backgroundColor: '#0d1117',
+    paddingTop: Platform.OS === 'android' ? Math.max(0, StatusBar.currentHeight ?? 0) : 0,
+  },
+  toolBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 58,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    backgroundColor: '#161b22',
+    borderBottomWidth: 1,
+    borderBottomColor: '#30363d',
+  },
   toolTextWrap: { flex: 1, paddingRight: 7 },
   toolEyebrow: { color: '#7ee787', fontSize: 7, fontWeight: '900', letterSpacing: 0.7 },
-  toolTitle: { color: '#f0f6fc', fontSize: 13, fontWeight: '900', marginTop: 3 },
-  voiceButton: { minWidth: 67, height: 34, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
+  toolTitle: { color: '#f0f6fc', fontSize: 13, lineHeight: 17, fontWeight: '900', marginTop: 3 },
+  voiceButton: {
+    minWidth: 72,
+    height: 38,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    backgroundColor: '#21262d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
   voiceButtonActive: { backgroundColor: '#1f6feb', borderColor: '#58a6ff' },
-  voiceButtonText: { color: '#8b949e', fontSize: 7, fontWeight: '900' },
+  voiceButtonText: { color: '#8b949e', fontSize: 8, fontWeight: '900' },
   voiceButtonTextActive: { color: '#ffffff' },
-  toolScroll: { maxHeight: 48, backgroundColor: '#0d1117', borderBottomWidth: 1, borderBottomColor: '#30363d' },
-  toolRow: { paddingHorizontal: 9, paddingVertical: 6, gap: 6 },
-  toolButton: { minWidth: 70, minHeight: 34, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11 },
+  toolScroll: { maxHeight: 56, backgroundColor: '#0d1117', borderBottomWidth: 1, borderBottomColor: '#30363d' },
+  toolRow: { paddingHorizontal: 9, paddingVertical: 7, gap: 6 },
+  toolButton: {
+    minWidth: 76,
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    backgroundColor: '#21262d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
   toolButtonActive: { backgroundColor: '#238636', borderColor: '#2ea043' },
   toolButtonText: { color: '#b1bac4', fontSize: 9, fontWeight: '900' },
   toolButtonTextActive: { color: '#ffffff' },
-  body: { flex: 1 },
+  body: { flex: 1, backgroundColor: '#0d1117', paddingBottom: Platform.OS === 'android' ? 14 : 0 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   tunerScroll: { flex: 1, backgroundColor: '#0d1117' },
-  tunerContent: { padding: 14, paddingBottom: 50 },
+  tunerContent: { padding: 14, paddingBottom: 96 },
   infoCard: { backgroundColor: '#111d2f', borderWidth: 1, borderColor: '#1f6feb', borderRadius: 16, padding: 14, marginTop: 12 },
   infoTitle: { color: '#79c0ff', fontSize: 12, fontWeight: '900', textAlign: 'center' },
   infoText: { color: '#b6d8ff', fontSize: 10, lineHeight: 17, marginTop: 5, textAlign: 'center' },
