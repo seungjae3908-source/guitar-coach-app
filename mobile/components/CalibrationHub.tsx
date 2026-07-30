@@ -40,11 +40,11 @@ export default function CalibrationHub({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0d1117' },
+  root: { flex: 1, minHeight: 0, backgroundColor: '#0d1117' },
   tabs: { flexDirection: 'row', gap: 7, paddingHorizontal: 10, paddingTop: 9, paddingBottom: 3 },
   tab: { flex: 1, minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   tabActive: { borderColor: '#2ea043', backgroundColor: '#16351f' },
   tabText: { color: '#b1bac4', fontSize: 9, fontWeight: '900', textAlign: 'center' },
   tabTextActive: { color: '#7ee787' },
-  body: { flex: 1 },
+  body: { flex: 1, minHeight: 0 },
 });
