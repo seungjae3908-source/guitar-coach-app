@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 
+import { POWER_CHORD_TEMPLATES } from '../config/power-chord-templates';
 import type { HandAnalysisResult } from '../modules/guitar-coach-hand';
 import type { NativeAudioReading } from '../modules/guitar-coach-audio';
 import { publishLiveAnalysisFrame, subscribeLiveAnalysis } from '../services/analysis-stream';
@@ -136,11 +137,13 @@ export default function ChordRecognitionController() {
     if (!calibrationRef.current && !calibrationLoadingRef.current) void reloadCalibration();
 
     const audio = buildAudioEvidence(audioSamplesRef.current, frame.capturedAt);
+    const templates = context.category === 'powerChords' ? POWER_CHORD_TEMPLATES : undefined;
     const result = trackerRef.current.process(
       recognizeChord(
         fingerObservations(hand),
         calibrationRef.current,
         audio,
+        templates,
       ),
       frame.capturedAt,
     );
