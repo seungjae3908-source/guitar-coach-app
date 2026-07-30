@@ -25,6 +25,10 @@ export type MetronomeTimingState = {
   absolutePulseCount: number;
   elapsedRealtimeNowMs: number;
   uptimeNowMs: number;
+  schedulerJitterLastMs?: number;
+  schedulerJitterMaxMs?: number;
+  schedulerJitterRmsMs?: number;
+  voiceLeadMs?: number;
 };
 
 type GuitarCoachMetronomeModule = {
