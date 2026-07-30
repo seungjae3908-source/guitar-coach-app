@@ -1,0 +1,57 @@
+name: Apply guarded green pick threshold patch
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - .github/workflows/one-time-green-pick-threshold-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Apply exact threshold replacements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachContinuousCameraModule.kt')
+          text = path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  '    "green" -> hue in 55f..180f && saturation >= 0.10f && value >= 0.30f',
+                  '    "green" -> hue in 55f..180f && saturation >= 0.06f && value >= 0.28f',
+              ),
+              (
+                  '    "auto" -> saturation >= 0.10f && value >= 0.30f && hue in 55f..335f',
+                  '    "auto" -> saturation >= 0.08f && value >= 0.28f && hue in 55f..335f',
+              ),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected one threshold match, found {count}: {old!r}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit threshold patch
+        run: |
+          if git diff --quiet; then
+            echo "No patch produced"
+            exit 1
+          fi
+          git config user.name "guitar-coach-quality-bot"
+          git config user.email "guitar-coach-quality-bot@users.noreply.github.com"
+          git add mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachContinuousCameraModule.kt
+          git commit -m "Tune green pick threshold from real practice videos"
+          git push origin HEAD:agent/live-coach-compat-v055
