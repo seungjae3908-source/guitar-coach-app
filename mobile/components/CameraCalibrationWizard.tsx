@@ -4,6 +4,7 @@ import {
   Alert,
   LayoutChangeEvent,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -51,6 +52,7 @@ export default function CameraCalibrationWizard({
   const cameraRef = useRef<CameraView | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>('back');
+  const [cameraKey, setCameraKey] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [stepIndex, setStepIndex] = useState(0);
@@ -106,6 +108,13 @@ export default function CameraCalibrationWizard({
     setMessage('보정을 처음부터 다시 시작합니다.');
   };
 
+  const switchFacing = () => {
+    setCameraReady(false);
+    setMessage('카메라를 다시 연결하는 중입니다.');
+    setFacing((current) => current === 'back' ? 'front' : 'back');
+    setCameraKey((value) => value + 1);
+  };
+
   const save = async () => {
     if (saving) return;
     setSaving(true);
@@ -146,7 +155,13 @@ export default function CameraCalibrationWizard({
   }
 
   return (
-    <View style={styles.root}>
+    <ScrollView
+      style={styles.root}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.header}>
         <View style={styles.headerTextWrap}>
           <Text style={styles.eyebrow}>{mode === 'acoustic' ? '통기타' : '일렉기타'} · STRING CALIBRATION</Text>
@@ -164,10 +179,21 @@ export default function CameraCalibrationWizard({
 
       <Pressable onPress={onPreviewPress} onLayout={onLayout} style={styles.previewWrap}>
         <CameraView
+          key={`${facing}-${cameraKey}`}
           ref={cameraRef}
           style={StyleSheet.absoluteFill}
           facing={facing}
-          onCameraReady={() => setCameraReady(true)}
+          mode="picture"
+          ratio="4:3"
+          animateShutter={false}
+          onCameraReady={() => {
+            setCameraReady(true);
+            setMessage('카메라 준비 완료 · 안내 지점을 누르세요.');
+          }}
+          onMountError={(event) => {
+            setCameraReady(false);
+            setMessage(`카메라 연결 실패 · ${event.message}`);
+          }}
         />
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
           {stringGuides.map((guide) => {
@@ -215,11 +241,12 @@ export default function CameraCalibrationWizard({
           })}
           <View style={styles.centerGuide} />
         </View>
+        {!cameraReady ? <View pointerEvents="none" style={styles.cameraLoading}><Text style={styles.loadingText}>카메라 준비 중</Text></View> : null}
       </Pressable>
 
       <View style={styles.statusRow}>
         <Text style={[styles.statusText, validation.complete && styles.statusGood]}>{message || validation.message}</Text>
-        <Pressable onPress={() => setFacing((current) => current === 'back' ? 'front' : 'back')} style={styles.smallButton}>
+        <Pressable onPress={switchFacing} style={styles.smallButton}>
           <Text style={styles.smallText}>{facing === 'back' ? '후면' : '전면'}</Text>
         </Pressable>
       </View>
@@ -232,12 +259,13 @@ export default function CameraCalibrationWizard({
           <Text style={styles.primaryText}>{saving ? '저장 중' : '보정 저장'}</Text>
         </Pressable>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0d1117', padding: 12 },
+  root: { flex: 1, backgroundColor: '#0d1117' },
+  content: { padding: 12, paddingBottom: 110 },
   center: { flex: 1, backgroundColor: '#0d1117', alignItems: 'center', justifyContent: 'center', padding: 24 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   headerTextWrap: { flex: 1, paddingRight: 8 },
@@ -250,7 +278,9 @@ const styles = StyleSheet.create({
   stepCount: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
   stepTitle: { color: '#f0f6fc', fontSize: 14, fontWeight: '900', marginTop: 3 },
   stepDetail: { color: '#b1bac4', fontSize: 10, lineHeight: 15, marginTop: 3 },
-  previewWrap: { flex: 1, minHeight: 330, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
+  previewWrap: { height: 420, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
+  cameraLoading: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center' },
+  loadingText: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
   stringLine: { position: 'absolute', height: 2, backgroundColor: '#7ee787' },
   stringLabel: { position: 'absolute', left: 2, top: -13, color: '#ffffff', fontSize: 8, fontWeight: '900', backgroundColor: '#238636', paddingHorizontal: 3, borderRadius: 4 },
   marker: { position: 'absolute', width: 20, height: 20, borderRadius: 10, backgroundColor: '#1f6feb', borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center' },
