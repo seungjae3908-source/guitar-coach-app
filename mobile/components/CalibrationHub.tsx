@@ -46,5 +46,5 @@ const styles = StyleSheet.create({
   tabActive: { borderColor: '#2ea043', backgroundColor: '#16351f' },
   tabText: { color: '#b1bac4', fontSize: 9, fontWeight: '900', textAlign: 'center' },
   tabTextActive: { color: '#7ee787' },
-  body: { flex: 1, minHeight: 0 },
+  body: { flex: 1 },
 });
