@@ -70,6 +70,29 @@ export function sortFeedbackStack<T extends FeedbackStackEntry>(items: T[]) {
   });
 }
 
+function limitWithPositiveEvidence<T extends FeedbackStackEntry>(
+  items: T[],
+  maxItems: number,
+) {
+  const problems = sortFeedbackStack(items.filter((item) => (
+    item.status === 'warning'
+    || item.status === 'correction'
+    || item.status === 'cannot-judge'
+  )));
+  const successes = sortFeedbackStack(items.filter((item) => item.status === 'success'));
+  const waiting = sortFeedbackStack(items.filter((item) => item.status === 'waiting'));
+
+  if (!problems.length) return sortFeedbackStack([...successes, ...waiting]).slice(0, maxItems);
+  if (!successes.length || maxItems <= 1) return problems.slice(0, maxItems);
+
+  // 교정은 항상 주 피드백으로 유지하되, 사용자가 잘하고 있는지도 알 수 있게
+  // 가장 최근의 근거 있는 성공 한 항목을 위해 마지막 슬롯을 예약합니다.
+  return sortFeedbackStack([
+    ...problems.slice(0, Math.max(1, maxItems - 1)),
+    successes[0],
+  ]).slice(0, maxItems);
+}
+
 export function mergeFeedbackStack<T extends FeedbackStackEntry>(
   current: T[],
   next: T,
@@ -81,14 +104,7 @@ export function mergeFeedbackStack<T extends FeedbackStackEntry>(
 
   if (next.status !== 'waiting') active.push(next);
 
-  const hasUnresolvedProblem = active.some(
-    (item) => item.status === 'warning' || item.status === 'correction' || item.status === 'cannot-judge',
-  );
-  const withoutPrematureSuccess = hasUnresolvedProblem
-    ? active.filter((item) => item.status !== 'success')
-    : active;
-
-  return sortFeedbackStack(withoutPrematureSuccess).slice(0, resolved.maxItems);
+  return limitWithPositiveEvidence(active, resolved.maxItems);
 }
 
 export function pruneFeedbackStack<T extends FeedbackStackEntry>(
@@ -97,6 +113,6 @@ export function pruneFeedbackStack<T extends FeedbackStackEntry>(
   options: FeedbackStackOptions = {},
 ) {
   const resolved = { ...DEFAULT_OPTIONS, ...options };
-  return sortFeedbackStack(current.filter((item) => isFeedbackActive(item, now, resolved)))
-    .slice(0, resolved.maxItems);
+  const active = current.filter((item) => isFeedbackActive(item, now, resolved));
+  return limitWithPositiveEvidence(active, resolved.maxItems);
 }
