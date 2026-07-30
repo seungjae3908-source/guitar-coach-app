@@ -79,14 +79,17 @@ export default function LiveTeacherPanel({
     () => running ? snapshot.active : [],
     [running, snapshot.active],
   );
-  const primaryFeedback = activeFeedbacks[0] ?? null;
+  const activeProblems = activeFeedbacks.filter(
+    (item) => item.status === 'warning' || item.status === 'correction' || item.status === 'cannot-judge',
+  );
+  const activeSuccesses = activeFeedbacks.filter((item) => item.status === 'success');
+  const primaryFeedback = activeProblems[0] ?? activeSuccesses[0] ?? null;
   const visibleFeedback = running
     ? primaryFeedback ?? fallbackFeedback(preset)
     : null;
-  const simultaneous = activeFeedbacks.slice(1, 6);
-  const activeProblemCount = activeFeedbacks.filter(
-    (item) => item.status === 'warning' || item.status === 'correction' || item.status === 'cannot-judge',
-  ).length;
+  const simultaneousProblems = activeProblems.slice(1, 5);
+  const positiveFeedbacks = activeSuccesses.slice(0, 2);
+  const activeProblemCount = activeProblems.length;
   const recentResolved = snapshot.history.filter(
     (item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index
       && !activeFeedbacks.some((active) => active.id === item.id),
@@ -119,7 +122,7 @@ export default function LiveTeacherPanel({
         {running && visibleFeedback ? (
           <>
             <View style={styles.instructionBox}>
-              <Text style={styles.instructionLabel}>가장 먼저 고칠 항목</Text>
+              <Text style={styles.instructionLabel}>{activeProblemCount > 0 ? '가장 먼저 고칠 항목' : '현재 유지할 동작'}</Text>
               <Text style={styles.instruction}>{visibleFeedback.instruction}</Text>
             </View>
             <Text style={styles.evidence}>판정 근거 · {visibleFeedback.evidence}</Text>
@@ -144,10 +147,29 @@ export default function LiveTeacherPanel({
               </View>
             ) : null}
 
-            {simultaneous.length ? (
+            {positiveFeedbacks.length ? (
+              <View style={styles.positiveBox}>
+                <Text style={styles.positiveTitle}>잘하고 있는 점 · 그대로 유지하세요</Text>
+                {positiveFeedbacks.map((item) => (
+                  <View key={`${item.id}-${item.capturedAt}`} style={styles.positiveItem}>
+                    <View style={styles.positiveDot} />
+                    <View style={styles.positiveContent}>
+                      <View style={styles.positiveHeadingRow}>
+                        <Text style={styles.positiveItemTitle}>{item.title}</Text>
+                        <Text style={styles.positiveConfidence}>{item.confidencePercent}%</Text>
+                      </View>
+                      <Text style={styles.positiveEvidence}>{item.evidence}</Text>
+                      <Text style={styles.positiveGoal}>{item.nextGoal}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            {simultaneousProblems.length ? (
               <View style={styles.multiBox}>
-                <Text style={styles.multiTitle}>동시에 유지 중인 피드백</Text>
-                {simultaneous.map((item, index) => (
+                <Text style={styles.multiTitle}>동시에 확인 중인 다른 교정</Text>
+                {simultaneousProblems.map((item, index) => (
                   <View key={`${item.id}-${item.capturedAt}`} style={styles.multiItem}>
                     <View style={styles.multiIndex}><Text style={styles.multiIndexText}>{index + 2}</Text></View>
                     <View style={styles.multiContent}>
@@ -165,7 +187,7 @@ export default function LiveTeacherPanel({
           </>
         ) : (
           <>
-            <Text style={styles.readyText}>시작하면 손목·손가락·피크·줄·리듬·소리를 각각 분석해 여러 문제를 동시에 유지하고, 가장 중요한 항목부터 교정합니다.</Text>
+            <Text style={styles.readyText}>시작하면 손목·손가락·피크·줄·리듬·소리를 각각 분석해 교정할 점과 잘하고 있는 점을 동시에 보여줍니다.</Text>
             <View style={styles.checkpointBox}>
               <Text style={styles.checkpointTitle}>{preset.pattern ? `패턴 · ${preset.pattern}` : '이번 루틴 체크포인트'}</Text>
               {preset.checkpoints.slice(0, 4).map((item, index) => (
@@ -218,6 +240,16 @@ const styles = StyleSheet.create({
   measurementChip: { minWidth: 66, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.25)', paddingHorizontal: 8, paddingVertical: 6 },
   measurementLabel: { color: '#8b949e', fontSize: 6 },
   measurementValue: { color: '#f0f6fc', fontSize: 8, fontWeight: '900', marginTop: 2 },
+  positiveBox: { borderRadius: 13, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#102418', padding: 10, marginTop: 11, gap: 8 },
+  positiveTitle: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
+  positiveItem: { flexDirection: 'row', alignItems: 'flex-start' },
+  positiveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#7ee787', marginTop: 4, marginRight: 7 },
+  positiveContent: { flex: 1 },
+  positiveHeadingRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  positiveItemTitle: { flex: 1, color: '#ffffff', fontSize: 10, fontWeight: '900' },
+  positiveConfidence: { color: '#7ee787', fontSize: 7, fontWeight: '900' },
+  positiveEvidence: { color: '#b9e6c5', fontSize: 8, lineHeight: 13, marginTop: 3 },
+  positiveGoal: { color: '#79c0ff', fontSize: 7, lineHeight: 12, marginTop: 2 },
   multiBox: { borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.14)', marginTop: 11, paddingTop: 9, gap: 7 },
   multiTitle: { color: '#f2cc60', fontSize: 8, fontWeight: '900' },
   multiItem: { flexDirection: 'row', borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.24)', padding: 8 },
