@@ -113,3 +113,5 @@ function continuousStatus(stats: ContinuousRightHandStats | null) {
           git add mobile/modules/guitar-coach-continuous-camera/index.tsx mobile/components/SessionCoachCamera.tsx .github/workflows/one-time-auto-framing-ui.yml
           git commit -m "Show CameraX auto framing and zoom state"
           git push origin HEAD:agent/live-coach-compat-v055
+
+# Existing-workflow trigger marker.
