@@ -1,5 +1,5 @@
 import { requireNativeView, requireOptionalNativeModule } from 'expo';
-import { useEffect, useRef } from 'react';
+import { type ComponentType, useEffect, useRef } from 'react';
 import type { NativeSyntheticEvent, ViewProps } from 'react-native';
 
 import {
@@ -29,9 +29,22 @@ type NativeContinuousCameraProps = ViewProps & {
 };
 
 const NativeModule = requireOptionalNativeModule<ContinuousCameraModule>('GuitarCoachContinuousCamera');
-const NativeContinuousCameraView = requireNativeView<NativeContinuousCameraProps>('GuitarCoachContinuousCamera');
+let NativeContinuousCameraView: ComponentType<NativeContinuousCameraProps> | null = null;
 
-export const isContinuousRightHandCameraAvailable = Boolean(NativeModule?.androidContinuousRightHandAvailable);
+if (NativeModule?.androidContinuousRightHandAvailable) {
+  try {
+    NativeContinuousCameraView = requireNativeView<NativeContinuousCameraProps>('GuitarCoachContinuousCamera');
+  } catch {
+    // A stale or compact APK can expose the module constant before the native
+    // view manager is usable. Keep the app alive so SessionCoachCamera can use
+    // the expo-camera fallback instead of crashing while this file is imported.
+    NativeContinuousCameraView = null;
+  }
+}
+
+export const isContinuousRightHandCameraAvailable = Boolean(
+  NativeModule?.androidContinuousRightHandAvailable && NativeContinuousCameraView,
+);
 
 function normalizeResult(result: ContinuousHandAnalysisResult): ContinuousHandAnalysisResult {
   const tracking = result.stringTracking;
@@ -105,8 +118,11 @@ export default function ContinuousRightHandCamera({
 
   useEffect(() => () => qualityGateRef.current.reset(), []);
 
+  if (!NativeContinuousCameraView) return null;
+  const ContinuousCameraView = NativeContinuousCameraView;
+
   return (
-    <NativeContinuousCameraView
+    <ContinuousCameraView
       {...props}
       // Keep CameraX preview, autofocus and auto-framing alive as soon as the
       // precision screen mounts. Practice controllers still ignore frames until
