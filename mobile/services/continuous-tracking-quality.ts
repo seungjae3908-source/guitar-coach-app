@@ -22,6 +22,14 @@ export type QualityStringHit = {
   audioSignalToNoiseDb?: number;
 };
 
+export type AutoFramingState =
+  | 'searching'
+  | 'zooming-in'
+  | 'zooming-out'
+  | 'locked'
+  | 'max-zoom-too-small'
+  | string;
+
 export type QualityContinuousStats = {
   enabled: true;
   previewFps: number;
@@ -29,6 +37,8 @@ export type QualityContinuousStats = {
   frameCount: number;
   analyzedFrameCount: number;
   stringRefreshAgeFrames: number;
+  autoZoomRatio?: number;
+  autoFramingState?: AutoFramingState;
   newHits: QualityStringHit[];
   recentHits: QualityStringHit[];
   qualityGate?: {
@@ -122,57 +132,50 @@ function sortedLines(tracking: GuitarStringTrackingResult) {
 
 function lineGeometry(tracking: GuitarStringTrackingResult) {
   const lines = sortedLines(tracking);
-  const spacings = lines.slice(1).map((line, index) => distance(lineCenter(line), lineCenter(lines[index])));
-  const spacingMean = mean(spacings);
-  const spacingVariation = spacingMean > 0 ? standardDeviation(spacings) / spacingMean : 1;
+  const centers = lines.map(lineCenter);
+  const spacings = centers.slice(1).map((center, index) => distance(center, centers[index]));
   const angles = lines.map(lineAngle);
   return {
     lines,
-    spacingMean,
-    spacingVariation,
+    spacingMean: mean(spacings),
+    spacingVariation: mean(spacings) > 0 ? standardDeviation(spacings) / mean(spacings) : 1,
     angleVariation: standardDeviation(angles),
-    angle: median(angles),
   };
 }
 
-function handFocus(result: HandAnalysisResult) {
-  const points = [4, 8, 12, 16, 20]
-    .map((index) => result.landmarks[index])
-    .filter((point): point is HandLandmarkPoint => Boolean(point));
-  return {
-    x: points.length ? mean(points.map((point) => point.x)) : 0.5,
-    y: points.length ? mean(points.map((point) => point.y)) : 0.5,
-  };
+function compatibleTracking(left: GuitarStringTrackingResult, right: GuitarStringTrackingResult) {
+  const leftGeometry = lineGeometry(left);
+  const rightGeometry = lineGeometry(right);
+  if (leftGeometry.lines.length < 5 || rightGeometry.lines.length < 5) return false;
+  if (Math.abs(left.angleDegrees - right.angleDegrees) > 6.5) return false;
+  const ratio = Math.max(leftGeometry.spacingMean, rightGeometry.spacingMean)
+    / Math.max(0.0001, Math.min(leftGeometry.spacingMean, rightGeometry.spacingMean));
+  if (ratio > 1.42) return false;
+  const leftCenter = lineCenter(leftGeometry.lines[Math.floor(leftGeometry.lines.length / 2)]);
+  const rightCenter = lineCenter(rightGeometry.lines[Math.floor(rightGeometry.lines.length / 2)]);
+  return distance(leftCenter, rightCenter) <= Math.max(leftGeometry.spacingMean, rightGeometry.spacingMean) * 1.35;
 }
 
 function roiMatchesCurrentHand(tracking: GuitarStringTrackingResult, hand: HandAnalysisResult) {
-  if (
-    tracking.roiTop == null
-    || tracking.roiBottom == null
-    || tracking.roiLeft == null
-    || tracking.roiRight == null
-  ) return true;
-  const focus = handFocus(hand);
-  const horizontalMargin = 0.12;
-  const verticalMargin = 0.10;
-  return focus.x >= tracking.roiLeft - horizontalMargin
-    && focus.x <= tracking.roiRight + horizontalMargin
-    && focus.y >= tracking.roiTop - verticalMargin
-    && focus.y <= tracking.roiBottom + verticalMargin;
-}
-
-function compatibleTracking(
-  left: GuitarStringTrackingResult,
-  right: GuitarStringTrackingResult,
-) {
-  const leftGeometry = lineGeometry(left);
-  const rightGeometry = lineGeometry(right);
-  if (leftGeometry.lines.length !== rightGeometry.lines.length) return false;
-  if (Math.abs(leftGeometry.angle - rightGeometry.angle) > 11) return false;
-  if (leftGeometry.spacingMean <= 0 || rightGeometry.spacingMean <= 0) return false;
-  const spacingRatio = Math.max(leftGeometry.spacingMean, rightGeometry.spacingMean)
-    / Math.min(leftGeometry.spacingMean, rightGeometry.spacingMean);
-  return spacingRatio <= 1.42;
+  const left = tracking.roiLeft;
+  const right = tracking.roiRight;
+  const top = tracking.roiTop;
+  const bottom = tracking.roiBottom;
+  if (left == null || right == null || top == null || bottom == null) return false;
+  const tips = [4, 8, 12, 16, 20]
+    .map((index) => hand.landmarks[index])
+    .filter((point): point is HandLandmarkPoint => Boolean(point));
+  if (!tips.length) return false;
+  const center = {
+    x: median(tips.map((point) => point.x)),
+    y: median(tips.map((point) => point.y)),
+  };
+  const marginX = Math.max(0.04, (right - left) * 0.15);
+  const marginY = Math.max(0.04, (bottom - top) * 0.22);
+  return center.x >= left - marginX
+    && center.x <= right + marginX
+    && center.y >= top - marginY
+    && center.y <= bottom + marginY;
 }
 
 function smoothHand(
