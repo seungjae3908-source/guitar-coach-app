@@ -747,12 +747,12 @@ class GuitarCoachContinuousCameraView(
     "red" -> (hue <= 18f || hue >= 342f) && saturation >= 0.42f && value >= 0.22f
     "orange" -> hue in 15f..45f && saturation >= 0.42f && value >= 0.25f
     "yellow" -> hue in 42f..78f && saturation >= 0.38f && value >= 0.35f
-    "green" -> hue in 55f..180f && saturation >= 0.10f && value >= 0.30f
+    "green" -> hue in 55f..180f && saturation >= 0.06f && value >= 0.28f
     "blue" -> hue in 175f..255f && saturation >= 0.38f && value >= 0.20f
     "purple" -> hue in 250f..335f && saturation >= 0.35f && value >= 0.20f
     "white" -> saturation <= 0.16f && value >= 0.78f
     "black" -> value <= 0.22f
-    "auto" -> saturation >= 0.10f && value >= 0.30f && hue in 55f..335f
+    "auto" -> saturation >= 0.08f && value >= 0.28f && hue in 55f..335f
     else -> false
   }
 
