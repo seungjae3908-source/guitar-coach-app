@@ -19,6 +19,7 @@ import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
 import SongPracticePanel from './components/SongPracticePanel';
 import SoundConsistencyController from './components/SoundConsistencyController';
+import TechniqueFeedbackController from './components/TechniqueFeedbackController';
 import ToneMasterLabPanel from './components/ToneMasterLabPanel';
 import TunerPanel from './components/TunerPanel';
 import VoiceCoachController from './components/VoiceCoachController';
@@ -84,10 +85,11 @@ export default function CompleteBetaAppV060Plus() {
   return (
     <SafeAreaView style={styles.root}>
       <VoiceCoachController enabled={voiceCoachEnabled} />
+      <TechniqueFeedbackController />
       <SoundConsistencyController enabled={voiceCoachEnabled} />
       <View style={styles.toolBar}>
         <View style={styles.toolTextWrap}>
-          <Text style={styles.toolEyebrow}>0.6.0 COMPLETE BETA · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
+          <Text style={styles.toolEyebrow}>0.6.0 PRODUCT QUALITY BUILD · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
           <Text style={styles.toolTitle}>{toolTitle(tool)}</Text>
         </View>
         <Pressable
