@@ -230,11 +230,21 @@ function contactStatus(result: HandAnalysisResult | null) {
     .join(' · ');
 }
 
+function autoFramingLabel(stats: ContinuousRightHandStats | null) {
+  const state = stats?.autoFramingState;
+  if (state === 'zooming-in') return '자동 확대 중';
+  if (state === 'zooming-out') return '자동 축소 중';
+  if (state === 'max-zoom-too-small') return '최대 줌에서도 손이 작음';
+  if (state === 'locked') return '손 구도 고정';
+  return '손 찾는 중';
+}
+
 function continuousStatus(stats: ContinuousRightHandStats | null) {
-  if (!stats) return '연속 분석 엔진 준비 중';
+  if (!stats) return '연속 분석 엔진 준비 중 · 손 찾는 중';
   const inputFps = stats.previewFps > 0 ? stats.previewFps.toFixed(1) : '-';
   const analysisFps = stats.analysisFps > 0 ? stats.analysisFps.toFixed(1) : '-';
-  return `카메라 입력 ${inputFps}fps · 분석 출력 ${analysisFps}fps · 누적 ${stats.analyzedFrameCount}프레임`;
+  const zoom = stats.autoZoomRatio && stats.autoZoomRatio > 0 ? `${stats.autoZoomRatio.toFixed(2)}x` : '-';
+  return `카메라 ${inputFps}fps · 분석 ${analysisFps}fps · 줌 ${zoom} · ${autoFramingLabel(stats)} · 누적 ${stats.analyzedFrameCount}프레임`;
 }
 
 export default function SessionCoachCamera({ running, category, cameraFocus }: { running: boolean; category: PracticeCategoryId; cameraFocus: PracticePreset['cameraFocus'] }) {
@@ -426,6 +436,11 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
           <Text style={[styles.badge, running && styles.badgeRunning]}>{running ? `${activeMode === 'full' ? '전체' : activeMode === 'right-hand' ? '오른손' : '왼손'} ${useContinuousRightHand ? '연속 분석' : '자동 추적'}` : useContinuousRightHand ? '연속 정렬·분석 대기' : '세션 시작 대기'}</Text>
           <Text style={styles.badge}>{frameCount}프레임</Text>
         </View>
+        {useContinuousRightHand && cameraReady ? (
+          <View pointerEvents="none" style={styles.autoFrameBadge}>
+            <Text style={styles.autoFrameBadgeText}>{autoFramingLabel(continuousStats)}{continuousStats?.autoZoomRatio ? ` · ${continuousStats.autoZoomRatio.toFixed(2)}x` : ''}</Text>
+          </View>
+        ) : null}
         {!cameraReady ? <View style={styles.loading}><ActivityIndicator /><Text style={styles.loadingText}>카메라 준비 중</Text></View> : null}
       </View>
 
@@ -438,6 +453,7 @@ export default function SessionCoachCamera({ running, category, cameraFocus }: {
         {activeMode === 'right-hand' && handResult?.pick.detected ? <Text style={styles.resultDetail}>피크 검출 {Math.round(handResult.pick.confidence * 100)}% · 노출 {handResult.pick.exposure.toFixed(2)} · 영상각 {Math.round(handResult.pick.angleDegrees)}°</Text> : null}
         <Text style={styles.resultDetail}>{useContinuousRightHand ? '미리보기는 계속 유지하고 오래된 분석 프레임은 쌓지 않습니다. 피크와 각 손가락의 최근 궤적이 줄을 통과할 때만 탄현 후보로 기록합니다.' : '전체·왼손 모드는 현재 안정된 촬영 분석을 유지합니다.'}</Text>
         {continuousStats && continuousStats.analysisFps > 0 && continuousStats.analysisFps < 12 ? <Text style={styles.warningText}>분석 속도가 12fps보다 낮습니다. 빠른 탄현의 일부는 판정 불가가 될 수 있습니다.</Text> : null}
+        {continuousStats?.autoFramingState === 'max-zoom-too-small' ? <Text style={styles.warningText}>카메라가 최대 줌까지 확대했지만 손이 아직 작습니다. 이때만 휴대폰을 조금 가까이 두세요.</Text> : null}
         {!isContinuousRightHandCameraAvailable && activeMode === 'right-hand' ? <Text style={styles.warningText}>연속 카메라 모듈이 없어 사진 분석으로 대체되었습니다.</Text> : null}
         {selectedPlan === 'auto-cycle' ? <Text style={styles.cycleText}>20초마다 전체 → 오른손 → 왼손으로 전환됩니다. 안내에 맞춰 휴대폰 위치만 옮기세요.</Text> : null}
         {analysisError ? <Text style={styles.errorText}>{analysisError}</Text> : null}
@@ -487,6 +503,8 @@ const styles = StyleSheet.create({
   badgeRow: { position: 'absolute', left: 8, right: 8, top: 8, flexDirection: 'row', justifyContent: 'space-between' },
   badge: { color: '#ffffff', backgroundColor: 'rgba(0,0,0,0.68)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 5, fontSize: 7, fontWeight: '900' },
   badgeRunning: { backgroundColor: 'rgba(35,134,54,0.92)' },
+  autoFrameBadge: { position: 'absolute', left: 8, bottom: 8, borderRadius: 10, backgroundColor: 'rgba(17,29,47,0.92)', borderWidth: 1, borderColor: '#1f6feb', paddingHorizontal: 8, paddingVertical: 5 },
+  autoFrameBadgeText: { color: '#b6d8ff', fontSize: 7, fontWeight: '900' },
   loading: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.64)', alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: '#ffffff', fontSize: 9, fontWeight: '800', marginTop: 7 },
   poseLine: { position: 'absolute', height: 3, borderRadius: 2, backgroundColor: '#58a6ff' },
