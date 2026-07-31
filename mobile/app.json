@@ -28,7 +28,7 @@
     ],
     "android": {
       "package": "com.seungjae.guitarcoach.livetest",
-      "versionCode": 20,
+      "versionCode": 21,
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO"
