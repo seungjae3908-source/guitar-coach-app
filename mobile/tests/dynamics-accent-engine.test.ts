@@ -5,6 +5,13 @@ import {
   DynamicsAccentAnalyzer,
   isAudibleAttackReading,
 } from '../services/dynamics-accent-engine';
+import {
+  audioFeedbackReady,
+  MIN_AUDIO_EVIDENCE_ATTACKS,
+  MIN_AUDIO_EVIDENCE_CYCLES,
+  MIN_VISUAL_EVIDENCE_FRAMES,
+  visualFeedbackReady,
+} from '../services/feedback-evidence-gate';
 
 function reading(
   attackCount: number,
@@ -40,6 +47,15 @@ function reading(
     ...overrides,
   };
 }
+
+assert.equal(visualFeedbackReady({ running: true, acceptedFrames: 0, sessionStartedAt: 1 }), false);
+assert.equal(visualFeedbackReady({ running: true, acceptedFrames: MIN_VISUAL_EVIDENCE_FRAMES - 1, sessionStartedAt: 1 }), false);
+assert.equal(visualFeedbackReady({ running: true, acceptedFrames: MIN_VISUAL_EVIDENCE_FRAMES, sessionStartedAt: 1 }), true);
+assert.equal(visualFeedbackReady({ running: false, acceptedFrames: 99, sessionStartedAt: 1 }), false);
+assert.equal(audioFeedbackReady({ microphoneActive: true, completedCycles: 0, acceptedAttacks: 99 }), false);
+assert.equal(audioFeedbackReady({ microphoneActive: true, completedCycles: MIN_AUDIO_EVIDENCE_CYCLES, acceptedAttacks: MIN_AUDIO_EVIDENCE_ATTACKS - 1 }), false);
+assert.equal(audioFeedbackReady({ microphoneActive: true, completedCycles: MIN_AUDIO_EVIDENCE_CYCLES, acceptedAttacks: MIN_AUDIO_EVIDENCE_ATTACKS }), true);
+assert.equal(audioFeedbackReady({ microphoneActive: false, completedCycles: 99, acceptedAttacks: 99 }), false);
 
 const silence = reading(2, 0.0006, 0.08, {
   peakAmplitude: 0.001,
@@ -101,4 +117,4 @@ for (let count = 1; count <= 12; count += 1) {
 }
 assert.equal(clippingIssue, 'clipping', '충분한 실제 어택 뒤 확인된 클리핑만 입력 오류로 판정되어야 합니다.');
 
-console.log('dynamics-accent-engine tests passed');
+console.log('dynamics-accent-engine and evidence-gate tests passed');
