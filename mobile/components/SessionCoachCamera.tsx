@@ -386,7 +386,7 @@ export default function SessionCoachCamera({
       } finally {
         analysisBusyRef.current = false;
         const targetInterval = activeMode === 'full' ? 780 : analysisProfile.captureIntervalMs;
-        schedule(Math.max(220, targetInterval - (Date.now() - startedAt)));
+        schedule(Math.max(45, targetInterval - (Date.now() - startedAt)));
       }
     };
     schedule(180);
