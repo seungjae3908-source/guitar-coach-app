@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import type { PracticePreset } from '../config/personal-practice-presets';
 import type { DynamicsSnapshot } from '../services/dynamics-accent-engine';
+import {
+  audioFeedbackReady,
+  MIN_VISUAL_EVIDENCE_FRAMES,
+  visualFeedbackReady,
+} from '../services/feedback-evidence-gate';
 import {
   getLiveCoachFeedbackSnapshot,
   subscribeLiveCoachFeedbackStack,
@@ -31,25 +36,48 @@ export default function DetailedCoachPanelV2({
   preset,
   trajectory,
   dynamics,
+  acceptedFrameCount,
+  sessionStartedAt,
+  microphoneActive,
 }: {
   running: boolean;
   preset: PracticePreset;
   trajectory: TrajectoryCoachResult | null;
   dynamics: DynamicsSnapshot;
+  acceptedFrameCount: number;
+  sessionStartedAt: number | null;
+  microphoneActive: boolean;
 }) {
   const [feedback, setFeedback] = useState<LiveCoachFeedbackSnapshot>(() => getLiveCoachFeedbackSnapshot());
 
   useEffect(() => subscribeLiveCoachFeedbackStack(setFeedback), []);
 
+  const visualReady = visualFeedbackReady({
+    running,
+    acceptedFrames: acceptedFrameCount,
+    sessionStartedAt,
+  });
+  const soundReady = audioFeedbackReady({
+    microphoneActive,
+    completedCycles: dynamics.completedCycles,
+    acceptedAttacks: dynamics.acceptedAttacks,
+  });
+
   const visual = useMemo(
-    () => feedback.active.filter((item) => !item.id.startsWith('sound-')).slice(0, 3),
-    [feedback.active],
+    () => feedback.active
+      .filter((item) => (
+        !item.id.startsWith('sound-')
+        && item.category === preset.category
+        && Boolean(sessionStartedAt && item.capturedAt >= sessionStartedAt)
+      ))
+      .slice(0, 3),
+    [feedback.active, preset.category, sessionStartedAt],
   );
   const mainVisual = visual[0] ?? null;
   const positive = visual.find((item) => item.status === 'success') ?? null;
   const reinforcement = trajectory?.state === 'broken'
     ? trajectory.reinforcement
-    : dynamics.issue !== 'waiting' && dynamics.issue !== 'stable'
+    : soundReady && dynamics.issue !== 'stable' && dynamics.issue !== 'waiting'
       ? dynamics.reinforcement
       : mainVisual?.nextGoal
         ? `${mainVisual.nextGoal} 문제 구간만 느리게 6~8회 반복하세요.`
@@ -58,14 +86,28 @@ export default function DetailedCoachPanelV2({
   if (!running) {
     return (
       <View style={styles.readyBar}>
-        <Text style={styles.readyTitle}>AI 궤적 분석은 이미 작동 중</Text>
-        <Text style={styles.readyText}>레슨 시작을 누르면 기준 궤적 저장, 속도 비교, 음성·상세 피드백과 보강훈련이 시작됩니다.</Text>
+        <Text style={styles.readyTitle}>카메라 관절 오버레이만 자동 작동 중</Text>
+        <Text style={styles.readyText}>레슨 시작 전에는 점수나 교정 판정을 만들지 않습니다. 레슨 시작 후 현재 세션의 연속 표본이 쌓여야 피드백이 열립니다.</Text>
+      </View>
+    );
+  }
+
+  if (!visualReady) {
+    return (
+      <View style={[styles.card, styles.neutralCard]}>
+        <View style={styles.cardHeading}>
+          <Text style={styles.sectionLabel}>카메라 판정 대기</Text>
+          <Text style={styles.badge}>{acceptedFrameCount}/{MIN_VISUAL_EVIDENCE_FRAMES} 프레임</Text>
+        </View>
+        <Text style={styles.title}>손·자세를 연속으로 확인하는 중</Text>
+        <Text style={styles.line}>현재 세션에서 손목과 손가락 또는 자세 관절이 충분히 잡히기 전에는 간격·궤적·자세 문제를 판단하지 않습니다.</Text>
+        <Text style={styles.line}><Text style={styles.key}>촬영 위치 </Text>{preset.cameraFocus === 'right-hand' ? '브리지~사운드홀 안에 오른손 전체를 맞추세요.' : preset.cameraFocus === 'left-hand' ? '지판과 왼손 네 손가락을 함께 맞추세요.' : '머리부터 골반까지 상체가 보이게 맞추세요.'}</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator>
+    <View style={styles.content}>
       {trajectory ? (
         <View style={[styles.card, trajectoryTone(trajectory.state)]}>
           <View style={styles.cardHeading}>
@@ -93,20 +135,22 @@ export default function DetailedCoachPanelV2({
       ) : (
         <View style={[styles.card, styles.neutralCard]}>
           <Text style={styles.sectionLabel}>카메라 세부 판정</Text>
-          <Text style={styles.title}>신뢰 가능한 반복 동작을 모으는 중</Text>
-          <Text style={styles.line}>손목·손가락 끝과 {preset.cameraFocus === 'right-hand' ? '브리지·사운드홀' : '지판'}이 잘리지 않게 같은 동작을 반복하세요.</Text>
+          <Text style={styles.title}>현재 세션의 반복 동작을 비교하는 중</Text>
+          <Text style={styles.line}>연속 표본은 확보됐지만 같은 동작의 반복 근거가 아직 부족합니다. 근거가 생길 때까지 문제를 만들어내지 않습니다.</Text>
         </View>
       )}
 
-      <View style={[styles.card, dynamics.issue === 'stable' ? styles.goodCard : dynamics.issue === 'waiting' ? styles.neutralCard : styles.warnCard]}>
-        <View style={styles.cardHeading}>
-          <Text style={styles.sectionLabel}>소리·강약</Text>
-          <Text style={styles.badge}>{dynamics.accentMatchPercent == null ? '표본 수집' : `악센트 ${dynamics.accentMatchPercent}%`}</Text>
+      {soundReady ? (
+        <View style={[styles.card, dynamics.issue === 'stable' ? styles.goodCard : dynamics.issue === 'waiting' ? styles.neutralCard : styles.warnCard]}>
+          <View style={styles.cardHeading}>
+            <Text style={styles.sectionLabel}>소리·강약</Text>
+            <Text style={styles.badge}>{dynamics.accentMatchPercent == null ? '표본 수집' : `악센트 ${dynamics.accentMatchPercent}%`}</Text>
+          </View>
+          <Text style={styles.title}>{dynamics.title}</Text>
+          <Text style={styles.line}><Text style={styles.key}>관찰 </Text>{dynamics.observation}</Text>
+          <Text style={styles.line}><Text style={styles.key}>교정 </Text>{dynamics.correction}</Text>
         </View>
-        <Text style={styles.title}>{dynamics.title}</Text>
-        <Text style={styles.line}><Text style={styles.key}>관찰 </Text>{dynamics.observation}</Text>
-        <Text style={styles.line}><Text style={styles.key}>교정 </Text>{dynamics.correction}</Text>
-      </View>
+      ) : null}
 
       {positive ? (
         <View style={styles.positiveBar}>
@@ -119,31 +163,30 @@ export default function DetailedCoachPanelV2({
         <Text style={styles.drillLabel}>지금 할 보강훈련</Text>
         <Text style={styles.drillText}>{reinforcement}</Text>
       </View>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: '#0d1117' },
-  content: { padding: 7, gap: 6, paddingBottom: 10 },
-  readyBar: { minHeight: 48, backgroundColor: '#111820', borderTopWidth: 1, borderColor: '#30363d', paddingHorizontal: 10, paddingVertical: 8 },
-  readyTitle: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
-  readyText: { color: '#b1bac4', fontSize: 7, lineHeight: 11, marginTop: 2 },
-  card: { borderRadius: 11, borderWidth: 1, padding: 9 },
+  content: { gap: 8 },
+  readyBar: { minHeight: 58, backgroundColor: '#111820', borderWidth: 1, borderColor: '#30363d', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10 },
+  readyTitle: { color: '#7ee787', fontSize: 10, fontWeight: '900' },
+  readyText: { color: '#b1bac4', fontSize: 8, lineHeight: 13, marginTop: 3 },
+  card: { borderRadius: 14, borderWidth: 1, padding: 11 },
   neutralCard: { borderColor: '#30363d', backgroundColor: '#161b22' },
   goodCard: { borderColor: '#2ea043', backgroundColor: '#102418' },
   warnCard: { borderColor: '#d29922', backgroundColor: '#251f08' },
   badCard: { borderColor: '#f85149', backgroundColor: '#2b1618' },
   cardHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  sectionLabel: { color: '#79c0ff', fontSize: 7, fontWeight: '900', letterSpacing: 0.5 },
-  badge: { color: '#b1bac4', fontSize: 7, fontWeight: '900' },
-  title: { color: '#ffffff', fontSize: 11, lineHeight: 15, fontWeight: '900', marginTop: 3 },
-  line: { color: '#d0d7de', fontSize: 8, lineHeight: 13, marginTop: 3 },
+  sectionLabel: { color: '#79c0ff', fontSize: 8, fontWeight: '900', letterSpacing: 0.5 },
+  badge: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
+  title: { color: '#ffffff', fontSize: 12, lineHeight: 17, fontWeight: '900', marginTop: 4 },
+  line: { color: '#d0d7de', fontSize: 9, lineHeight: 15, marginTop: 4 },
   key: { color: '#7ee787', fontWeight: '900' },
-  positiveBar: { flexDirection: 'row', gap: 7, borderRadius: 10, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#102418', padding: 8 },
-  positiveLabel: { color: '#7ee787', fontSize: 8, fontWeight: '900' },
-  positiveText: { flex: 1, color: '#d2f2da', fontSize: 8, lineHeight: 12 },
-  drillCard: { borderRadius: 11, borderWidth: 1, borderColor: '#58a6ff', backgroundColor: '#101d2d', padding: 9 },
-  drillLabel: { color: '#79c0ff', fontSize: 8, fontWeight: '900' },
-  drillText: { color: '#ffffff', fontSize: 9, lineHeight: 14, fontWeight: '800', marginTop: 3 },
+  positiveBar: { flexDirection: 'row', gap: 7, borderRadius: 12, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#102418', padding: 9 },
+  positiveLabel: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
+  positiveText: { flex: 1, color: '#d2f2da', fontSize: 9, lineHeight: 13 },
+  drillCard: { borderRadius: 14, borderWidth: 1, borderColor: '#58a6ff', backgroundColor: '#101d2d', padding: 11 },
+  drillLabel: { color: '#79c0ff', fontSize: 9, fontWeight: '900' },
+  drillText: { color: '#ffffff', fontSize: 10, lineHeight: 15, fontWeight: '800', marginTop: 4 },
 });
