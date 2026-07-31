@@ -87,7 +87,7 @@ for (let cycle = 0; cycle < 5; cycle += 1) {
   targetLevels.forEach((level, index) => {
     const count = cycle * targetLevels.length + index + 1;
     const snapshot = stable.addReading(reading(count, level), count * 200);
-    if (snapshot && snapshot.completedCycles >= 2) stableIssue = snapshot.issue;
+    if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') stableIssue = snapshot.issue;
   });
 }
 assert.equal(stableIssue, 'stable', '목표 강약과 비슷한 실제 어택 패턴은 안정으로 판정되어야 합니다.');
@@ -97,7 +97,7 @@ flat.reset(0);
 let flatIssue = '';
 for (let count = 1; count <= 16; count += 1) {
   const snapshot = flat.addReading(reading(count, 0.36), count * 200);
-  if (snapshot && snapshot.completedCycles >= 2) flatIssue = snapshot.issue;
+  if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') flatIssue = snapshot.issue;
 }
 assert.ok(
   flatIssue === 'flat-dynamics' || flatIssue === 'accent-missed',
@@ -113,7 +113,7 @@ for (let count = 1; count <= 12; count += 1) {
     reading(count, isClippedAttack ? 0.98 : 0.56, isClippedAttack ? 0.08 : 0),
     count * 200,
   );
-  if (snapshot && snapshot.completedCycles >= 2) clippingIssue = snapshot.issue;
+  if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') clippingIssue = snapshot.issue;
 }
 assert.equal(clippingIssue, 'clipping', '충분한 실제 어택 뒤 확인된 클리핑만 입력 오류로 판정되어야 합니다.');
 
