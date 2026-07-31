@@ -32,6 +32,7 @@ export type DynamicsSnapshot = {
   accentMatchPercent: number | null;
   evennessPercent: number | null;
   completedCycles: number;
+  acceptedAttacks: number;
 };
 
 type DynamicsOptions = {
@@ -85,6 +86,22 @@ function percentile(values: number[], amount: number) {
   return sorted[index] ?? 1;
 }
 
+export function isAudibleAttackReading(reading: NativeAudioReading) {
+  if (!reading.running || reading.attackCount <= 0) return false;
+  if (!Number.isFinite(reading.rms) || !Number.isFinite(reading.peakAmplitude)) return false;
+  if (!Number.isFinite(reading.noiseFloor) || !Number.isFinite(reading.signalToNoiseDb)) return false;
+  if (!Number.isFinite(reading.attackStrength) || !Number.isFinite(reading.millisecondsSinceAttack)) return false;
+
+  const noise = Math.max(0.0001, reading.noiseFloor);
+  const freshAttack = reading.millisecondsSinceAttack >= 0 && reading.millisecondsSinceAttack <= 420;
+  const peakAboveNoise = reading.peakAmplitude >= Math.max(0.012, noise * 4.2);
+  const rmsAboveNoise = reading.rms >= Math.max(0.0035, noise * 2.8);
+  const attackAboveNoise = reading.attackStrength >= Math.max(0.008, noise * 3.2);
+  const enoughSignal = reading.signalToNoiseDb >= 7;
+
+  return freshAttack && peakAboveNoise && rmsAboveNoise && attackAboveNoise && enoughSignal;
+}
+
 export class DynamicsAccentAnalyzer {
   private readonly labels: string[];
   private readonly target: number[];
@@ -92,6 +109,7 @@ export class DynamicsAccentAnalyzer {
   private lastAttackCount = -1;
   private slot = 0;
   private completedCycles = 0;
+  private acceptedAttacks = 0;
   private rawLevels: number[] = [];
   private points: DynamicsPoint[] = [];
   private snapshot: DynamicsSnapshot;
@@ -107,6 +125,7 @@ export class DynamicsAccentAnalyzer {
     this.lastAttackCount = -1;
     this.slot = 0;
     this.completedCycles = 0;
+    this.acceptedAttacks = 0;
     this.rawLevels = [];
     this.points = [];
     this.snapshot = this.waiting(capturedAt);
@@ -118,17 +137,31 @@ export class DynamicsAccentAnalyzer {
   }
 
   addReading(reading: NativeAudioReading, capturedAt = Date.now()) {
-    if (!reading.running || reading.attackCount <= 0 || reading.attackCount === this.lastAttackCount) {
+    if (!reading.running || reading.attackCount <= 0) return null;
+
+    if (this.lastAttackCount < 0) {
+      this.lastAttackCount = reading.attackCount;
       return null;
     }
+    if (reading.attackCount === this.lastAttackCount) return null;
     this.lastAttackCount = reading.attackCount;
+
+    if (!isAudibleAttackReading(reading)) return null;
+
     const raw = Math.max(reading.rms, reading.peakAmplitude * 0.55, reading.attackStrength * 0.32);
     if (!Number.isFinite(raw) || raw <= 0) return null;
+
+    this.acceptedAttacks += 1;
     this.rawLevels.push(raw);
     while (this.rawLevels.length > 32) this.rawLevels.shift();
+
     const reference = Math.max(0.0001, percentile(this.rawLevels, 0.82));
     const actual = clamp(raw / reference, 0.04, 1.20);
     const currentSlot = this.slot % this.labels.length;
+    const clipped = reading.clippingRatio >= 0.025
+      && reading.peakAmplitude >= 0.90
+      && reading.signalToNoiseDb >= 8;
+
     this.points.push({
       id: `dynamics-${capturedAt}-${reading.attackCount}`,
       capturedAt,
@@ -136,24 +169,42 @@ export class DynamicsAccentAnalyzer {
       label: this.labels[currentSlot] ?? String(currentSlot + 1),
       actual,
       target: this.target[currentSlot] ?? 0.7,
-      clipped: reading.clippingRatio >= 0.025,
+      clipped,
     });
-    while (this.points.length > Math.max(16, this.labels.length * 2)) this.points.shift();
+    while (this.points.length > Math.max(24, this.labels.length * 3)) this.points.shift();
     this.slot += 1;
 
     if (this.slot % this.labels.length !== 0) {
-      this.snapshot = {
-        ...this.snapshot,
-        capturedAt,
-        points: [...this.points],
-        confidencePercent: Math.min(88, 35 + this.points.length * 4),
-      };
+      this.snapshot = this.collecting(capturedAt);
       return this.snapshot;
     }
 
     this.completedCycles += 1;
+    if (this.completedCycles < 2) {
+      this.snapshot = this.collecting(capturedAt);
+      return this.snapshot;
+    }
+
     this.snapshot = this.evaluate(capturedAt);
     return this.snapshot;
+  }
+
+  private collecting(capturedAt: number): DynamicsSnapshot {
+    const required = this.labels.length * 2;
+    return {
+      capturedAt,
+      points: [...this.points],
+      issue: 'waiting',
+      title: '실제 기타 어택 확인 중',
+      observation: `신뢰 가능한 기타 어택 ${this.acceptedAttacks}/${required}개를 모았습니다. 기준을 채우기 전에는 강약·클리핑을 판정하지 않습니다.`,
+      correction: '기타 또는 앰프가 휴대폰 마이크에 또렷하게 들리도록 같은 패턴을 계속 연주하세요.',
+      reinforcement: '같은 세기로 두 패턴을 먼저 연주해 개인 입력 기준을 만드세요.',
+      confidencePercent: 0,
+      accentMatchPercent: null,
+      evennessPercent: null,
+      completedCycles: this.completedCycles,
+      acceptedAttacks: this.acceptedAttacks,
+    };
   }
 
   private evaluate(capturedAt: number): DynamicsSnapshot {
@@ -183,8 +234,8 @@ export class DynamicsAccentAnalyzer {
       return this.result(
         capturedAt,
         'clipping',
-        '소리가 찌그러져 강약 비교가 어렵습니다',
-        `${cycle.length}번 중 ${clipped}번의 어택이 마이크 입력 한계를 넘었습니다.`,
+        '실제 기타 입력이 마이크 한계를 넘었습니다',
+        `${cycle.length}번 중 ${clipped}번의 실제 기타 어택에서만 클리핑이 확인됐습니다.`,
         '기타·앰프 볼륨을 조금 낮추거나 휴대폰을 멀리 두고 같은 패턴을 다시 연주하세요.',
         '약한 스트럼 4회와 보통 스트럼 4회를 번갈아 치며 파형 꼭대기가 잘리지 않게 맞추세요.',
         accentMatch,
@@ -211,7 +262,7 @@ export class DynamicsAccentAnalyzer {
         'accent-missed',
         '강박과 약박의 차이가 작아 음악적 흐름이 없습니다',
         `강박과 약박의 평균 차이가 ${Math.round(accentContrast * 100)}%입니다.`,
-        '강박을 더 세게 치기보다 약박의 동작 폭과 피크 깊이를 줄여 대비를 만드세요.',
+        '강박을 억지로 크게 만들지 말고 약박의 동작 폭과 피크 깊이를 줄여 대비를 만드세요.',
         '강박 1회·약박 3회를 한 묶음으로 4세트 반복하고 목표선 안에 3세트 들어오게 하세요.',
         accentMatch,
         evenness,
@@ -278,6 +329,7 @@ export class DynamicsAccentAnalyzer {
       accentMatchPercent: Math.round(accentMatchPercent),
       evennessPercent: Math.round(evennessPercent),
       completedCycles: this.completedCycles,
+      acceptedAttacks: this.acceptedAttacks,
     };
   }
 
@@ -286,14 +338,15 @@ export class DynamicsAccentAnalyzer {
       capturedAt,
       points: [],
       issue: 'waiting',
-      title: '강약 표본 대기',
-      observation: '레슨을 시작하고 같은 패턴을 반복하면 실제 어택과 목표 악센트를 비교합니다.',
-      correction: '마이크를 기타 또는 앰프 방향으로 두고 너무 크게 입력되지 않게 맞추세요.',
-      reinforcement: '첫 패턴은 평소 세기로 연주해 개인 음량 기준을 만드세요.',
+      title: '실제 기타 어택 대기',
+      observation: '레슨을 시작하고 기타 소리가 실제로 감지되기 전에는 강약·클리핑을 판정하지 않습니다.',
+      correction: '마이크를 기타 또는 앰프 방향으로 두고 평소 세기로 연주하세요.',
+      reinforcement: '첫 두 패턴은 같은 세기로 연주해 개인 음량 기준을 만드세요.',
       confidencePercent: 0,
       accentMatchPercent: null,
       evennessPercent: null,
       completedCycles: 0,
+      acceptedAttacks: 0,
     };
   }
 }
