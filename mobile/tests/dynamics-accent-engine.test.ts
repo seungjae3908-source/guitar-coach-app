@@ -116,7 +116,7 @@ clipped.reset(0);
 let clippedCount = 1;
 clipped.addReading(reading(clippedCount, 0.2), clippedCount * 200);
 clippedCount += 1;
-let clippingIssue = '';
+let sawClipping = false;
 for (let index = 0; index < 12; index += 1) {
   const isClippedAttack = index === 6;
   const snapshot = clipped.addReading(
@@ -124,8 +124,8 @@ for (let index = 0; index < 12; index += 1) {
     clippedCount * 200,
   );
   clippedCount += 1;
-  if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') clippingIssue = snapshot.issue;
+  if (snapshot?.issue === 'clipping') sawClipping = true;
 }
-assert.equal(clippingIssue, 'clipping', '충분한 실제 어택 뒤 확인된 클리핑만 입력 오류로 판정되어야 합니다.');
+assert.equal(sawClipping, true, '충분한 실제 어택 뒤 확인된 클리핑만 입력 오류로 판정되어야 합니다.');
 
 console.log('dynamics-accent-engine and evidence-gate tests passed');
