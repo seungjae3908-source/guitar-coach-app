@@ -81,12 +81,15 @@ assert.equal(silentAnalyzer.getSnapshot().acceptedAttacks, 0, '무음에서는 �
 
 const stable = new DynamicsAccentAnalyzer({ category: 'strumming', pattern: 'D U D U' });
 stable.reset(0);
+let stableCount = 1;
+stable.addReading(reading(stableCount, 0.2), stableCount * 200);
+stableCount += 1;
 const targetLevels = [0.50, 0.30, 0.39, 0.30];
 let stableIssue = '';
 for (let cycle = 0; cycle < 5; cycle += 1) {
-  targetLevels.forEach((level, index) => {
-    const count = cycle * targetLevels.length + index + 1;
-    const snapshot = stable.addReading(reading(count, level), count * 200);
+  targetLevels.forEach((level) => {
+    const snapshot = stable.addReading(reading(stableCount, level), stableCount * 200);
+    stableCount += 1;
     if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') stableIssue = snapshot.issue;
   });
 }
@@ -94,9 +97,13 @@ assert.equal(stableIssue, 'stable', '목표 강약과 비슷한 실제 어택 �
 
 const flat = new DynamicsAccentAnalyzer({ category: 'strumming', pattern: 'D U D U' });
 flat.reset(0);
+let flatCount = 1;
+flat.addReading(reading(flatCount, 0.2), flatCount * 200);
+flatCount += 1;
 let flatIssue = '';
-for (let count = 1; count <= 16; count += 1) {
-  const snapshot = flat.addReading(reading(count, 0.36), count * 200);
+for (let index = 0; index < 16; index += 1) {
+  const snapshot = flat.addReading(reading(flatCount, 0.36), flatCount * 200);
+  flatCount += 1;
   if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') flatIssue = snapshot.issue;
 }
 assert.ok(
@@ -106,13 +113,17 @@ assert.ok(
 
 const clipped = new DynamicsAccentAnalyzer({ category: 'alternatePicking', pattern: 'D U D U' });
 clipped.reset(0);
+let clippedCount = 1;
+clipped.addReading(reading(clippedCount, 0.2), clippedCount * 200);
+clippedCount += 1;
 let clippingIssue = '';
-for (let count = 1; count <= 12; count += 1) {
-  const isClippedAttack = count === 8;
+for (let index = 0; index < 12; index += 1) {
+  const isClippedAttack = index === 6;
   const snapshot = clipped.addReading(
-    reading(count, isClippedAttack ? 0.98 : 0.56, isClippedAttack ? 0.08 : 0),
-    count * 200,
+    reading(clippedCount, isClippedAttack ? 0.98 : 0.56, isClippedAttack ? 0.08 : 0),
+    clippedCount * 200,
   );
+  clippedCount += 1;
   if (snapshot && snapshot.completedCycles >= 2 && snapshot.issue !== 'waiting') clippingIssue = snapshot.issue;
 }
 assert.equal(clippingIssue, 'clipping', '충분한 실제 어택 뒤 확인된 클리핑만 입력 오류로 판정되어야 합니다.');
