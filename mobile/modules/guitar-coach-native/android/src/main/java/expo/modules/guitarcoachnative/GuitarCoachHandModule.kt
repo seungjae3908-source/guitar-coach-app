@@ -232,9 +232,9 @@ class GuitarCoachHandModule : Module() {
       val options = HandLandmarker.HandLandmarkerOptions.builder()
         .setBaseOptions(baseOptions)
         .setNumHands(1)
-        .setMinHandDetectionConfidence(0.52f)
-        .setMinHandPresenceConfidence(0.52f)
-        .setMinTrackingConfidence(0.52f)
+        .setMinHandDetectionConfidence(0.38f)
+        .setMinHandPresenceConfidence(0.38f)
+        .setMinTrackingConfidence(0.42f)
         .setRunningMode(RunningMode.IMAGE)
         .build()
 
