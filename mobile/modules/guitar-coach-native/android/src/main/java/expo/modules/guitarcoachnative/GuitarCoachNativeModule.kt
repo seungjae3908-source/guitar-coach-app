@@ -3,6 +3,7 @@ package expo.modules.guitarcoachnative
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
@@ -19,6 +20,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.max
+import kotlin.math.sqrt
 
 class GuitarCoachNativeModule : Module() {
   private val context: Context
@@ -41,6 +44,59 @@ class GuitarCoachNativeModule : Module() {
       }
       val tone = if (accent) ToneGenerator.TONE_PROP_BEEP2 else ToneGenerator.TONE_PROP_BEEP
       generator.startTone(tone, if (accent) 72 else 48)
+    }
+
+    AsyncFunction("inspectCameraFrameAsync") { uri: String ->
+      val startedAt = System.currentTimeMillis()
+      val bitmap = decodeBitmap(uri)
+      try {
+        val pixelCount = bitmap.width.toLong() * bitmap.height.toLong()
+        val step = max(1, sqrt(pixelCount.toDouble() / 12_000.0).toInt())
+        var sampleCount = 0L
+        var luminanceSum = 0.0
+        var luminanceSquaredSum = 0.0
+        var darkSamples = 0L
+        var brightSamples = 0L
+        var signature = 1_125_899_906_842_597L
+
+        var y = 0
+        while (y < bitmap.height) {
+          var x = 0
+          while (x < bitmap.width) {
+            val color = bitmap.getPixel(x, y)
+            val luminance = 0.2126 * Color.red(color) +
+              0.7152 * Color.green(color) +
+              0.0722 * Color.blue(color)
+            sampleCount += 1
+            luminanceSum += luminance
+            luminanceSquaredSum += luminance * luminance
+            if (luminance < 8.0) darkSamples += 1
+            if (luminance > 235.0) brightSamples += 1
+            signature = signature * 31L + color.toLong()
+            x += step
+          }
+          y += step
+        }
+
+        val safeCount = max(1L, sampleCount).toDouble()
+        val average = luminanceSum / safeCount
+        val variance = max(0.0, luminanceSquaredSum / safeCount - average * average)
+        val contrast = sqrt(variance)
+        mapOf(
+          "imageWidth" to bitmap.width,
+          "imageHeight" to bitmap.height,
+          "sampleCount" to sampleCount,
+          "averageLuminance" to average,
+          "contrast" to contrast,
+          "darkRatio" to (darkSamples / safeCount),
+          "brightRatio" to (brightSamples / safeCount),
+          "blackFrameLikely" to (average < 4.0 && contrast < 3.0),
+          "frameSignature" to signature.toString(16),
+          "latencyMs" to (System.currentTimeMillis() - startedAt)
+        )
+      } finally {
+        bitmap.recycle()
+      }
     }
 
     AsyncFunction("analyzePoseAsync") { uri: String, promise: Promise ->
