@@ -37,35 +37,39 @@ jobs:
           end = workflow.index(marker_end, start)
           raw_lines = workflow[start:end].splitlines()
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in raw_lines)
-          old_block = '''count = text.count(old_load)
-if count != 2:
-    raise SystemExit(f'song stored URL load: expected 2 matches, found {count}')
-text = text.replace(old_load, new_load)'''
-          new_block = '''count = text.count(old_load)
-if count != 1:
-    raise SystemExit(f'song stored URL load: expected 1 top-level match, found {count}')
-text = text.replace(old_load, new_load, 1)
-old_load_nested = "        setYoutubeUrl(stored?.youtubeUrl ?? '');\\n        setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);"
-new_load_nested = "        const loadedUrl = normalizeYouTubeUrl(stored?.youtubeUrl ?? '') ?? '';\\n        setYoutubeUrl(loadedUrl);\\n        setAppliedYoutubeUrl(loadedUrl);\\n        setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);"
-nested_count = text.count(old_load_nested)
-if nested_count != 1:
-    raise SystemExit(f'song stored URL load: expected 1 nested match, found {nested_count}')
-text = text.replace(old_load_nested, new_load_nested, 1)'''
+          old_block = '\n'.join([
+              'count = text.count(old_load)',
+              'if count != 2:',
+              "    raise SystemExit(f'song stored URL load: expected 2 matches, found {count}')",
+              'text = text.replace(old_load, new_load)',
+          ])
+          new_block = '\n'.join([
+              'count = text.count(old_load)',
+              'if count != 1:',
+              "    raise SystemExit(f'song stored URL load: expected 1 top-level match, found {count}')",
+              'text = text.replace(old_load, new_load, 1)',
+              'old_load_nested = "        setYoutubeUrl(stored?.youtubeUrl ?? \'\');\\n        setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);"',
+              'new_load_nested = "        const loadedUrl = normalizeYouTubeUrl(stored?.youtubeUrl ?? \'\') ?? \'\';\\n        setYoutubeUrl(loadedUrl);\\n        setAppliedYoutubeUrl(loadedUrl);\\n        setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);"',
+              'nested_count = text.count(old_load_nested)',
+              'if nested_count != 1:',
+              "    raise SystemExit(f'song stored URL load: expected 1 nested match, found {nested_count}')",
+              'text = text.replace(old_load_nested, new_load_nested, 1)',
+          ])
           if old_block not in script:
-            raise SystemExit('stored URL patch block not found in registered script')
+              raise SystemExit('stored URL patch block not found in registered script')
           script = script.replace(old_block, new_block, 1)
           exec(compile(script, 'focus-integration-patch.py', 'exec'))
           for temporary in [
-            '.github/workflows/one-time-focus-trigger-pr.yml',
-            '.github/workflows/one-time-focus-trigger-pr-v2.yml',
+              '.github/workflows/one-time-focus-trigger-pr.yml',
+              '.github/workflows/one-time-focus-trigger-pr-v2.yml',
           ]:
-            Path(temporary).unlink(missing_ok=True)
+              Path(temporary).unlink(missing_ok=True)
           PY
 
       - name: Type-check and run quality regression tests
         working-directory: mobile
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run typecheck
 
       - name: Commit integrated implementation
