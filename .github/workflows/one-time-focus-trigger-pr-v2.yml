@@ -37,13 +37,14 @@ jobs:
           end = workflow.index(marker_end, start)
           raw_lines = workflow[start:end].splitlines()
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in raw_lines)
-          old_block = '\n'.join([
+
+          old_url_block = '\n'.join([
               'count = text.count(old_load)',
               'if count != 2:',
               "    raise SystemExit(f'song stored URL load: expected 2 matches, found {count}')",
               'text = text.replace(old_load, new_load)',
           ])
-          new_block = '\n'.join([
+          new_url_block = '\n'.join([
               'count = text.count(old_load)',
               'if count != 1:',
               "    raise SystemExit(f'song stored URL load: expected 1 top-level match, found {count}')",
@@ -55,9 +56,30 @@ jobs:
               "    raise SystemExit(f'song stored URL load: expected 1 nested match, found {nested_count}')",
               'text = text.replace(old_load_nested, new_load_nested, 1)',
           ])
-          if old_block not in script:
+          if old_url_block not in script:
               raise SystemExit('stored URL patch block not found in registered script')
-          script = script.replace(old_block, new_block, 1)
+          script = script.replace(old_url_block, new_url_block, 1)
+
+          old_reset_block = '\n'.join([
+              'text = replace_once(',
+              '    text,',
+              '    "    fullPassRef.current = \'pose\';",',
+              '    "    fullPassRef.current = \'pose\';\\n    handFrameIndexRef.current = 0;",',
+              "    'camera reset frame counter',",
+              ')',
+          ])
+          new_reset_block = '\n'.join([
+              'text = replace_once(',
+              '    text,',
+              '    "    setCameraKey((value) => value + 1);\\n    fullPassRef.current = \'pose\';\\n  }, [activeMode]);",',
+              '    "    setCameraKey((value) => value + 1);\\n    fullPassRef.current = \'pose\';\\n    handFrameIndexRef.current = 0;\\n  }, [activeMode]);",',
+              "    'camera reset frame counter',",
+              ')',
+          ])
+          if old_reset_block not in script:
+              raise SystemExit('camera reset patch block not found in registered script')
+          script = script.replace(old_reset_block, new_reset_block, 1)
+
           exec(compile(script, 'focus-integration-patch.py', 'exec'))
           for temporary in [
               '.github/workflows/one-time-focus-trigger-pr.yml',
