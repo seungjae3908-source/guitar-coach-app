@@ -137,9 +137,10 @@ jobs:
           gate_anchor = '  if (latestWristConfidence < 0.42) {'
           if gate_anchor not in engine:
               raise SystemExit('wrist confidence gate anchor is missing')
+          safe_gate = '  if (latest.handConfidence >= 0.45 && latest.palmSize > 0 && latestWristConfidence < 0.42) {'
           engine = engine.replace(
               gate_anchor,
-              '  const latestWristConfidence = latest.wristConfidence ?? latest.handConfidence;\n' + gate_anchor,
+              '  const latestWristConfidence = latest.wristConfidence ?? latest.handConfidence;\n' + safe_gate,
               1,
           )
           engine_path.write_text(engine)
