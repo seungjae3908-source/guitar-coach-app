@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 
 import type { GuitarModeId } from '../config/guitar-mode-profiles';
+import type { PracticePreset } from '../config/personal-practice-presets';
+import { chordAtSectionProgress, getSongChordGuide } from '../config/song-chord-guides';
 import {
   getTrainingSong,
   MASTERY_SONG_CATALOG,
@@ -24,9 +26,13 @@ import {
   stopCoachSpeechAsync,
 } from '../modules/guitar-coach-speech';
 import { loadSelectedTrainingSongId, saveSelectedTrainingSongId } from '../services/mastery-selection-store';
+import LiveTeacherPanel from './LiveTeacherPanel';
+import SessionCoachCamera from './SessionCoachCamera';
 import YouTubePracticePlayer, { type YouTubePlayerState, type YouTubeSeekRequest } from './YouTubePracticePlayer';
 import YouTubeSearchPicker from './YouTubeSearchPicker';
 import { normalizeYouTubeUrl } from '../services/youtube-url';
+import { clearLiveCoachFeedback } from '../services/live-coach-feedback';
+import { clearLivePracticeContext, setLivePracticeContext } from '../services/practice-session-context';
 
 const STORAGE_KEY = 'guitar-coach:master-song-studio:v1';
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5] as const;
@@ -83,10 +89,12 @@ export default function MasterSongStudioPanel({
   const [sectionVoiceEnabled, setSectionVoiceEnabled] = useState(true);
   const [status, setStatus] = useState('추천곡을 고르고 YouTube 공유 URL을 붙여넣으세요.');
   const [error, setError] = useState('');
+  const [coachRunning, setCoachRunning] = useState(false);
   const scrollRef = useRef<ScrollView | null>(null);
   const sectionYRef = useRef(new Map<string, number>());
   const lastSpokenSectionRef = useRef('');
   const loadingSongRef = useRef(false);
+  const lastSpokenChordRef = useRef('');
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +149,7 @@ export default function MasterSongStudioPanel({
     void stopCoachSpeechAsync();
   }, []);
 
+
   const timeline = useMemo(() => song?.sections.map((section) => ({
     section,
     ...sectionTimes(section, duration, syncOffsetSeconds),
@@ -156,6 +165,72 @@ export default function MasterSongStudioPanel({
   const active = timeline[activeIndex] ?? null;
   const next = timeline[Math.min(timeline.length - 1, activeIndex + 1)] ?? null;
   const loop = timeline.find((item) => item.section.id === loopSectionId) ?? active;
+  const activeSectionId = active?.section.id ?? song?.sections[0]?.id ?? 'intro';
+  const chordGuide = useMemo(
+    () => getSongChordGuide(song?.id ?? '', activeSectionId, mode),
+    [activeSectionId, mode, song?.id],
+  );
+  const sectionProgress = active && active.end > active.start
+    ? Math.max(0, Math.min(1, (currentTime - active.start) / (active.end - active.start)))
+    : 0;
+  const chordState = chordAtSectionProgress(chordGuide.chords, sectionProgress);
+  const studioPreset = useMemo<PracticePreset | null>(() => {
+    if (!song || !active) return null;
+    const category = song.targetCategories.includes('strumming')
+      ? 'strumming'
+      : song.targetCategories[0] ?? 'chords';
+    return {
+      id: `song-studio:${song.id}:${active.section.id}`,
+      guitarMode: mode,
+      category,
+      title: `${song.title} · ${active.section.label} 실시간 코치`,
+      goal: active.section.coachCue,
+      startBpm: song.baseBpm,
+      targetBpm: song.baseBpm,
+      durationSeconds: 600,
+      pattern: chordGuide.chords.join(' → '),
+      cameraFocus: 'full-body',
+      checkpoints: [
+        '머리·양쪽 어깨·팔꿈치·손목·골반이 모두 보이는지',
+        active.section.rightHand,
+        active.section.leftHand,
+        `현재 코드 진행 ${chordGuide.chords.join(' → ')}`,
+      ],
+      automaticFeedbackRules: [
+        '자세 관절이 부족하면 판정 불가',
+        '어깨 기울기·상체 쏠림·머리 위치·몸 흔들림을 구체적으로 지적',
+        '문제가 없을 때만 잘한 점을 표시',
+      ],
+    };
+  }, [active, chordGuide.chords, mode, song]);
+
+  useEffect(() => {
+    if (!coachRunning || !studioPreset) {
+      clearLivePracticeContext();
+      return;
+    }
+    clearLiveCoachFeedback();
+    setLivePracticeContext({
+      active: true,
+      guitarMode: studioPreset.guitarMode,
+      presetId: studioPreset.id,
+      title: studioPreset.title,
+      goal: studioPreset.goal,
+      pattern: studioPreset.pattern,
+      category: studioPreset.category,
+      cameraFocus: studioPreset.cameraFocus,
+      bpm: studioPreset.startBpm,
+      targetBpm: studioPreset.targetBpm,
+      pulsesPerBeat: 2,
+      microphoneEnabled: false,
+      calibrationConfidencePercent: null,
+      startedAt: Date.now(),
+    });
+    return () => {
+      clearLivePracticeContext();
+      clearLiveCoachFeedback();
+    };
+  }, [coachRunning, studioPreset]);
 
   useEffect(() => {
     const id = active?.section.id;
@@ -178,6 +253,20 @@ export default function MasterSongStudioPanel({
       ))
       .catch(() => undefined);
   }, [active?.section, playerState, sectionVoiceEnabled, voiceEnabled]);
+
+  useEffect(() => {
+    if (!coachRunning || !voiceEnabled || !sectionVoiceEnabled || playerState !== 'playing') return;
+    const key = `${activeSectionId}:${chordState.index}`;
+    if (lastSpokenChordRef.current === key) return;
+    lastSpokenChordRef.current = key;
+    if (!isCoachSpeechAvailable) return;
+    void prepareCoachSpeechAsync()
+      .then(() => speakCoachPhraseAsync(
+        `현재 ${chordState.current} 코드. 다음 ${chordState.next} 코드입니다.`,
+        { interrupt: false, speechRate: 1.02 },
+      ))
+      .catch(() => undefined);
+  }, [activeSectionId, chordState.current, chordState.index, chordState.next, coachRunning, playerState, sectionVoiceEnabled, voiceEnabled]);
 
   const selectSong = async (nextSong: TrainingSong) => {
     setError('');
@@ -282,6 +371,27 @@ export default function MasterSongStudioPanel({
         <View style={styles.levelBadge}><Text style={styles.levelText}>{song.level}</Text></View>
       </View>
 
+      <View style={styles.chordCoachCard}>
+        <View style={styles.chordTopRow}>
+<View style={styles.currentChordWrap}>
+  <Text style={styles.chordLabel}>현재 코드</Text>
+  <Text style={styles.currentChord}>{chordState.current}</Text>
+</View>
+<View style={styles.nextChordWrap}>
+  <Text style={styles.chordLabel}>다음 코드</Text>
+  <Text style={styles.nextChord}>{chordState.next}</Text>
+</View>
+        </View>
+        <View style={styles.chordProgressionRow}>
+{chordGuide.chords.map((chord, index) => (
+  <View key={`${activeSectionId}-${chord}-${index}`} style={[styles.chordChip, index === chordState.index && styles.chordChipActive]}>
+    <Text style={[styles.chordChipText, index === chordState.index && styles.chordChipTextActive]}>{chord}</Text>
+  </View>
+))}
+        </View>
+        <Text style={styles.chordGuideNote}>{chordGuide.note}</Text>
+      </View>
+
       <View style={styles.urlCard}>
         <Text style={styles.label}>YouTube 공유 URL</Text>
         <TextInput
@@ -316,6 +426,35 @@ export default function MasterSongStudioPanel({
         onStateChange={setPlayerState}
         onError={setError}
       />
+
+      <View style={styles.studioCoachCard}>
+        <View style={styles.studioCoachHeader}>
+<View style={styles.studioCoachHeaderText}>
+  <Text style={styles.studioCoachEyebrow}>LIVE POSTURE & PLAYING COACH</Text>
+  <Text style={styles.studioCoachTitle}>곡을 들으면서 내 자세 실시간 지적</Text>
+  <Text style={styles.studioCoachGuide}>카메라에서 어깨·머리·상체·팔꿈치·손목을 읽고, 잘못된 점과 잘된 점을 근거와 함께 표시하고 음성으로 안내합니다.</Text>
+</View>
+<Pressable
+  onPress={() => setCoachRunning((value) => !value)}
+  style={[styles.coachToggle, coachRunning && styles.coachToggleActive]}
+>
+  <Text style={[styles.coachToggleText, coachRunning && styles.coachToggleTextActive]}>{coachRunning ? '코치 종료' : '코치 시작'}</Text>
+</Pressable>
+        </View>
+        {coachRunning && studioPreset ? (
+<>
+  <SessionCoachCamera running category={studioPreset.category} cameraFocus="full-body" />
+  <LiveTeacherPanel preset={studioPreset} running voiceEnabled={voiceEnabled} />
+</>
+        ) : (
+<View style={styles.coachReadyBox}>
+  <Text style={styles.coachReadyTitle}>시작하면 이렇게 지적합니다</Text>
+  <Text style={styles.coachReadyText}>• 잘못됨: 어깨 들림, 머리 쏠림, 상체 기울기, 몸 흔들림</Text>
+  <Text style={styles.coachReadyText}>• 잘됨: 상체 중심 안정, 어깨 균형, 자세 유지 성공</Text>
+  <Text style={styles.coachReadyText}>• 근거 부족: 관절이 가려지면 점수 대신 판정 불가</Text>
+</View>
+        )}
+      </View>
 
       <View style={styles.transportCard}>
         <View style={styles.timeRow}>
@@ -520,4 +659,31 @@ const styles = StyleSheet.create({
   statusCard: { backgroundColor: '#111d2f', borderWidth: 1, borderColor: '#1f6feb', borderRadius: 12, padding: 9, marginTop: 10 },
   statusText: { color: '#b6d8ff', fontSize: 8, lineHeight: 13 },
   errorText: { color: '#ff7b72', fontSize: 8, lineHeight: 13, marginTop: 7 },
+  chordCoachCard: { borderRadius: 16, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#0d1d31', padding: 13, marginTop: 12 },
+  chordTopRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10 },
+  currentChordWrap: { flex: 1.25, borderRadius: 13, backgroundColor: '#1f6feb', padding: 12 },
+  nextChordWrap: { flex: 1, borderRadius: 13, backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', padding: 12 },
+  chordLabel: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
+  currentChord: { color: '#ffffff', fontSize: 34, lineHeight: 39, fontWeight: '900', marginTop: 3 },
+  nextChord: { color: '#79c0ff', fontSize: 25, lineHeight: 31, fontWeight: '900', marginTop: 5 },
+  chordProgressionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 11 },
+  chordChip: { minWidth: 48, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', paddingHorizontal: 10, paddingVertical: 8, alignItems: 'center' },
+  chordChipActive: { backgroundColor: '#238636', borderColor: '#7ee787' },
+  chordChipText: { color: '#b1bac4', fontSize: 12, fontWeight: '900' },
+  chordChipTextActive: { color: '#ffffff' },
+  chordGuideNote: { color: '#8b949e', fontSize: 7, lineHeight: 12, marginTop: 9 },
+  studioCoachCard: { borderRadius: 16, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#0d2117', padding: 10, marginTop: 12 },
+  studioCoachHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 3 },
+  studioCoachHeaderText: { flex: 1 },
+  studioCoachEyebrow: { color: '#7ee787', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  studioCoachTitle: { color: '#ffffff', fontSize: 15, lineHeight: 20, fontWeight: '900', marginTop: 3 },
+  studioCoachGuide: { color: '#b1bac4', fontSize: 8, lineHeight: 13, marginTop: 4 },
+  coachToggle: { borderRadius: 10, borderWidth: 1, borderColor: '#2ea043', paddingHorizontal: 11, paddingVertical: 9 },
+  coachToggleActive: { backgroundColor: '#da3633', borderColor: '#f85149' },
+  coachToggleText: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
+  coachToggleTextActive: { color: '#ffffff' },
+  coachReadyBox: { borderRadius: 12, backgroundColor: '#161b22', padding: 11, marginTop: 10 },
+  coachReadyTitle: { color: '#f0f6fc', fontSize: 10, fontWeight: '900' },
+  coachReadyText: { color: '#b1bac4', fontSize: 8, lineHeight: 14, marginTop: 4 },
+
 });

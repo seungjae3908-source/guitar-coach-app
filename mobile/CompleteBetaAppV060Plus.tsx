@@ -20,6 +20,7 @@ import MetronomeProgramPanel from './components/MetronomeProgramPanel';
 import PracticeRecordingPanel from './components/PracticeRecordingPanel';
 import PracticeRecordsPanel from './components/PracticeRecordsPanel';
 import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';
+import PostureFeedbackController from './components/PostureFeedbackController';
 import SongPracticePanel from './components/SongPracticePanel';
 import SoundConsistencyController from './components/SoundConsistencyController';
 import TechniqueFeedbackController from './components/TechniqueFeedbackController';
@@ -222,6 +223,7 @@ export default function CompleteBetaAppV060Plus() {
       <StatusBar barStyle="light-content" backgroundColor="#161b22" translucent={false} />
       <VoiceCoachController enabled={voiceCoachEnabled} />
       <TechniqueFeedbackController />
+      <PostureFeedbackController />
       <ChordRecognitionController />
       <SoundConsistencyController enabled={voiceCoachEnabled} />
 
