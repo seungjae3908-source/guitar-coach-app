@@ -13,7 +13,6 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
 import java.io.FileInputStream
-import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
 import kotlin.math.atan2
@@ -25,6 +24,21 @@ class GuitarCoachHandModule : Module() {
   private var handLandmarker: HandLandmarker? = null
   private val analysisBusy = AtomicBoolean(false)
 
+  private data class NormalizedRegion(
+    val left: Double,
+    val top: Double,
+    val right: Double,
+    val bottom: Double
+  ) {
+    fun normalized(): NormalizedRegion {
+      val safeLeft = left.coerceIn(0.0, 0.94)
+      val safeTop = top.coerceIn(0.0, 0.94)
+      val safeRight = right.coerceIn(safeLeft + 0.06, 1.0)
+      val safeBottom = bottom.coerceIn(safeTop + 0.06, 1.0)
+      return NormalizedRegion(safeLeft, safeTop, safeRight, safeBottom)
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("GuitarCoachHand")
 
@@ -32,80 +46,179 @@ class GuitarCoachHandModule : Module() {
       true
     }
 
+    Constant("androidHandRegionAnalysisAvailable") {
+      true
+    }
+
     AsyncFunction("analyzeHandAsync") { uri: String, pickColor: String, promise: Promise ->
-      if (!analysisBusy.compareAndSet(false, true)) {
-        promise.reject("ERR_HAND_BUSY", "이전 손 분석이 아직 끝나지 않았습니다.", null)
-        return@AsyncFunction
-      }
+      startAnalysis(uri, pickColor, null, promise)
+    }
 
-      Thread {
-        val startedAt = System.currentTimeMillis()
-        var bitmap: Bitmap? = null
-        try {
-          val decodedBitmap = decodeBitmap(uri)
-          bitmap = decodedBitmap
-          val mpImage = BitmapImageBuilder(decodedBitmap).build()
-          val result = getHandLandmarker().detect(mpImage)
-          val handLandmarks = result.landmarks().firstOrNull()
-          val handednessCategory = result.handedness().firstOrNull()?.firstOrNull()
-
-          if (handLandmarks == null || handLandmarks.size < 21) {
-            promise.resolve(
-              mapOf(
-                "hasHand" to false,
-                "imageWidth" to decodedBitmap.width,
-                "imageHeight" to decodedBitmap.height,
-                "latencyMs" to (System.currentTimeMillis() - startedAt),
-                "handedness" to "Unknown",
-                "handednessScore" to 0.0,
-                "landmarks" to emptyList<Map<String, Any>>(),
-                "pick" to emptyPickResult(pickColor)
-              )
-            )
-          } else {
-            val landmarks = handLandmarks.mapIndexed { index, landmark ->
-              mapOf(
-                "index" to index,
-                "name" to LANDMARK_NAMES[index],
-                "x" to landmark.x().toDouble(),
-                "y" to landmark.y().toDouble(),
-                "z" to landmark.z().toDouble()
-              )
-            }
-
-            val pickResult = analyzePickColor(
-              bitmap = decodedBitmap,
-              landmarks = landmarks,
-              requestedColor = pickColor
-            )
-
-            promise.resolve(
-              mapOf(
-                "hasHand" to true,
-                "imageWidth" to decodedBitmap.width,
-                "imageHeight" to decodedBitmap.height,
-                "latencyMs" to (System.currentTimeMillis() - startedAt),
-                "handedness" to (handednessCategory?.categoryName() ?: "Unknown"),
-                "handednessScore" to (handednessCategory?.score()?.toDouble() ?: 0.0),
-                "landmarks" to landmarks,
-                "pick" to pickResult
-              )
-            )
-          }
-        } catch (error: Throwable) {
-          promise.reject("ERR_HAND_ANALYSIS", "손가락과 피크를 분석하지 못했습니다.", error)
-        } finally {
-          bitmap?.recycle()
-          cleanupFile(uri)
-          analysisBusy.set(false)
-        }
-      }.start()
+    AsyncFunction("analyzeHandInRegionAsync") {
+        uri: String,
+        pickColor: String,
+        left: Double,
+        top: Double,
+        right: Double,
+        bottom: Double,
+        promise: Promise ->
+      startAnalysis(
+        uri,
+        pickColor,
+        NormalizedRegion(left, top, right, bottom).normalized(),
+        promise
+      )
     }
 
     OnDestroy {
       handLandmarker?.close()
       handLandmarker = null
     }
+  }
+
+  private fun startAnalysis(
+    uri: String,
+    pickColor: String,
+    region: NormalizedRegion?,
+    promise: Promise
+  ) {
+    if (!analysisBusy.compareAndSet(false, true)) {
+      promise.reject("ERR_HAND_BUSY", "이전 손 분석이 아직 끝나지 않았습니다.", null)
+      return
+    }
+
+    Thread {
+      val startedAt = System.currentTimeMillis()
+      var originalBitmap: Bitmap? = null
+      var analysisBitmap: Bitmap? = null
+      try {
+        val decoded = decodeBitmap(uri)
+        originalBitmap = decoded
+        val safeRegion = region?.normalized()
+        val inputBitmap = if (safeRegion == null) decoded else cropBitmap(decoded, safeRegion)
+        analysisBitmap = inputBitmap
+
+        val mpImage = BitmapImageBuilder(inputBitmap).build()
+        val result = getHandLandmarker().detect(mpImage)
+        val handLandmarks = result.landmarks().firstOrNull()
+        val handednessCategory = result.handedness().firstOrNull()?.firstOrNull()
+
+        if (handLandmarks == null || handLandmarks.size < 21) {
+          promise.resolve(
+            mapOf(
+              "hasHand" to false,
+              "imageWidth" to decoded.width,
+              "imageHeight" to decoded.height,
+              "latencyMs" to (System.currentTimeMillis() - startedAt),
+              "handedness" to "Unknown",
+              "handednessScore" to 0.0,
+              "landmarks" to emptyList<Map<String, Any>>(),
+              "pick" to emptyPickResult(pickColor),
+              "analysisRegion" to regionResult(safeRegion)
+            )
+          )
+          return@Thread
+        }
+
+        val localLandmarks = handLandmarks.mapIndexed { index, landmark ->
+          mapOf<String, Any>(
+            "index" to index,
+            "name" to LANDMARK_NAMES[index],
+            "x" to landmark.x().toDouble(),
+            "y" to landmark.y().toDouble(),
+            "z" to landmark.z().toDouble()
+          )
+        }
+        val landmarks = remapLandmarks(localLandmarks, safeRegion)
+        val localPick = analyzePickColor(
+          bitmap = inputBitmap,
+          landmarks = localLandmarks,
+          requestedColor = pickColor
+        )
+        val pickResult = remapPick(localPick, safeRegion)
+
+        promise.resolve(
+          mapOf(
+            "hasHand" to true,
+            "imageWidth" to decoded.width,
+            "imageHeight" to decoded.height,
+            "latencyMs" to (System.currentTimeMillis() - startedAt),
+            "handedness" to (handednessCategory?.categoryName() ?: "Unknown"),
+            "handednessScore" to (handednessCategory?.score()?.toDouble() ?: 0.0),
+            "landmarks" to landmarks,
+            "pick" to pickResult,
+            "analysisRegion" to regionResult(safeRegion)
+          )
+        )
+      } catch (error: Throwable) {
+        promise.reject("ERR_HAND_ANALYSIS", "손가락과 피크를 분석하지 못했습니다.", error)
+      } finally {
+        if (analysisBitmap != null && analysisBitmap !== originalBitmap && !analysisBitmap.isRecycled) {
+          analysisBitmap.recycle()
+        }
+        if (originalBitmap != null && !originalBitmap.isRecycled) {
+          originalBitmap.recycle()
+        }
+        cleanupFile(uri)
+        analysisBusy.set(false)
+      }
+    }.start()
+  }
+
+  private fun cropBitmap(bitmap: Bitmap, region: NormalizedRegion): Bitmap {
+    val leftPx = (region.left * bitmap.width).toInt().coerceIn(0, bitmap.width - 2)
+    val topPx = (region.top * bitmap.height).toInt().coerceIn(0, bitmap.height - 2)
+    val rightPx = (region.right * bitmap.width).toInt().coerceIn(leftPx + 2, bitmap.width)
+    val bottomPx = (region.bottom * bitmap.height).toInt().coerceIn(topPx + 2, bitmap.height)
+    val width = rightPx - leftPx
+    val height = bottomPx - topPx
+    if (width < 96 || height < 96) {
+      throw IllegalArgumentException("오른손 분석 구역이 너무 작습니다.")
+    }
+    return Bitmap.createBitmap(bitmap, leftPx, topPx, width, height)
+  }
+
+  private fun remapLandmarks(
+    landmarks: List<Map<String, Any>>,
+    region: NormalizedRegion?
+  ): List<Map<String, Any>> {
+    if (region == null) return landmarks
+    val width = region.right - region.left
+    val height = region.bottom - region.top
+    return landmarks.map { point ->
+      val localX = (point["x"] as Number).toDouble()
+      val localY = (point["y"] as Number).toDouble()
+      mapOf(
+        "index" to (point["index"] as Number).toInt(),
+        "name" to (point["name"] as String),
+        "x" to (region.left + localX * width).coerceIn(0.0, 1.0),
+        "y" to (region.top + localY * height).coerceIn(0.0, 1.0),
+        "z" to (point["z"] as Number).toDouble()
+      )
+    }
+  }
+
+  private fun remapPick(
+    pick: Map<String, Any>,
+    region: NormalizedRegion?
+  ): Map<String, Any> {
+    if (region == null || pick["detected"] != true) return pick
+    val localX = (pick["centerX"] as Number).toDouble()
+    val localY = (pick["centerY"] as Number).toDouble()
+    return pick.toMutableMap().apply {
+      this["centerX"] = (region.left + localX * (region.right - region.left)).coerceIn(0.0, 1.0)
+      this["centerY"] = (region.top + localY * (region.bottom - region.top)).coerceIn(0.0, 1.0)
+    }
+  }
+
+  private fun regionResult(region: NormalizedRegion?): Map<String, Any> {
+    if (region == null) return emptyMap()
+    return mapOf(
+      "left" to region.left,
+      "top" to region.top,
+      "right" to region.right,
+      "bottom" to region.bottom
+    )
   }
 
   @Synchronized
@@ -119,9 +232,9 @@ class GuitarCoachHandModule : Module() {
       val options = HandLandmarker.HandLandmarkerOptions.builder()
         .setBaseOptions(baseOptions)
         .setNumHands(1)
-        .setMinHandDetectionConfidence(0.45f)
-        .setMinHandPresenceConfidence(0.45f)
-        .setMinTrackingConfidence(0.45f)
+        .setMinHandDetectionConfidence(0.52f)
+        .setMinHandPresenceConfidence(0.52f)
+        .setMinTrackingConfidence(0.52f)
         .setRunningMode(RunningMode.IMAGE)
         .build()
 
@@ -137,8 +250,8 @@ class GuitarCoachHandModule : Module() {
     val colorKey = requestedColor.lowercase()
     if (colorKey == "none") return emptyPickResult(colorKey)
 
-    fun x(index: Int) = (landmarks[index]["x"] as Double) * bitmap.width
-    fun y(index: Int) = (landmarks[index]["y"] as Double) * bitmap.height
+    fun x(index: Int) = (landmarks[index]["x"] as Number).toDouble() * bitmap.width
+    fun y(index: Int) = (landmarks[index]["y"] as Number).toDouble() * bitmap.height
 
     val thumbX = x(4)
     val thumbY = y(4)
