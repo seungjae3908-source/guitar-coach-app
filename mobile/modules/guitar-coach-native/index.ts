@@ -37,9 +37,23 @@ export type PoseAnalysisResult = {
   landmarks: PoseLandmarkPoint[];
 };
 
+export type CameraFrameDiagnostic = {
+  imageWidth: number;
+  imageHeight: number;
+  sampleCount: number;
+  averageLuminance: number;
+  contrast: number;
+  darkRatio: number;
+  brightRatio: number;
+  blackFrameLikely: boolean;
+  frameSignature: string;
+  latencyMs: number;
+};
+
 type GuitarCoachNativeModule = {
   androidLiveCoachAvailable: boolean;
   playClickAsync(accent: boolean): Promise<void>;
+  inspectCameraFrameAsync(uri: string): Promise<CameraFrameDiagnostic>;
   analyzePoseAsync(uri: string): Promise<PoseAnalysisResult>;
 };
 
@@ -50,6 +64,11 @@ export const isLiveCoachNativeAvailable = Boolean(NativeModule?.androidLiveCoach
 export async function playNativeClickAsync(accent: boolean) {
   if (!NativeModule) throw new Error('메트로놈 소리 모듈을 사용할 수 없습니다.');
   await NativeModule.playClickAsync(accent);
+}
+
+export async function inspectCameraFrameAsync(uri: string) {
+  if (!NativeModule) throw new Error('카메라 프레임 진단 모듈을 사용할 수 없습니다.');
+  return NativeModule.inspectCameraFrameAsync(uri);
 }
 
 export async function analyzePoseAsync(uri: string) {
