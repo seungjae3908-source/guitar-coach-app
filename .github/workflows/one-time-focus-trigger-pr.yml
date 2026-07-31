@@ -30,14 +30,14 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          from textwrap import dedent
 
           workflow = Path('.github/workflows/one-time-focus-analysis-youtube.yml').read_text()
           marker_start = "          python3 - <<'PY'\n"
           marker_end = "\n          PY\n\n      - name: Type-check and run quality regression tests"
           start = workflow.index(marker_start) + len(marker_start)
           end = workflow.index(marker_end, start)
-          script = dedent(workflow[start:end])
+          raw_lines = workflow[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in raw_lines)
           exec(compile(script, 'focus-integration-patch.py', 'exec'))
           Path('.github/workflows/one-time-focus-trigger-pr.yml').unlink()
           PY
