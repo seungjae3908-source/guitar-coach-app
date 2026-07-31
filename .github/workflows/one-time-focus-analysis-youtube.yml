@@ -1,0 +1,668 @@
+name: One-time focus analysis and YouTube integration
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - .github/workflows/one-time-focus-analysis-youtube.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Apply exact integration patches
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          # YouTube URL parser is a pure service so it can be tested without React Native.
+          path = 'mobile/components/YouTubePracticePlayer.tsx'
+          text = read(path)
+          anchor = "import { WebView, type WebViewMessageEvent } from 'react-native-webview';\n"
+          text = replace_once(
+              text,
+              anchor,
+              anchor + "\nimport { extractYouTubeVideoId, normalizeYouTubeUrl } from '../services/youtube-url';\n\nexport { extractYouTubeVideoId, normalizeYouTubeUrl } from '../services/youtube-url';\n",
+              'youtube player service import',
+          )
+          start = text.index('const VIDEO_ID_PATTERN =')
+          end = text.index('function stateFromCode')
+          text = text[:start] + text[end:]
+          write(path, text)
+
+          path = 'mobile/components/YouTubeSearchPicker.tsx'
+          text = read(path)
+          text = replace_once(
+              text,
+              "import { normalizeYouTubeUrl } from './YouTubePracticePlayer';",
+              "import { normalizeYouTubeUrl } from '../services/youtube-url';",
+              'youtube picker parser import',
+          )
+          write(path, text)
+
+          path = 'mobile/tests/youtube-url.test.ts'
+          text = read(path)
+          text = replace_once(
+              text,
+              "import { extractYouTubeVideoId, normalizeYouTubeUrl } from '../components/YouTubePracticePlayer';",
+              "import { extractYouTubeVideoId, normalizeYouTubeUrl } from '../services/youtube-url';",
+              'youtube test parser import',
+          )
+          write(path, text)
+
+          # Song studio: in-app search selection, canonical URL apply, 1.5x and ±5 seconds.
+          path = 'mobile/components/MasterSongStudioPanel.tsx'
+          text = read(path)
+          text = text.replace('  Linking,\n', '', 1)
+          text = replace_once(
+              text,
+              "import YouTubePracticePlayer, { type YouTubePlayerState } from './YouTubePracticePlayer';",
+              "import YouTubePracticePlayer, { type YouTubePlayerState, type YouTubeSeekRequest } from './YouTubePracticePlayer';\nimport YouTubeSearchPicker from './YouTubeSearchPicker';\nimport { normalizeYouTubeUrl } from '../services/youtube-url';",
+              'song studio youtube imports',
+          )
+          text = replace_once(text, 'const SPEEDS = [0.5, 0.75, 1, 1.25] as const;', 'const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5] as const;', 'song speeds')
+          text = replace_once(
+              text,
+              "  const [youtubeUrl, setYoutubeUrl] = useState('');\n  const [duration, setDuration] = useState(0);",
+              "  const [youtubeUrl, setYoutubeUrl] = useState('');\n  const [appliedYoutubeUrl, setAppliedYoutubeUrl] = useState('');\n  const [youtubeSearchVisible, setYoutubeSearchVisible] = useState(false);\n  const [seekRequest, setSeekRequest] = useState<YouTubeSeekRequest | null>(null);\n  const [duration, setDuration] = useState(0);",
+              'song youtube states',
+          )
+          old_load = "      setYoutubeUrl(stored?.youtubeUrl ?? '');\n      setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);"
+          new_load = "      const loadedUrl = normalizeYouTubeUrl(stored?.youtubeUrl ?? '') ?? '';\n      setYoutubeUrl(loadedUrl);\n      setAppliedYoutubeUrl(loadedUrl);\n      setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);"
+          count = text.count(old_load)
+          if count != 2:
+              raise SystemExit(f'song stored URL load: expected 2 matches, found {count}')
+          text = text.replace(old_load, new_load)
+          text = replace_once(
+              text,
+              "    setPlayerState('unstarted');\n    setLoopEnabled(false);",
+              "    setPlayerState('unstarted');\n    setAppliedYoutubeUrl('');\n    setSeekRequest(null);\n    setLoopEnabled(false);",
+              'song selection reset',
+          )
+          start = text.index('  const saveStudio = async () => {')
+          end = text.index('  const alignSectionStart = () => {')
+          replacement = '''  const persistStudio = async (canonicalUrl: string) => {
+    if (!song) return;
+    const current = parseStored(await AsyncStorage.getItem(STORAGE_KEY));
+    current[song.id] = {
+      youtubeUrl: canonicalUrl,
+      syncOffsetSeconds,
+      updatedAt: new Date().toISOString(),
+    };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+  };
+
+  const applyYoutubeUrl = async (candidate = youtubeUrl) => {
+    if (!song) return;
+    setError('');
+    const canonicalUrl = normalizeYouTubeUrl(candidate);
+    if (!canonicalUrl) {
+      setAppliedYoutubeUrl('');
+      setError('유효한 YouTube 영상 링크가 아닙니다. 앱 안에서 검색해 영상을 선택하거나 공유 URL을 다시 붙여넣으세요.');
+      return;
+    }
+    try {
+      setYoutubeUrl(canonicalUrl);
+      setAppliedYoutubeUrl(canonicalUrl);
+      await persistStudio(canonicalUrl);
+      setStatus('영상 링크를 정규화해 자동 입력·저장하고 재생 준비를 시작했습니다.');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '영상 링크를 저장하지 못했습니다.');
+    }
+  };
+
+  const saveStudio = async () => {
+    await applyYoutubeUrl(youtubeUrl);
+  };
+
+  const selectYouTubeVideo = (canonicalUrl: string) => {
+    setYoutubeSearchVisible(false);
+    setYoutubeUrl(canonicalUrl);
+    setAppliedYoutubeUrl(canonicalUrl);
+    setError('');
+    void persistStudio(canonicalUrl)
+      .then(() => setStatus('검색에서 선택한 영상을 자동 입력·저장했습니다.'))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : '선택한 영상을 저장하지 못했습니다.'));
+  };
+
+  const openSearch = () => {
+    setError('');
+    setYoutubeSearchVisible(true);
+  };
+
+  const seekBy = (deltaSeconds: number) => {
+    const unclamped = currentTime + deltaSeconds;
+    const target = Math.max(0, duration > 0 ? Math.min(duration, unclamped) : unclamped);
+    setSeekRequest({ seconds: target, nonce: Date.now() });
+    setCurrentTime(target);
+  };
+
+'''
+          text = text[:start] + replacement + text[end:]
+          text = replace_once(
+              text,
+              '          onChangeText={setYoutubeUrl}',
+              "          onChangeText={(value) => {\n            setYoutubeUrl(value);\n            setAppliedYoutubeUrl('');\n          }}\n          onSubmitEditing={() => void applyYoutubeUrl()}",
+              'youtube input apply',
+          )
+          text = replace_once(
+              text,
+              '<Pressable onPress={() => void openSearch()} style={styles.secondaryButton}><Text style={styles.secondaryText}>공식 YouTube 검색</Text></Pressable>\n          <Pressable onPress={() => void saveStudio()} style={styles.primarySmall}><Text style={styles.primarySmallText}>URL·보정 저장</Text></Pressable>',
+              '<Pressable onPress={openSearch} style={styles.secondaryButton}><Text style={styles.secondaryText}>앱 안에서 YouTube 검색</Text></Pressable>\n          <Pressable onPress={() => void saveStudio()} style={styles.primarySmall}><Text style={styles.primarySmallText}>링크 적용·저장</Text></Pressable>',
+              'youtube action buttons',
+          )
+          text = replace_once(text, '        url={youtubeUrl}', '        url={appliedYoutubeUrl}', 'youtube applied URL')
+          text = replace_once(
+              text,
+              '        loopEndSeconds={loop?.end ?? 0}\n        onTimeChange={setCurrentTime}',
+              '        loopEndSeconds={loop?.end ?? 0}\n        seekRequest={seekRequest}\n        onTimeChange={setCurrentTime}',
+              'youtube seek request prop',
+          )
+          seek_controls = '''
+        <View style={styles.seekRow}>
+          <Pressable disabled={!appliedYoutubeUrl} onPress={() => seekBy(-5)} style={[styles.seekButton, !appliedYoutubeUrl && styles.disabled]}>
+            <Text style={styles.seekText}>-5초</Text>
+          </Pressable>
+          <Pressable disabled={!appliedYoutubeUrl} onPress={() => seekBy(5)} style={[styles.seekButton, !appliedYoutubeUrl && styles.disabled]}>
+            <Text style={styles.seekText}>+5초</Text>
+          </Pressable>
+        </View>
+
+'''
+          text = replace_once(text, '        <Text style={styles.label}>재생 속도</Text>\n', seek_controls + '        <Text style={styles.label}>재생 속도</Text>\n', 'song seek controls')
+          picker = '''      <YouTubeSearchPicker
+        visible={youtubeSearchVisible}
+        initialQuery={song.youtubeQuery}
+        onClose={() => setYoutubeSearchVisible(false)}
+        onSelect={selectYouTubeVideo}
+      />
+
+'''
+          text = replace_once(text, '      <View style={styles.statusCard}><Text style={styles.statusText}>{status}</Text></View>', picker + '      <View style={styles.statusCard}><Text style={styles.statusText}>{status}</Text></View>', 'youtube picker render')
+          style_anchor = "  stateText: { color: '#b1bac4', fontSize: 7, fontWeight: '900' },\n"
+          style_insert = style_anchor + "  seekRow: { flexDirection: 'row', gap: 7, marginTop: 9, marginBottom: 4 },\n  seekButton: { flex: 1, minHeight: 38, borderRadius: 10, borderWidth: 1, borderColor: '#58a6ff', backgroundColor: '#111d2f', alignItems: 'center', justifyContent: 'center' },\n  seekText: { color: '#79c0ff', fontSize: 9, fontWeight: '900' },\n"
+          text = replace_once(text, style_anchor, style_insert, 'song seek styles')
+          write(path, text)
+
+          # Practice runner: explicit picking/strumming/arpeggio/left-hand focus modes.
+          path = 'mobile/components/PracticeSessionRunnerV2.tsx'
+          text = read(path)
+          import_anchor = "import { getPracticePresetsForMode, PracticePreset } from '../config/personal-practice-presets';\n"
+          text = replace_once(
+              text,
+              import_anchor,
+              import_anchor + "import {\n  categoryMatchesFocusMode,\n  FOCUS_MODE_OPTIONS,\n  focusModeForCategory,\n  type FocusPracticeMode,\n} from '../services/focus-practice-mode';\n",
+              'focus mode imports',
+          )
+          old_state = "  const presets = useMemo(() => getPracticePresetsForMode(mode), [mode]);\n  const [selectedPresetId, setSelectedPresetId] = useState(presets[0]?.id ?? '');\n  const preset = presets.find((item) => item.id === selectedPresetId) ?? presets[0];"
+          new_state = "  const presets = useMemo(() => getPracticePresetsForMode(mode), [mode]);\n  const [focusMode, setFocusMode] = useState<FocusPracticeMode>(focusModeForCategory(presets[0]?.category));\n  const availableFocusModes = useMemo(\n    () => FOCUS_MODE_OPTIONS.filter((option) => presets.some((item) => categoryMatchesFocusMode(item.category, option.id))),\n    [presets],\n  );\n  const focusPresets = useMemo(\n    () => presets.filter((item) => categoryMatchesFocusMode(item.category, focusMode)),\n    [focusMode, presets],\n  );\n  const [selectedPresetId, setSelectedPresetId] = useState(presets[0]?.id ?? '');\n  const preset = focusPresets.find((item) => item.id === selectedPresetId) ?? focusPresets[0] ?? presets[0];"
+          text = replace_once(text, old_state, new_state, 'focus mode state')
+          old_effect = "    const first = presets[0];\n    setSelectedPresetId(first?.id ?? '');\n    setBpm(first?.startBpm ?? 70);"
+          new_effect = "    const first = presets[0];\n    const nextFocusMode = focusModeForCategory(first?.category);\n    const firstInFocus = presets.find((item) => categoryMatchesFocusMode(item.category, nextFocusMode)) ?? first;\n    setFocusMode(nextFocusMode);\n    setSelectedPresetId(firstInFocus?.id ?? '');\n    setBpm(firstInFocus?.startBpm ?? 70);"
+          text = replace_once(text, old_effect, new_effect, 'focus mode reset')
+          handler_anchor = '  const requestMicrophonePermission = async () => {'
+          handler = '''  const selectFocusMode = (nextMode: FocusPracticeMode) => {
+    if (running) return;
+    const first = presets.find((item) => categoryMatchesFocusMode(item.category, nextMode));
+    if (!first) return;
+    setFocusMode(nextMode);
+    setSelectedPresetId(first.id);
+    setStatus(`${FOCUS_MODE_OPTIONS.find((item) => item.id === nextMode)?.label ?? '집중 모드'}를 선택했습니다.`);
+    setError('');
+  };
+
+'''
+          text = replace_once(text, handler_anchor, handler + handler_anchor, 'focus mode handler')
+          focus_ui = '''      <View style={styles.focusModeCard}>
+        <Text style={styles.focusModeHeading}>집중 분석 모드</Text>
+        <Text style={styles.focusModeGuide}>모드마다 카메라 속도와 손목·피크·손가락·줄 판정 기준을 따로 사용합니다.</Text>
+        <View style={styles.focusModeRow}>
+          {availableFocusModes.map((item) => (
+            <Pressable
+              key={item.id}
+              disabled={running}
+              onPress={() => selectFocusMode(item.id)}
+              style={[styles.focusModeButton, focusMode === item.id && styles.focusModeButtonActive, running && styles.disabled]}
+            >
+              <Text style={[styles.focusModeLabel, focusMode === item.id && styles.focusModeLabelActive]}>{item.label}</Text>
+              <Text style={styles.focusModeDetail}>{item.detail}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+
+'''
+          text = replace_once(text, '      <ScrollView horizontal style={styles.presetScroll}', focus_ui + '      <ScrollView horizontal style={styles.presetScroll}', 'focus mode UI')
+          text = replace_once(text, '        {presets.map((item) => (', '        {focusPresets.map((item) => (', 'focus preset filtering')
+          text = replace_once(text, '<Text style={styles.cameraSectionTitle}>관절·피크 추적 화면</Text>', '<Text style={styles.cameraSectionTitle}>{FOCUS_MODE_OPTIONS.find((item) => item.id === focusMode)?.label} 실제 추적 화면</Text>', 'focus camera title')
+          style_index = text.index('  presetScroll:')
+          focus_styles = "  focusModeCard: { borderRadius: 17, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#111d2f', padding: 12, marginTop: 10 },\n  focusModeHeading: { color: '#79c0ff', fontSize: 13, fontWeight: '900' },\n  focusModeGuide: { color: '#b6d8ff', fontSize: 8, lineHeight: 13, marginTop: 4 },\n  focusModeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 9 },\n  focusModeButton: { width: '48.8%', minHeight: 64, borderRadius: 12, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', padding: 9 },\n  focusModeButtonActive: { borderColor: '#2ea043', backgroundColor: '#14251a' },\n  focusModeLabel: { color: '#b1bac4', fontSize: 10, fontWeight: '900' },\n  focusModeLabelActive: { color: '#7ee787' },\n  focusModeDetail: { color: '#8b949e', fontSize: 7, lineHeight: 11, marginTop: 4 },\n"
+          text = text[:style_index] + focus_styles + text[style_index:]
+          write(path, text)
+
+          # Add real routines so each focus mode exists in both guitar modes.
+          path = 'mobile/config/personal-practice-presets.ts'
+          text = read(path)
+          acoustic_marker = "  {\n    id: 'acoustic-strum-80-relax',"
+          acoustic_pick = '''  {
+    id: 'acoustic-pick-single-string',
+    guitarMode: 'acoustic',
+    category: 'alternatePicking',
+    title: '통기타 한 줄 피킹·걸림 교정',
+    goal: '한 줄에서 피크가 걸리지 않게 얕은 다운·업을 유지하고 손목 중심 이동을 측정합니다.',
+    startBpm: 50,
+    targetBpm: 100,
+    durationSeconds: 180,
+    pattern: 'D U D U',
+    cameraFocus: 'right-hand',
+    checkpoints: [
+      '손목 관절점이 화면 안에서 연속 추적되는지',
+      '피크 끝이 줄을 지난 뒤 과하게 멀어지지 않는지',
+      '다운·업 이동 폭과 깊이가 비슷한지',
+      '한 줄을 벗어나는 옆 방향 움직임이 없는지',
+    ],
+    automaticFeedbackRules: [
+      '실제 줄 통과 이벤트 8회 이상에서만 방향 균형 판정',
+      '손목 관절점 또는 피크 끝이 끊기면 점수 대신 판정 불가',
+      '피크 노출과 급감속이 함께 크면 피크 걸림 교정',
+    ],
+  },
+'''
+          text = replace_once(text, acoustic_marker, acoustic_pick + acoustic_marker, 'acoustic picking routine')
+          electric_marker = "  {\n    id: 'electric-alternate-pick-smooth',"
+          electric_modes = '''  {
+    id: 'electric-strum-wrist-axis',
+    guitarMode: 'electric',
+    category: 'strumming',
+    title: '일렉 스트럼 손목 축·범위',
+    goal: '손목 회전축을 유지하며 다운은 넓게, 업은 고음줄만 가볍게 통과합니다.',
+    startBpm: 60,
+    targetBpm: 100,
+    durationSeconds: 180,
+    pattern: 'D U D U',
+    cameraFocus: 'right-hand',
+    checkpoints: [
+      '손목 관절점과 피크가 동시에 추적되는지',
+      '다운·업 줄 통과 범위가 구분되는지',
+      '팔 전체 이동보다 손목 회전이 중심인지',
+    ],
+    automaticFeedbackRules: [
+      '줄 통과 이벤트가 부족하면 판정 불가',
+      '손목 각도 급변과 속도 급감이 함께 나타나면 긴장·걸림 경고',
+    ],
+  },
+  {
+    id: 'electric-clean-arpeggio-independence',
+    guitarMode: 'electric',
+    category: 'arpeggio',
+    title: '일렉 클린 P-i-m-a 독립성',
+    goal: '클린 톤에서 P·i·m·a의 줄 역할과 복귀를 분리하고 손목 흔들림을 줄입니다.',
+    startBpm: 50,
+    targetBpm: 90,
+    durationSeconds: 180,
+    pattern: 'P i m a',
+    cameraFocus: 'right-hand',
+    checkpoints: [
+      'P·i·m·a 끝점과 손목 관절점이 모두 보이는지',
+      '탄현하지 않는 손가락이 함께 따라 움직이지 않는지',
+      '각 손가락이 탄현 뒤 준비 위치로 복귀하는지',
+    ],
+    automaticFeedbackRules: [
+      '손가락별 실제 줄 통과 이벤트가 2회 미만이면 판정 불가',
+      'i-m 또는 a-m 동반 움직임 상관이 높으면 독립성 교정',
+    ],
+  },
+'''
+          text = replace_once(text, electric_marker, electric_modes + electric_marker, 'electric strum and arpeggio routines')
+          write(path, text)
+
+          # Reuse stable string vision between high-rate hand frames.
+          path = 'mobile/modules/guitar-coach-hand/index.ts'
+          text = read(path)
+          start = text.index('export async function analyzeHandWithStringsAsync')
+          replacement = '''type LiveHandAnalysisOptions = {
+  refreshStringVision?: boolean;
+  reuseStringVisionMs?: number;
+};
+
+type CachedStringTracking = {
+  capturedAt: number;
+  tracking: GuitarStringTrackingResult;
+};
+
+let cachedStringTracking: CachedStringTracking | null = null;
+
+export async function analyzeHandWithStringsAsync(
+  uri: string,
+  pickColor: PickColor,
+  options: LiveHandAnalysisOptions = {},
+) {
+  const hand = await analyzeHandRawAsync(uri, pickColor);
+  if (!hand.hasHand) return finish(hand, pickColor);
+
+  const now = Date.now();
+  const reuseMs = options.reuseStringVisionMs ?? 1_250;
+  const shouldRefresh = options.refreshStringVision !== false
+    || !cachedStringTracking
+    || now - cachedStringTracking.capturedAt > reuseMs;
+  let tracking = cachedStringTracking?.tracking ?? null;
+
+  if (shouldRefresh) {
+    try {
+      const rawTracking = await analyzeStringsForHandAsync(uri, hand);
+      tracking = rawTracking ? stabilizeTracking(rawTracking) : null;
+      if (tracking?.detected) cachedStringTracking = { capturedAt: now, tracking };
+    } catch {
+      tracking = cachedStringTracking && now - cachedStringTracking.capturedAt <= reuseMs
+        ? cachedStringTracking.tracking
+        : null;
+    }
+  }
+
+  const result = tracking ? { ...hand, stringTracking: fuseContacts(tracking, hand) } : hand;
+  return finish(result, pickColor);
+}
+
+export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
+  return analyzeHandWithStringsAsync(uri, pickColor, { refreshStringVision: true });
+}
+'''
+          text = text[:start] + replacement
+          write(path, text)
+
+          # Camera capture uses mode-specific cadence and explicitly labels the wrist point.
+          path = 'mobile/components/SessionCoachCamera.tsx'
+          text = read(path)
+          import_anchor = "import type { PracticePreset } from '../config/personal-practice-presets';\n"
+          text = replace_once(text, import_anchor, import_anchor + "import { cameraAnalysisProfile } from '../services/focus-practice-mode';\n", 'camera profile import')
+          text = replace_once(text, '  analyzeHandAsync,', '  analyzeHandWithStringsAsync,', 'camera hand analyzer import')
+          start = text.index('function pickColorFor(')
+          end = text.index('\nfunction Segment', start)
+          text = text[:start] + '''function pickColorFor(mode: AnalysisMode, category: PracticeCategoryId): PickColor {
+  if (mode === 'left-hand') return 'none';
+  if (mode === 'right-hand') return cameraAnalysisProfile(category).pickColor;
+  return cameraAnalysisProfile(category).pickColor;
+}
+''' + text[end:]
+          text = replace_once(
+              text,
+              "  const fullPassRef = useRef<'pose' | 'hand'>('pose');",
+              "  const fullPassRef = useRef<'pose' | 'hand'>('pose');\n  const handFrameIndexRef = useRef(0);",
+              'camera frame counter ref',
+          )
+          text = replace_once(
+              text,
+              '  const firstMode = initialMode(cameraFocus);',
+              '  const firstMode = initialMode(cameraFocus);\n  const analysisProfile = cameraAnalysisProfile(category);',
+              'camera analysis profile',
+          )
+          text = replace_once(
+              text,
+              "    fullPassRef.current = 'pose';",
+              "    fullPassRef.current = 'pose';\n    handFrameIndexRef.current = 0;",
+              'camera reset frame counter',
+          )
+          text = replace_once(
+              text,
+              "          quality: activeMode === 'full' ? 0.34 : 0.48,",
+              "          quality: activeMode === 'full' ? 0.30 : analysisProfile.photoQuality,",
+              'camera photo quality',
+          )
+          capture_anchor = "        if (activeMode === 'full') {\n"
+          capture_prep = "        handFrameIndexRef.current += 1;\n        const refreshStringVision = handFrameIndexRef.current === 1\n          || handFrameIndexRef.current % analysisProfile.stringVisionEveryFrames === 0;\n\n"
+          text = replace_once(text, capture_anchor, capture_prep + capture_anchor, 'camera string refresh cadence')
+          text = text.replace(
+              'analyzeHandAsync(photo.uri, pickColorFor(activeMode, category))',
+              'analyzeHandWithStringsAsync(photo.uri, pickColorFor(activeMode, category), { refreshStringVision })',
+          )
+          if 'analyzeHandAsync(photo.uri' in text:
+              raise SystemExit('camera still contains old hand analyzer call')
+          text = replace_once(
+              text,
+              "        const targetInterval = activeMode === 'full' ? 1_100 : 760;",
+              "        const targetInterval = activeMode === 'full' ? 780 : analysisProfile.captureIntervalMs;",
+              'camera target interval',
+          )
+          old_dots = '''      {result.landmarks.map((point) => (
+        <View
+          key={point.index}
+          style={[styles.handDot, { left: point.x * size.width - 4, top: point.y * size.height - 4 }]}
+        />
+      ))}
+'''
+          new_dots = '''      {result.landmarks.map((point) => (
+        <View
+          key={point.index}
+          style={[
+            point.index === 0 ? styles.wristDot : styles.handDot,
+            {
+              left: point.x * size.width - (point.index === 0 ? 7 : 4),
+              top: point.y * size.height - (point.index === 0 ? 7 : 4),
+            },
+          ]}
+        />
+      ))}
+      {result.landmarks[0] ? (
+        <Text
+          style={[
+            styles.wristLabel,
+            {
+              left: Math.max(2, result.landmarks[0].x * size.width + 8),
+              top: Math.max(2, result.landmarks[0].y * size.height - 10),
+            },
+          ]}
+        >
+          손목
+        </Text>
+      ) : null}
+'''
+          text = replace_once(text, old_dots, new_dots, 'wrist overlay')
+          text = replace_once(
+              text,
+              "        <Text style={styles.planGuide}>\n          {selectedPlan === 'auto-cycle'",
+              "        <Text style={styles.profileText}>{analysisProfile.label} · {analysisProfile.requiredEvidence.join(' · ')}</Text>\n        <Text style={styles.planGuide}>\n          {selectedPlan === 'auto-cycle'",
+              'camera profile evidence UI',
+          )
+          wrist_status_anchor = "  const handStatus = !running\n"
+          wrist_status = '''  const wristPoint = handResult?.landmarks.find((point) => point.name === 'wrist');
+  const middleMcpPoint = handResult?.landmarks.find((point) => point.name === 'middleMcp');
+  const wristEdgeMargin = wristPoint
+    ? Math.min(wristPoint.x, 1 - wristPoint.x, wristPoint.y, 1 - wristPoint.y)
+    : 0;
+  const wristConfidence = wristPoint && middleMcpPoint
+    ? Math.min(1, handResult!.handednessScore * Math.min(1, wristEdgeMargin / 0.07) * Math.min(1, handSize(handResult) / 0.16))
+    : 0;
+  const wristStatus = !running
+    ? '레슨 시작 후 손목 관절점을 연속 추적합니다'
+    : wristConfidence < 0.42
+      ? '손목 판정 불가 · 손목을 화면 안쪽에 넣으세요'
+      : `손목 추적 ${Math.round(wristConfidence * 100)}% · 손바닥 축 ${Math.round(handResult ? Math.atan2((middleMcpPoint?.y ?? 0) - (wristPoint?.y ?? 0), (middleMcpPoint?.x ?? 0) - (wristPoint?.x ?? 0)) * 180 / Math.PI : 0)}°`;
+
+'''
+          text = replace_once(text, wrist_status_anchor, wrist_status + wrist_status_anchor, 'camera wrist status calculation')
+          status_anchor = "        {activeMode !== 'full' && handResult?.hasHand ? (\n          <Text style={styles.statusText}>\n            {handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms\n          </Text>\n        ) : null}\n"
+          text = replace_once(text, status_anchor, status_anchor + "        {activeMode !== 'full' ? <Text style={wristConfidence >= 0.42 ? styles.wristStatusGood : styles.wristStatusBad}>{wristStatus}</Text> : null}\n", 'camera wrist status render')
+          text = replace_once(
+              text,
+              "  planTitle: { color: '#f0f6fc', fontSize: 12, fontWeight: '900' },",
+              "  planTitle: { color: '#f0f6fc', fontSize: 12, fontWeight: '900' },\n  profileText: { color: '#7ee787', fontSize: 8, lineHeight: 13, fontWeight: '800', marginTop: 6 },",
+              'camera profile style',
+          )
+          text = replace_once(
+              text,
+              "  handDot: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: '#7ee787', borderWidth: 1, borderColor: '#ffffff' },",
+              "  handDot: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: '#7ee787', borderWidth: 1, borderColor: '#ffffff' },\n  wristDot: { position: 'absolute', width: 14, height: 14, borderRadius: 7, backgroundColor: '#ff7b72', borderWidth: 2, borderColor: '#ffffff' },\n  wristLabel: { position: 'absolute', color: '#ffffff', fontSize: 8, fontWeight: '900', backgroundColor: 'rgba(13,17,23,0.82)', borderRadius: 7, paddingHorizontal: 5, paddingVertical: 2, overflow: 'hidden' },",
+              'camera wrist styles',
+          )
+          text = replace_once(
+              text,
+              "  analysisError: { color: '#ffb4ad', fontSize: 9, lineHeight: 15, marginTop: 7 },",
+              "  analysisError: { color: '#ffb4ad', fontSize: 9, lineHeight: 15, marginTop: 7 },\n  wristStatusGood: { color: '#7ee787', fontSize: 9, lineHeight: 15, marginTop: 7, fontWeight: '800' },\n  wristStatusBad: { color: '#f2cc60', fontSize: 9, lineHeight: 15, marginTop: 7, fontWeight: '800' },",
+              'camera wrist status styles',
+          )
+          write(path, text)
+
+          # Infer hits from actual consecutive hand/string frames and gate wrist confidence.
+          path = 'mobile/components/TechniqueFeedbackController.tsx'
+          text = read(path)
+          import_anchor = "import { analyzeRightHandStringRoles } from '../services/right-hand-string-role-engine';\n"
+          text = replace_once(text, import_anchor, import_anchor + "import { RightHandMotionTracker } from '../services/right-hand-motion-tracker';\n", 'motion tracker import')
+          text = replace_once(
+              text,
+              '    handConfidence: result.handednessScore,\n    palmSize,',
+              "    handConfidence: result.handednessScore,\n    wristConfidence: Math.min(\n      1,\n      result.handednessScore\n        * Math.min(1, Math.min(wrist.x, 1 - wrist.x, wrist.y, 1 - wrist.y) / 0.07)\n        * Math.min(1, palmSize / 0.16),\n    ),\n    palmSize,",
+              'right hand wrist confidence sample',
+          )
+          text = replace_once(
+              text,
+              "  const lastPublishedAtRef = useRef(new Map<string, number>());",
+              "  const lastPublishedAtRef = useRef(new Map<string, number>());\n  const motionTrackerRef = useRef(new RightHandMotionTracker());",
+              'motion tracker ref',
+          )
+          text = replace_once(
+              text,
+              '    lastPublishedAtRef.current.clear();',
+              '    lastPublishedAtRef.current.clear();\n    motionTrackerRef.current.reset();',
+              'motion tracker reset',
+          )
+          old_result = "    const result = frame.result as ContinuousHandResult;\n\n    const rightHandSample = toRightHandSample(result, frame.capturedAt);"
+          new_result = "    const rawResult = frame.result as ContinuousHandResult;\n    const inferredHits = RIGHT_HAND_CATEGORIES.has(context.category)\n      ? motionTrackerRef.current.update(rawResult, frame.capturedAt, context.category)\n      : [];\n    const result: ContinuousHandResult = inferredHits.length\n      ? {\n          ...rawResult,\n          continuous: {\n            ...rawResult.continuous,\n            newHits: [...(rawResult.continuous?.newHits ?? []), ...inferredHits],\n          },\n        }\n      : rawResult;\n\n    const rightHandSample = toRightHandSample(result, frame.capturedAt);"
+          text = replace_once(text, old_result, new_result, 'motion hit enrichment')
+          write(path, text)
+
+          path = 'mobile/services/right-hand-technique-engine.ts'
+          text = read(path)
+          text = replace_once(text, '  handConfidence: number;\n  palmSize: number;', '  handConfidence: number;\n  wristConfidence: number;\n  palmSize: number;', 'wrist confidence type')
+          text = replace_once(text, '    if (elapsedMs < 8 || elapsedMs > 220) continue;', '    if (elapsedMs < 8 || elapsedMs > 650) continue;', 'motion sample elapsed gate')
+          text = replace_once(
+              text,
+              '  return Math.round(clamp(mean(samples.map((sample) => sample.handConfidence)), 0, 1) * 100);',
+              '  return Math.round(clamp(mean(samples.map((sample) => Math.min(sample.handConfidence, sample.wristConfidence))), 0, 1) * 100);',
+              'wrist confidence aggregate',
+          )
+          wrist_gate_anchor = "  if (latest.handConfidence < 0.45 || latest.palmSize <= 0) {\n"
+          wrist_gate = '''  if (latest.wristConfidence < 0.42) {
+    return [{
+      id: 'right-wrist-unreliable',
+      status: 'cannot-judge',
+      title: '손목 관절점 판정 불가',
+      instruction: '손가락만 넣지 말고 손목 주름부터 손가락 끝까지 화면 안쪽에 넣으세요. 빨간 손목 표시가 연속으로 보여야 분석을 시작합니다.',
+      evidence: `손목 추적 신뢰도가 ${Math.round(latest.wristConfidence * 100)}%입니다.`,
+      nextGoal: '손목 표시 70% 이상을 1초간 유지하세요.',
+      confidencePercent: Math.round(latest.wristConfidence * 100),
+      priority: 15,
+      measurements: [{ label: '손목 추적', value: `${Math.round(latest.wristConfidence * 100)}%` }],
+    }];
+  }
+
+'''
+          text = replace_once(text, wrist_gate_anchor, wrist_gate + wrist_gate_anchor, 'wrist reliability gate')
+          write(path, text)
+
+          # Decode camera JPEGs at analysis resolution instead of processing 12 MP every frame.
+          path = 'mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachHandModule.kt'
+          text = read(path)
+          start = text.index('  private fun decodeBitmap(uriString: String): Bitmap {')
+          end = text.index('  private fun cleanupFile', start)
+          decode = '''  private fun decodeBitmap(uriString: String): Bitmap {
+    val context = appContext.reactContext
+      ?: throw IllegalStateException("Android 손 분석 컨텍스트를 사용할 수 없습니다.")
+    val uri = Uri.parse(uriString)
+    val bytes = when (uri.scheme) {
+      "content" -> context.contentResolver.openInputStream(uri)
+        ?.use { it.readBytes() }
+        ?: throw IllegalArgumentException("카메라 파일을 열 수 없습니다.")
+      "file" -> FileInputStream(File(requireNotNull(uri.path))).use { it.readBytes() }
+      else -> FileInputStream(File(uriString)).use { it.readBytes() }
+    }
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+      throw IllegalArgumentException("카메라 이미지 크기를 읽지 못했습니다.")
+    }
+    var sampleSize = 1
+    while (max(bounds.outWidth, bounds.outHeight) / sampleSize > 1_280) sampleSize *= 2
+    val options = BitmapFactory.Options().apply {
+      inSampleSize = sampleSize
+      inPreferredConfig = Bitmap.Config.ARGB_8888
+    }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+      ?: throw IllegalArgumentException("카메라 이미지를 읽지 못했습니다.")
+  }
+
+'''
+          text = text[:start] + decode + text[end:]
+          write(path, text)
+
+          # Quality suite includes the new pure services and regression tests.
+          path = 'mobile/package.json'
+          data = json.loads(read(path))
+          quality = data['scripts']['quality:analysis']
+          quality = quality.replace(
+              'services/right-hand-technique-engine.ts services/right-hand-string-role-engine.ts',
+              'services/focus-practice-mode.ts services/right-hand-motion-tracker.ts services/youtube-url.ts services/right-hand-technique-engine.ts services/right-hand-string-role-engine.ts',
+          )
+          quality = quality.replace(
+              'tests/feedback-stack-core.test.ts',
+              'tests/focus-practice-mode.test.ts tests/right-hand-motion-tracker.test.ts tests/youtube-url.test.ts tests/feedback-stack-core.test.ts',
+          )
+          quality = quality.replace(
+              '&& node .quality-dist/tests/feedback-stack-core.test.js',
+              '&& node .quality-dist/tests/focus-practice-mode.test.js && node .quality-dist/tests/right-hand-motion-tracker.test.js && node .quality-dist/tests/youtube-url.test.js && node .quality-dist/tests/feedback-stack-core.test.js',
+          )
+          data['scripts']['quality:analysis'] = quality
+          write(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+          path = 'mobile/app.json'
+          data = json.loads(read(path))
+          data['expo']['android']['versionCode'] = 13
+          write(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+          Path('.github/workflows/one-time-focus-analysis-youtube.yml').unlink()
+          PY
+
+      - name: Type-check and run quality regression tests
+        working-directory: mobile
+        run: |
+          npm ci
+          npm run typecheck
+
+      - name: Commit integrated implementation
+        run: |
+          git config user.name guitar-coach-focus-bot
+          git config user.email guitar-coach-focus-bot@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m "Activate focus modes, wrist tracking, and YouTube selection"
+          git push origin HEAD:agent/live-coach-compat-v055
