@@ -90,6 +90,26 @@ jobs:
               raise SystemExit('wrist overlay call not found in registered script')
           script = script.replace(old_wrist_call, new_wrist_call, 1)
 
+          old_sample_block = '\n'.join([
+              'text = replace_once(',
+              '    text,',
+              "    '    handConfidence: result.handednessScore,\\n    palmSize,',",
+              '    "    handConfidence: result.handednessScore,\\n    wristConfidence: Math.min(\\n      1,\\n      result.handednessScore\\n        * Math.min(1, Math.min(wrist.x, 1 - wrist.x, wrist.y, 1 - wrist.y) / 0.07)\\n        * Math.min(1, palmSize / 0.16),\\n    ),\\n    palmSize,",',
+              "    'right hand wrist confidence sample',",
+              ')',
+          ])
+          new_sample_block = '\n'.join([
+              'text = replace_once(',
+              '    text,',
+              "    '    pattern: context.pattern,\\n    handConfidence: result.handednessScore,\\n    palmSize,',",
+              '    "    pattern: context.pattern,\\n    handConfidence: result.handednessScore,\\n    wristConfidence: Math.min(\\n      1,\\n      result.handednessScore\\n        * Math.min(1, Math.min(wrist.x, 1 - wrist.x, wrist.y, 1 - wrist.y) / 0.07)\\n        * Math.min(1, palmSize / 0.16),\\n    ),\\n    palmSize,",',
+              "    'right hand wrist confidence sample',",
+              ')',
+          ])
+          if old_sample_block not in script:
+              raise SystemExit('right-hand wrist confidence block not found in registered script')
+          script = script.replace(old_sample_block, new_sample_block, 1)
+
           exec(compile(script, 'focus-integration-patch.py', 'exec'))
           for temporary in [
               '.github/workflows/one-time-focus-trigger-pr.yml',
