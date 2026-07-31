@@ -57,6 +57,11 @@ let latestAudioFrame: AudioAnalysisFrame | null = null;
 let latestMetronomeFrame: MetronomeAnalysisFrame | null = null;
 let latestChordFrame: ChordAnalysisFrame | null = null;
 let latestFingeringFrame: FingeringAnalysisFrame | null = null;
+let subscribersSuppressed = false;
+
+export function setLiveAnalysisSubscribersSuppressed(suppressed: boolean) {
+  subscribersSuppressed = suppressed;
+}
 
 export function publishLiveAnalysisFrame(frame: LiveAnalysisFrame) {
   if (frame.kind === 'pose') latestPoseFrame = frame;
@@ -65,6 +70,8 @@ export function publishLiveAnalysisFrame(frame: LiveAnalysisFrame) {
   else if (frame.kind === 'metronome') latestMetronomeFrame = frame;
   else if (frame.kind === 'chord') latestChordFrame = frame;
   else latestFingeringFrame = frame;
+
+  if (subscribersSuppressed && frame.kind !== 'metronome') return;
 
   listeners.forEach((listener) => {
     try {
