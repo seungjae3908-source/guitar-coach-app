@@ -1,7 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,10 +24,12 @@ import {
   stopCoachSpeechAsync,
 } from '../modules/guitar-coach-speech';
 import { loadSelectedTrainingSongId, saveSelectedTrainingSongId } from '../services/mastery-selection-store';
-import YouTubePracticePlayer, { type YouTubePlayerState } from './YouTubePracticePlayer';
+import YouTubePracticePlayer, { type YouTubePlayerState, type YouTubeSeekRequest } from './YouTubePracticePlayer';
+import YouTubeSearchPicker from './YouTubeSearchPicker';
+import { normalizeYouTubeUrl } from '../services/youtube-url';
 
 const STORAGE_KEY = 'guitar-coach:master-song-studio:v1';
-const SPEEDS = [0.5, 0.75, 1, 1.25] as const;
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5] as const;
 
 type StoredSongStudio = Record<string, {
   youtubeUrl: string;
@@ -69,6 +70,9 @@ export default function MasterSongStudioPanel({
   const [songId, setSongId] = useState(songs[0]?.id ?? '');
   const song = getTrainingSong(songId) ?? songs[0] ?? null;
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [appliedYoutubeUrl, setAppliedYoutubeUrl] = useState('');
+  const [youtubeSearchVisible, setYoutubeSearchVisible] = useState(false);
+  const [seekRequest, setSeekRequest] = useState<YouTubeSeekRequest | null>(null);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [playerState, setPlayerState] = useState<YouTubePlayerState>('unstarted');
@@ -97,7 +101,9 @@ export default function MasterSongStudioPanel({
       if (!nextSong) return;
       setSongId(nextSong.id);
       const stored = parseStored(raw)[nextSong.id];
-      setYoutubeUrl(stored?.youtubeUrl ?? '');
+      const loadedUrl = normalizeYouTubeUrl(stored?.youtubeUrl ?? '') ?? '';
+      setYoutubeUrl(loadedUrl);
+      setAppliedYoutubeUrl(loadedUrl);
       setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);
       setLoopSectionId(nextSong.sections[0]?.id ?? '');
     }).catch((caught) => {
@@ -114,6 +120,8 @@ export default function MasterSongStudioPanel({
     setDuration(0);
     setCurrentTime(0);
     setPlayerState('unstarted');
+    setAppliedYoutubeUrl('');
+    setSeekRequest(null);
     setLoopEnabled(false);
     setLoopSectionId(song?.sections[0]?.id ?? '');
     lastSpokenSectionRef.current = '';
@@ -121,7 +129,9 @@ export default function MasterSongStudioPanel({
     void AsyncStorage.getItem(STORAGE_KEY)
       .then((raw) => {
         const stored = parseStored(raw)[song.id];
-        setYoutubeUrl(stored?.youtubeUrl ?? '');
+        const loadedUrl = normalizeYouTubeUrl(stored?.youtubeUrl ?? '') ?? '';
+        setYoutubeUrl(loadedUrl);
+        setAppliedYoutubeUrl(loadedUrl);
         setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);
       })
       .catch(() => undefined);
@@ -180,29 +190,60 @@ export default function MasterSongStudioPanel({
     }
   };
 
-  const saveStudio = async () => {
+  const persistStudio = async (canonicalUrl: string) => {
+    if (!song) return;
+    const current = parseStored(await AsyncStorage.getItem(STORAGE_KEY));
+    current[song.id] = {
+      youtubeUrl: canonicalUrl,
+      syncOffsetSeconds,
+      updatedAt: new Date().toISOString(),
+    };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+  };
+
+  const applyYoutubeUrl = async (candidate = youtubeUrl) => {
     if (!song) return;
     setError('');
+    const canonicalUrl = normalizeYouTubeUrl(candidate);
+    if (!canonicalUrl) {
+      setAppliedYoutubeUrl('');
+      setError('유효한 YouTube 영상 링크가 아닙니다. 앱 안에서 검색해 영상을 선택하거나 공유 URL을 다시 붙여넣으세요.');
+      return;
+    }
     try {
-      const current = parseStored(await AsyncStorage.getItem(STORAGE_KEY));
-      current[song.id] = {
-        youtubeUrl: youtubeUrl.trim(),
-        syncOffsetSeconds,
-        updatedAt: new Date().toISOString(),
-      };
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-      setStatus('YouTube URL과 악보 동기화 보정을 휴대폰에 저장했습니다.');
+      setYoutubeUrl(canonicalUrl);
+      setAppliedYoutubeUrl(canonicalUrl);
+      await persistStudio(canonicalUrl);
+      setStatus('영상 링크를 정규화해 자동 입력·저장하고 재생 준비를 시작했습니다.');
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '곡 스튜디오 설정을 저장하지 못했습니다.');
+      setError(caught instanceof Error ? caught.message : '영상 링크를 저장하지 못했습니다.');
     }
   };
 
-  const openSearch = async () => {
-    if (!song) return;
-    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(song.youtubeQuery)}`;
-    const supported = await Linking.canOpenURL(url);
-    if (supported) await Linking.openURL(url);
-    else setError('YouTube 검색을 열 수 없습니다.');
+  const saveStudio = async () => {
+    await applyYoutubeUrl(youtubeUrl);
+  };
+
+  const selectYouTubeVideo = (canonicalUrl: string) => {
+    setYoutubeSearchVisible(false);
+    setYoutubeUrl(canonicalUrl);
+    setAppliedYoutubeUrl(canonicalUrl);
+    setError('');
+    void persistStudio(canonicalUrl)
+      .then(() => setStatus('검색에서 선택한 영상을 자동 입력·저장했습니다.'))
+      .catch((caught) => setError(caught instanceof Error ? caught.message : '선택한 영상을 저장하지 못했습니다.'));
+  };
+
+  const openSearch = () => {
+    setError('');
+    setYoutubeSearchVisible(true);
+  };
+
+  const seekBy = (deltaSeconds: number) => {
+    const unclamped = currentTime + deltaSeconds;
+    const target = Math.max(0, duration > 0 ? Math.min(duration, unclamped) : unclamped);
+    setSeekRequest({ seconds: target, nonce: Date.now() });
+    setCurrentTime(target);
   };
 
   const alignSectionStart = () => {
@@ -245,7 +286,11 @@ export default function MasterSongStudioPanel({
         <Text style={styles.label}>YouTube 공유 URL</Text>
         <TextInput
           value={youtubeUrl}
-          onChangeText={setYoutubeUrl}
+          onChangeText={(value) => {
+            setYoutubeUrl(value);
+            setAppliedYoutubeUrl('');
+          }}
+          onSubmitEditing={() => void applyYoutubeUrl()}
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
@@ -254,17 +299,18 @@ export default function MasterSongStudioPanel({
           style={styles.input}
         />
         <View style={styles.buttonRow}>
-          <Pressable onPress={() => void openSearch()} style={styles.secondaryButton}><Text style={styles.secondaryText}>공식 YouTube 검색</Text></Pressable>
-          <Pressable onPress={() => void saveStudio()} style={styles.primarySmall}><Text style={styles.primarySmallText}>URL·보정 저장</Text></Pressable>
+          <Pressable onPress={openSearch} style={styles.secondaryButton}><Text style={styles.secondaryText}>앱 안에서 YouTube 검색</Text></Pressable>
+          <Pressable onPress={() => void saveStudio()} style={styles.primarySmall}><Text style={styles.primarySmallText}>링크 적용·저장</Text></Pressable>
         </View>
       </View>
 
       <YouTubePracticePlayer
-        url={youtubeUrl}
+        url={appliedYoutubeUrl}
         playbackRate={speed}
         loopEnabled={loopEnabled}
         loopStartSeconds={loop?.start ?? 0}
         loopEndSeconds={loop?.end ?? 0}
+        seekRequest={seekRequest}
         onTimeChange={setCurrentTime}
         onDurationChange={setDuration}
         onStateChange={setPlayerState}
@@ -278,6 +324,16 @@ export default function MasterSongStudioPanel({
             <Text style={styles.timeValue}>{formatTime(currentTime)} / {duration > 0 ? formatTime(duration) : '--:--'}</Text>
           </View>
           <View style={styles.stateBadge}><Text style={styles.stateText}>{playerState}</Text></View>
+        </View>
+
+
+        <View style={styles.seekRow}>
+<Pressable disabled={!appliedYoutubeUrl} onPress={() => seekBy(-5)} style={[styles.seekButton, !appliedYoutubeUrl && styles.disabled]}>
+  <Text style={styles.seekText}>-5초</Text>
+</Pressable>
+<Pressable disabled={!appliedYoutubeUrl} onPress={() => seekBy(5)} style={[styles.seekButton, !appliedYoutubeUrl && styles.disabled]}>
+  <Text style={styles.seekText}>+5초</Text>
+</Pressable>
         </View>
 
         <Text style={styles.label}>재생 속도</Text>
@@ -361,6 +417,13 @@ export default function MasterSongStudioPanel({
         );
       })}
 
+      <YouTubeSearchPicker
+        visible={youtubeSearchVisible}
+        initialQuery={song.youtubeQuery}
+        onClose={() => setYoutubeSearchVisible(false)}
+        onSelect={selectYouTubeVideo}
+      />
+
       <View style={styles.statusCard}><Text style={styles.statusText}>{status}</Text></View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </ScrollView>
@@ -402,6 +465,9 @@ const styles = StyleSheet.create({
   timeValue: { color: '#7ee787', fontSize: 19, fontWeight: '900', marginTop: 2 },
   stateBadge: { marginLeft: 'auto', borderRadius: 9, backgroundColor: '#21262d', paddingHorizontal: 8, paddingVertical: 5 },
   stateText: { color: '#b1bac4', fontSize: 7, fontWeight: '900' },
+  seekRow: { flexDirection: 'row', gap: 7, marginTop: 9, marginBottom: 4 },
+  seekButton: { flex: 1, minHeight: 38, borderRadius: 10, borderWidth: 1, borderColor: '#58a6ff', backgroundColor: '#111d2f', alignItems: 'center', justifyContent: 'center' },
+  seekText: { color: '#79c0ff', fontSize: 9, fontWeight: '900' },
   optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
   optionButton: { minWidth: 55, minHeight: 33, borderRadius: 9, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
   optionButtonActive: { backgroundColor: '#238636', borderColor: '#2ea043' },

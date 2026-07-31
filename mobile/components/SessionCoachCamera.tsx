@@ -13,8 +13,9 @@ import {
 
 import type { PracticeCategoryId } from '../config/guitar-mode-profiles';
 import type { PracticePreset } from '../config/personal-practice-presets';
+import { cameraAnalysisProfile } from '../services/focus-practice-mode';
 import {
-  analyzeHandAsync,
+  analyzeHandWithStringsAsync,
   type HandAnalysisResult,
   isDetailedHandCoachAvailable,
   type PickColor,
@@ -85,13 +86,8 @@ function modeGuide(category: PracticeCategoryId, mode: AnalysisMode) {
 
 function pickColorFor(mode: AnalysisMode, category: PracticeCategoryId): PickColor {
   if (mode === 'left-hand') return 'none';
-  if (mode === 'right-hand') return 'auto';
-  return category === 'strumming'
-    || category === 'downPicking'
-    || category === 'alternatePicking'
-    || category === 'palmMute'
-    ? 'auto'
-    : 'none';
+  if (mode === 'right-hand') return cameraAnalysisProfile(category).pickColor;
+  return cameraAnalysisProfile(category).pickColor;
 }
 
 function Segment({
@@ -192,10 +188,29 @@ function HandOverlay({ result, size }: { result: HandAnalysisResult | null; size
       })}
       {result.landmarks.map((point) => (
         <View
-          key={point.index}
-          style={[styles.handDot, { left: point.x * size.width - 4, top: point.y * size.height - 4 }]}
+key={point.index}
+style={[
+  point.index === 0 ? styles.wristDot : styles.handDot,
+  {
+    left: point.x * size.width - (point.index === 0 ? 7 : 4),
+    top: point.y * size.height - (point.index === 0 ? 7 : 4),
+  },
+]}
         />
       ))}
+      {result.landmarks[0] ? (
+        <Text
+style={[
+  styles.wristLabel,
+  {
+    left: Math.max(2, result.landmarks[0].x * size.width + 8),
+    top: Math.max(2, result.landmarks[0].y * size.height - 10),
+  },
+]}
+        >
+손목
+        </Text>
+      ) : null}
       {result.pick.detected ? (
         <View
           style={[
@@ -232,8 +247,10 @@ export default function SessionCoachCamera({
   const cameraRef = useRef<CameraView | null>(null);
   const analysisBusyRef = useRef(false);
   const fullPassRef = useRef<'pose' | 'hand'>('pose');
+  const handFrameIndexRef = useRef(0);
   const [permission, requestPermission] = useCameraPermissions();
   const firstMode = initialMode(cameraFocus);
+  const analysisProfile = cameraAnalysisProfile(category);
   const [selectedPlan, setSelectedPlan] = useState<AnalysisPlan>(firstMode);
   const [activeMode, setActiveMode] = useState<AnalysisMode>(firstMode);
   const [facing, setFacing] = useState<CameraType>(firstMode === 'full' ? 'front' : 'back');
@@ -282,6 +299,7 @@ export default function SessionCoachCamera({
     setStartupRetries(0);
     setCameraKey((value) => value + 1);
     fullPassRef.current = 'pose';
+    handFrameIndexRef.current = 0;
   }, [activeMode]);
 
   useEffect(() => {
@@ -332,12 +350,16 @@ export default function SessionCoachCamera({
       const startedAt = Date.now();
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: activeMode === 'full' ? 0.34 : 0.48,
+          quality: activeMode === 'full' ? 0.30 : analysisProfile.photoQuality,
           shutterSound: false,
           mirror: facing === 'front',
           skipProcessing: false,
         });
         if (!photo?.uri || cancelled) throw new Error('카메라 프레임을 가져오지 못했습니다.');
+
+        handFrameIndexRef.current += 1;
+        const refreshStringVision = handFrameIndexRef.current === 1
+          || handFrameIndexRef.current % analysisProfile.stringVisionEveryFrames === 0;
 
         if (activeMode === 'full') {
           if (fullPassRef.current === 'pose' || !isDetailedHandCoachAvailable) {
@@ -345,12 +367,12 @@ export default function SessionCoachCamera({
             if (!cancelled) setPoseResult(result);
             fullPassRef.current = 'hand';
           } else {
-            const result = await analyzeHandAsync(photo.uri, pickColorFor(activeMode, category));
+            const result = await analyzeHandWithStringsAsync(photo.uri, pickColorFor(activeMode, category), { refreshStringVision });
             if (!cancelled) setHandResult(result);
             fullPassRef.current = 'pose';
           }
         } else {
-          const result = await analyzeHandAsync(photo.uri, pickColorFor(activeMode, category));
+          const result = await analyzeHandWithStringsAsync(photo.uri, pickColorFor(activeMode, category), { refreshStringVision });
           if (!cancelled) setHandResult(result);
         }
         if (!cancelled) {
@@ -363,7 +385,7 @@ export default function SessionCoachCamera({
         }
       } finally {
         analysisBusyRef.current = false;
-        const targetInterval = activeMode === 'full' ? 1_100 : 760;
+        const targetInterval = activeMode === 'full' ? 780 : analysisProfile.captureIntervalMs;
         schedule(Math.max(220, targetInterval - (Date.now() - startedAt)));
       }
     };
@@ -427,6 +449,20 @@ export default function SessionCoachCamera({
   }
 
   const size = handSize(handResult);
+  const wristPoint = handResult?.landmarks.find((point) => point.name === 'wrist');
+  const middleMcpPoint = handResult?.landmarks.find((point) => point.name === 'middleMcp');
+  const wristEdgeMargin = wristPoint
+    ? Math.min(wristPoint.x, 1 - wristPoint.x, wristPoint.y, 1 - wristPoint.y)
+    : 0;
+  const wristConfidence = wristPoint && middleMcpPoint
+    ? Math.min(1, handResult!.handednessScore * Math.min(1, wristEdgeMargin / 0.07) * Math.min(1, handSize(handResult) / 0.16))
+    : 0;
+  const wristStatus = !running
+    ? '레슨 시작 후 손목 관절점을 연속 추적합니다'
+    : wristConfidence < 0.42
+      ? '손목 판정 불가 · 손목을 화면 안쪽에 넣으세요'
+      : `손목 추적 ${Math.round(wristConfidence * 100)}% · 손바닥 축 ${Math.round(handResult ? Math.atan2((middleMcpPoint?.y ?? 0) - (wristPoint?.y ?? 0), (middleMcpPoint?.x ?? 0) - (wristPoint?.x ?? 0)) * 180 / Math.PI : 0)}°`;
+
   const handStatus = !running
     ? '레슨을 시작하면 관절 분석이 실행됩니다'
     : !handResult?.hasHand
@@ -453,6 +489,7 @@ export default function SessionCoachCamera({
             </Pressable>
           ))}
         </View>
+        <Text style={styles.profileText}>{analysisProfile.label} · {analysisProfile.requiredEvidence.join(' · ')}</Text>
         <Text style={styles.planGuide}>
           {selectedPlan === 'auto-cycle'
             ? `자동 순환 ${cycleIndex + 1}/3 · ${modeTitle(activeMode)}`
@@ -538,6 +575,7 @@ export default function SessionCoachCamera({
             {handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms
           </Text>
         ) : null}
+        {activeMode !== 'full' ? <Text style={wristConfidence >= 0.42 ? styles.wristStatusGood : styles.wristStatusBad}>{wristStatus}</Text> : null}
         {analysisError ? <Text style={styles.analysisError}>{analysisError}</Text> : null}
         {!analysisError && running && frameCount === 0 ? (
           <Text style={styles.statusText}>첫 분석 프레임을 기다리는 중입니다. 카메라 영상이 보이면 손이나 상체를 화면 중앙에 맞추세요.</Text>
@@ -576,6 +614,7 @@ const styles = StyleSheet.create({
   permissionButtonText: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
   planCard: { borderRadius: 16, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', padding: 12 },
   planTitle: { color: '#f0f6fc', fontSize: 12, fontWeight: '900' },
+  profileText: { color: '#7ee787', fontSize: 8, lineHeight: 13, fontWeight: '800', marginTop: 6 },
   planRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 9 },
   planButton: {
     minHeight: 38,
@@ -645,6 +684,8 @@ const styles = StyleSheet.create({
   poseDot: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: '#58a6ff', borderWidth: 1, borderColor: '#ffffff' },
   handLine: { position: 'absolute', height: 2, backgroundColor: 'rgba(126,231,135,0.92)' },
   handDot: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: '#7ee787', borderWidth: 1, borderColor: '#ffffff' },
+  wristDot: { position: 'absolute', width: 14, height: 14, borderRadius: 7, backgroundColor: '#ff7b72', borderWidth: 2, borderColor: '#ffffff' },
+  wristLabel: { position: 'absolute', color: '#ffffff', fontSize: 8, fontWeight: '900', backgroundColor: 'rgba(13,17,23,0.82)', borderRadius: 7, paddingHorizontal: 5, paddingVertical: 2, overflow: 'hidden' },
   stringLine: { position: 'absolute', height: 1, backgroundColor: 'rgba(242,204,96,0.66)' },
   stringLineActive: { position: 'absolute', height: 3, backgroundColor: 'rgba(255,123,114,0.96)' },
   pickMarker: { position: 'absolute', width: 34, height: 34, borderRadius: 17, borderWidth: 2, borderColor: '#ff7b72', alignItems: 'center', justifyContent: 'center' },
@@ -656,4 +697,6 @@ const styles = StyleSheet.create({
   statusValueReady: { color: '#7ee787' },
   statusText: { color: '#b1bac4', fontSize: 9, lineHeight: 15, marginTop: 7 },
   analysisError: { color: '#ffb4ad', fontSize: 9, lineHeight: 15, marginTop: 7 },
+  wristStatusGood: { color: '#7ee787', fontSize: 9, lineHeight: 15, marginTop: 7, fontWeight: '800' },
+  wristStatusBad: { color: '#f2cc60', fontSize: 9, lineHeight: 15, marginTop: 7, fontWeight: '800' },
 });

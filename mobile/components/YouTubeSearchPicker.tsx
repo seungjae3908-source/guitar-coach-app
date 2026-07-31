@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
-import { normalizeYouTubeUrl } from './YouTubePracticePlayer';
+import { normalizeYouTubeUrl } from '../services/youtube-url';
 
 const SEARCH_BRIDGE = `
 (function () {

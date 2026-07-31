@@ -5,7 +5,9 @@
     "version": "0.6.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "platforms": ["android"],
+    "platforms": [
+      "android"
+    ],
     "plugins": [
       [
         "expo-camera",
@@ -26,8 +28,11 @@
     ],
     "android": {
       "package": "com.seungjae.guitarcoach.livetest",
-      "versionCode": 12,
-      "permissions": ["CAMERA", "RECORD_AUDIO"]
+      "versionCode": 13,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
     }
   }
 }

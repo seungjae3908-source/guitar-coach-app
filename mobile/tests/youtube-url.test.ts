@@ -1,4 +1,4 @@
-import { extractYouTubeVideoId, normalizeYouTubeUrl } from '../components/YouTubePracticePlayer';
+import { extractYouTubeVideoId, normalizeYouTubeUrl } from '../services/youtube-url';
 
 function equal(actual: unknown, expected: unknown, label: string) {
   if (actual !== expected) {

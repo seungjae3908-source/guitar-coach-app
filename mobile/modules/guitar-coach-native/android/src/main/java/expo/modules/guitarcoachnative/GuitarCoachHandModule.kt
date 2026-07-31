@@ -264,15 +264,27 @@ class GuitarCoachHandModule : Module() {
     val context = appContext.reactContext
       ?: throw IllegalStateException("Android 손 분석 컨텍스트를 사용할 수 없습니다.")
     val uri = Uri.parse(uriString)
-    val stream: InputStream = when (uri.scheme) {
+    val bytes = when (uri.scheme) {
       "content" -> context.contentResolver.openInputStream(uri)
+        ?.use { it.readBytes() }
         ?: throw IllegalArgumentException("카메라 파일을 열 수 없습니다.")
-      "file" -> FileInputStream(File(requireNotNull(uri.path)))
-      else -> FileInputStream(File(uriString))
+      "file" -> FileInputStream(File(requireNotNull(uri.path))).use { it.readBytes() }
+      else -> FileInputStream(File(uriString)).use { it.readBytes() }
     }
-    return stream.use {
-      BitmapFactory.decodeStream(it) ?: throw IllegalArgumentException("카메라 이미지를 읽지 못했습니다.")
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+      throw IllegalArgumentException("카메라 이미지 크기를 읽지 못했습니다.")
     }
+    var sampleSize = 1
+    while (max(bounds.outWidth, bounds.outHeight) / sampleSize > 1_280) sampleSize *= 2
+    val options = BitmapFactory.Options().apply {
+      inSampleSize = sampleSize
+      inPreferredConfig = Bitmap.Config.ARGB_8888
+    }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+      ?: throw IllegalArgumentException("카메라 이미지를 읽지 못했습니다.")
   }
 
   private fun cleanupFile(uriString: String) {

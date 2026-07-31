@@ -456,21 +456,49 @@ function finish(result: HandAnalysisResult, pickColor: PickColor) {
   return result;
 }
 
-export async function analyzeHandWithStringsAsync(uri: string, pickColor: PickColor) {
-  const hand = await analyzeHandRawAsync(uri, pickColor);
-  if (pickColor === 'none') return finish(hand, pickColor);
+type LiveHandAnalysisOptions = {
+  refreshStringVision?: boolean;
+  reuseStringVisionMs?: number;
+};
 
-  let tracking: GuitarStringTrackingResult | null = null;
-  try {
-    const rawTracking = await analyzeStringsForHandAsync(uri, hand);
-    tracking = rawTracking ? stabilizeTracking(rawTracking) : null;
-  } catch {
-    tracking = null;
+type CachedStringTracking = {
+  capturedAt: number;
+  tracking: GuitarStringTrackingResult;
+};
+
+let cachedStringTracking: CachedStringTracking | null = null;
+
+export async function analyzeHandWithStringsAsync(
+  uri: string,
+  pickColor: PickColor,
+  options: LiveHandAnalysisOptions = {},
+) {
+  const hand = await analyzeHandRawAsync(uri, pickColor);
+  if (!hand.hasHand) return finish(hand, pickColor);
+
+  const now = Date.now();
+  const reuseMs = options.reuseStringVisionMs ?? 1_250;
+  const shouldRefresh = options.refreshStringVision !== false
+    || !cachedStringTracking
+    || now - cachedStringTracking.capturedAt > reuseMs;
+  let tracking = cachedStringTracking?.tracking ?? null;
+
+  if (shouldRefresh) {
+    try {
+      const rawTracking = await analyzeStringsForHandAsync(uri, hand);
+      tracking = rawTracking ? stabilizeTracking(rawTracking) : null;
+      if (tracking?.detected) cachedStringTracking = { capturedAt: now, tracking };
+    } catch {
+      tracking = cachedStringTracking && now - cachedStringTracking.capturedAt <= reuseMs
+        ? cachedStringTracking.tracking
+        : null;
+    }
   }
+
   const result = tracking ? { ...hand, stringTracking: fuseContacts(tracking, hand) } : hand;
   return finish(result, pickColor);
 }
 
 export async function analyzeHandAsync(uri: string, pickColor: PickColor) {
-  return analyzeHandWithStringsAsync(uri, pickColor);
+  return analyzeHandWithStringsAsync(uri, pickColor, { refreshStringVision: true });
 }

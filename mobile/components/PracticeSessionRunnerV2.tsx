@@ -13,6 +13,12 @@ import {
 import type { GuitarModeId } from '../config/guitar-mode-profiles';
 import { getPracticePresetsForMode, PracticePreset } from '../config/personal-practice-presets';
 import {
+  categoryMatchesFocusMode,
+  FOCUS_MODE_OPTIONS,
+  focusModeForCategory,
+  type FocusPracticeMode,
+} from '../services/focus-practice-mode';
+import {
   getLatestNativeAudioReadingAsync,
   isNativeAudioAnalysisAvailable,
   startNativeAudioAnalysisAsync,
@@ -150,8 +156,17 @@ export default function PracticeSessionRunnerV2({
   onClose?: () => void;
 }) {
   const presets = useMemo(() => getPracticePresetsForMode(mode), [mode]);
+  const [focusMode, setFocusMode] = useState<FocusPracticeMode>(focusModeForCategory(presets[0]?.category));
+  const availableFocusModes = useMemo(
+    () => FOCUS_MODE_OPTIONS.filter((option) => presets.some((item) => categoryMatchesFocusMode(item.category, option.id))),
+    [presets],
+  );
+  const focusPresets = useMemo(
+    () => presets.filter((item) => categoryMatchesFocusMode(item.category, focusMode)),
+    [focusMode, presets],
+  );
   const [selectedPresetId, setSelectedPresetId] = useState(presets[0]?.id ?? '');
-  const preset = presets.find((item) => item.id === selectedPresetId) ?? presets[0];
+  const preset = focusPresets.find((item) => item.id === selectedPresetId) ?? focusPresets[0] ?? presets[0];
   const [bpm, setBpm] = useState(preset?.startBpm ?? 70);
   const [sessionDurationSeconds, setSessionDurationSeconds] = useState(preset?.durationSeconds ?? 180);
   const [autoStopEnabled, setAutoStopEnabled] = useState(true);
@@ -182,8 +197,11 @@ export default function PracticeSessionRunnerV2({
 
   useEffect(() => {
     const first = presets[0];
-    setSelectedPresetId(first?.id ?? '');
-    setBpm(first?.startBpm ?? 70);
+    const nextFocusMode = focusModeForCategory(first?.category);
+    const firstInFocus = presets.find((item) => categoryMatchesFocusMode(item.category, nextFocusMode)) ?? first;
+    setFocusMode(nextFocusMode);
+    setSelectedPresetId(firstInFocus?.id ?? '');
+    setBpm(firstInFocus?.startBpm ?? 70);
     setSessionDurationSeconds(first?.durationSeconds ?? 180);
     setSnapshot(EMPTY_SNAPSHOT);
     setDecision(null);
@@ -255,6 +273,16 @@ export default function PracticeSessionRunnerV2({
       if (timer) clearTimeout(timer);
     };
   }, [microphoneEnabled, running]);
+
+  const selectFocusMode = (nextMode: FocusPracticeMode) => {
+    if (running) return;
+    const first = presets.find((item) => categoryMatchesFocusMode(item.category, nextMode));
+    if (!first) return;
+    setFocusMode(nextMode);
+    setSelectedPresetId(first.id);
+    setStatus(`${FOCUS_MODE_OPTIONS.find((item) => item.id === nextMode)?.label ?? '집중 모드'}를 선택했습니다.`);
+    setError('');
+  };
 
   const requestMicrophonePermission = async () => {
     if (Platform.OS !== 'android') return true;
@@ -474,8 +502,26 @@ export default function PracticeSessionRunnerV2({
         ) : null}
       </View>
 
+      <View style={styles.focusModeCard}>
+        <Text style={styles.focusModeHeading}>집중 분석 모드</Text>
+        <Text style={styles.focusModeGuide}>모드마다 카메라 속도와 손목·피크·손가락·줄 판정 기준을 따로 사용합니다.</Text>
+        <View style={styles.focusModeRow}>
+{availableFocusModes.map((item) => (
+  <Pressable
+    key={item.id}
+    disabled={running}
+    onPress={() => selectFocusMode(item.id)}
+    style={[styles.focusModeButton, focusMode === item.id && styles.focusModeButtonActive, running && styles.disabled]}
+  >
+    <Text style={[styles.focusModeLabel, focusMode === item.id && styles.focusModeLabelActive]}>{item.label}</Text>
+    <Text style={styles.focusModeDetail}>{item.detail}</Text>
+  </Pressable>
+))}
+        </View>
+      </View>
+
       <ScrollView horizontal style={styles.presetScroll} contentContainerStyle={styles.presetRow} showsHorizontalScrollIndicator={false}>
-        {presets.map((item) => (
+        {focusPresets.map((item) => (
           <Pressable
             key={item.id}
             disabled={running}
@@ -622,7 +668,7 @@ export default function PracticeSessionRunnerV2({
       <View style={styles.cameraSectionHeader}>
         <View style={styles.headerTextWrap}>
           <Text style={styles.eyebrow}>LIVE CAMERA ANALYSIS</Text>
-          <Text style={styles.cameraSectionTitle}>관절·피크 추적 화면</Text>
+          <Text style={styles.cameraSectionTitle}>{FOCUS_MODE_OPTIONS.find((item) => item.id === focusMode)?.label} 실제 추적 화면</Text>
         </View>
         <Text style={styles.cameraSectionHint}>아래까지 자유롭게 스크롤됩니다</Text>
       </View>
@@ -659,6 +705,15 @@ const styles = StyleSheet.create({
   statusText: { color: '#8b949e', fontSize: 9, lineHeight: 14, marginTop: 3 },
   closeButton: { minWidth: 48, height: 38, borderRadius: 11, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center' },
   closeText: { color: '#f0f6fc', fontSize: 9, fontWeight: '900' },
+  focusModeCard: { borderRadius: 17, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#111d2f', padding: 12, marginTop: 10 },
+  focusModeHeading: { color: '#79c0ff', fontSize: 13, fontWeight: '900' },
+  focusModeGuide: { color: '#b6d8ff', fontSize: 8, lineHeight: 13, marginTop: 4 },
+  focusModeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 9 },
+  focusModeButton: { width: '48.8%', minHeight: 64, borderRadius: 12, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', padding: 9 },
+  focusModeButtonActive: { borderColor: '#2ea043', backgroundColor: '#14251a' },
+  focusModeLabel: { color: '#b1bac4', fontSize: 10, fontWeight: '900' },
+  focusModeLabelActive: { color: '#7ee787' },
+  focusModeDetail: { color: '#8b949e', fontSize: 7, lineHeight: 11, marginTop: 4 },
   presetScroll: { maxHeight: 49, borderBottomWidth: 1, borderBottomColor: '#30363d' },
   presetRow: { gap: 6, paddingHorizontal: 9, paddingVertical: 7 },
   presetChip: { minHeight: 34, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#21262d', justifyContent: 'center', paddingHorizontal: 11 },

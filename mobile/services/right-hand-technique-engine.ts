@@ -33,6 +33,7 @@ export type RightHandTechniqueSample = {
   category: PracticeCategoryId;
   pattern?: string;
   handConfidence: number;
+  wristConfidence?: number;
   palmSize: number;
   wrist: RightHandPoint;
   palmAngle: number;
@@ -145,7 +146,7 @@ function recentWindow(samples: RightHandTechniqueSample[]) {
 }
 
 function confidencePercent(samples: RightHandTechniqueSample[]) {
-  return Math.round(clamp(mean(samples.map((sample) => sample.handConfidence)), 0, 1) * 100);
+  return Math.round(clamp(mean(samples.map((sample) => Math.min(sample.handConfidence, sample.wristConfidence ?? sample.handConfidence))), 0, 1) * 100);
 }
 
 function pointForMotion(sample: RightHandTechniqueSample) {
@@ -158,7 +159,7 @@ function motionSteps(samples: RightHandTechniqueSample[]): MotionStep[] {
     const previous = samples[index - 1];
     const current = samples[index];
     const elapsedMs = current.capturedAt - previous.capturedAt;
-    if (elapsedMs < 8 || elapsedMs > 220) continue;
+    if (elapsedMs < 8 || elapsedMs > 650) continue;
     const stringAngle = current.stringAngle ?? previous.stringAngle;
     if (stringAngle == null) continue;
     const previousPoint = pointForMotion(previous);
@@ -650,6 +651,21 @@ export function analyzeRightHandTechniqueWindow(samples: RightHandTechniqueSampl
   const latest = recent.at(-1);
   if (!latest) return [];
   const confidence = confidencePercent(recent);
+
+  const latestWristConfidence = latest.wristConfidence ?? latest.handConfidence;
+  if (latest.handConfidence >= 0.45 && latest.palmSize > 0 && latestWristConfidence < 0.42) {
+    return [{
+      id: 'right-wrist-unreliable',
+      status: 'cannot-judge',
+      title: '손목 관절점 판정 불가',
+      instruction: '손가락만 넣지 말고 손목 주름부터 손가락 끝까지 화면 안쪽에 넣으세요. 빨간 손목 표시가 연속으로 보여야 분석을 시작합니다.',
+      evidence: `손목 추적 신뢰도가 ${Math.round(latestWristConfidence * 100)}%입니다.`,
+      nextGoal: '손목 표시 70% 이상을 1초간 유지하세요.',
+      confidencePercent: Math.round(latestWristConfidence * 100),
+      priority: 15,
+      measurements: [{ label: '손목 추적', value: `${Math.round(latestWristConfidence * 100)}%` }],
+    }];
+  }
 
   if (latest.handConfidence < 0.45 || latest.palmSize <= 0) {
     return [{

@@ -14,6 +14,7 @@ import {
   type RightHandTechniqueSample,
 } from '../services/right-hand-technique-engine';
 import { analyzeRightHandStringRoles } from '../services/right-hand-string-role-engine';
+import { RightHandMotionTracker } from '../services/right-hand-motion-tracker';
 import {
   analyzeTechniqueWindow,
   type TechniqueFrameSample,
@@ -112,6 +113,12 @@ function toRightHandSample(
     category: context.category,
     pattern: context.pattern,
     handConfidence: result.handednessScore,
+    wristConfidence: Math.min(
+      1,
+      result.handednessScore
+        * Math.min(1, Math.min(wrist.x, 1 - wrist.x, wrist.y, 1 - wrist.y) / 0.07)
+        * Math.min(1, palmSize / 0.16),
+    ),
     palmSize,
     wrist: { x: wrist.x, y: wrist.y },
     palmAngle: Math.atan2(middleMcp.y - wrist.y, middleMcp.x - wrist.x) * 180 / Math.PI,
@@ -232,18 +239,32 @@ export default function TechniqueFeedbackController() {
   const genericSamplesRef = useRef<TechniqueFrameSample[]>([]);
   const rightHandSamplesRef = useRef<RightHandTechniqueSample[]>([]);
   const lastPublishedAtRef = useRef(new Map<string, number>());
+  const motionTrackerRef = useRef(new RightHandMotionTracker());
 
   useEffect(() => subscribeLivePracticeContext(() => {
     genericSamplesRef.current = [];
     rightHandSamplesRef.current = [];
     lastPublishedAtRef.current.clear();
+    motionTrackerRef.current.reset();
   }), []);
 
   useEffect(() => subscribeLiveAnalysis((frame) => {
     if (frame.kind !== 'hand') return;
     const context = getLivePracticeContext();
     if (!context?.active) return;
-    const result = frame.result as ContinuousHandResult;
+    const rawResult = frame.result as ContinuousHandResult;
+    const inferredHits = RIGHT_HAND_CATEGORIES.has(context.category)
+      ? motionTrackerRef.current.update(rawResult, frame.capturedAt, context.category)
+      : [];
+    const result: ContinuousHandResult = inferredHits.length
+      ? {
+          ...rawResult,
+          continuous: {
+            ...rawResult.continuous,
+            newHits: [...(rawResult.continuous?.newHits ?? []), ...inferredHits],
+          },
+        }
+      : rawResult;
 
     const rightHandSample = toRightHandSample(result, frame.capturedAt);
     if (rightHandSample) {
