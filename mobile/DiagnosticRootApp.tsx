@@ -17,10 +17,11 @@ export default function DiagnosticRootApp() {
   useEffect(() => {
     void recordRuntimeDiagnostic('app', 'app_mounted', {
       version: '0.6.0',
-      versionCode: 19,
-      diagnosticsLauncher: true,
-      calibratedRightHandRoi: true,
-      microphoneDisabledInFocusValidation: true,
+      versionCode: 20,
+      focusScreen: 'V7',
+      separateCalibrationScreen: true,
+      cameraFirstLayout: true,
+      microphoneDisabledInFocus: true,
     });
   }, []);
 
