@@ -60,8 +60,8 @@ type TrajectoryCoachOptions = {
 const BIN_COUNT = 16;
 const BASELINE_MIN_SAMPLES = 30;
 const BASELINE_MIN_DURATION_MS = 5_500;
-const STABLE_DEVIATION = 0.31;
-const BROKEN_DEVIATION = 0.46;
+const STABLE_DEVIATION = 0.22;
+const BROKEN_DEVIATION = 0.34;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -86,21 +86,24 @@ function divideVector(vector: Vector, divisor: number) {
   return vector.map((value) => value / Math.max(1, divisor));
 }
 
+function pairDistance(left: Vector, right: Vector, first: number, second: number) {
+  return Math.hypot(
+    (left[first] ?? 0) - (right[first] ?? 0),
+    (left[second] ?? 0) - (right[second] ?? 0),
+  );
+}
+
 function vectorDistance(left: Vector, right: Vector) {
   if (!left.length || left.length !== right.length) return 1;
-  const weights = [
-    1.2, 1.2, 0.75,
-    1.0, 1.0,
-    1.05, 1.05,
-    0.95, 0.95,
-    0.85, 0.85,
-    0.9, 0.9,
-  ];
-  const weighted = left.map((value, index) => {
-    const delta = value - right[index];
-    return delta * delta * (weights[index] ?? 1);
-  });
-  return Math.sqrt(mean(weighted));
+  const wristCenter = pairDistance(left, right, 0, 1) * 2.4;
+  const wristAngle = Math.abs((left[2] ?? 0) - (right[2] ?? 0)) * 1.25;
+  const thumb = pairDistance(left, right, 3, 4) * 0.72;
+  const index = pairDistance(left, right, 5, 6) * 0.92;
+  const middle = pairDistance(left, right, 7, 8) * 0.82;
+  const ring = pairDistance(left, right, 9, 10) * 0.78;
+  const pick = pairDistance(left, right, 11, 12) * 0.95;
+  const combined = mean([wristCenter, wristAngle, thumb, index, middle, ring, pick]);
+  return Math.max(wristCenter, wristAngle, index, pick, combined * 1.15);
 }
 
 function featureVector(sample: MotionSample): Vector {
@@ -131,12 +134,12 @@ function featureVector(sample: MotionSample): Vector {
 function dominantCause(current: Vector, baseline: Vector) {
   const group = (indices: number[]) => mean(indices.map((index) => Math.abs((current[index] ?? 0) - (baseline[index] ?? 0))));
   const candidates = [
-    { id: 'wrist-center', value: group([0, 1]) },
-    { id: 'wrist-angle', value: group([2]) },
-    { id: 'thumb', value: group([3, 4]) },
-    { id: 'index-return', value: group([5, 6]) },
-    { id: 'finger-balance', value: group([7, 8, 9, 10]) },
-    { id: 'pick-path', value: group([11, 12]) },
+    { id: 'wrist-center', value: group([0, 1]) * 2.4 },
+    { id: 'wrist-angle', value: group([2]) * 1.25 },
+    { id: 'thumb', value: group([3, 4]) * 0.72 },
+    { id: 'index-return', value: group([5, 6]) * 0.92 },
+    { id: 'finger-balance', value: group([7, 8, 9, 10]) * 0.8 },
+    { id: 'pick-path', value: group([11, 12]) * 0.95 },
   ].sort((left, right) => right.value - left.value);
   return candidates[0]?.id ?? 'wrist-center';
 }
@@ -155,7 +158,7 @@ function guidance(cause: string, deviationPercent: number, bpm: number, lastStab
       observation: `${bpm} BPM에서 검지 끝의 복귀 궤적이 기준에서 ${deviationPercent}% 벗어났습니다.`,
       cause: '탄현 뒤 검지가 앞으로 남거나 손바닥 쪽 복귀가 늦어 다음 동작 준비가 밀리고 있습니다.',
       correction: '줄을 통과한 즉시 검지 끝을 손바닥 안쪽으로 짧게 되돌리고 다음 음 전에 준비 위치를 만드세요.',
-      reinforcement: 'P-i 또는 i 단독 탄현 후 즉시 복귀하는 동작을 ${Math.max(35, lastStableBpm - 10)} BPM에서 8회 반복하세요.',
+      reinforcement: `P-i 또는 i 단독 탄현 후 즉시 복귀하는 동작을 ${Math.max(35, lastStableBpm - 10)} BPM에서 8회 반복하세요.`,
     };
   }
   if (cause === 'finger-balance') {
@@ -280,7 +283,7 @@ export class TrajectorySpeedCoach {
       this.baselineSamples.push({ bin, vector });
       if (this.canFinishBaseline(sample.capturedAt)) {
         const noise = this.baselineNoise();
-        if (noise <= 0.38) {
+        if (noise <= 0.30) {
           this.baselineReady = true;
           this.phaseStartedAt = sample.capturedAt;
           this.cycleIndex = -1;
@@ -313,8 +316,8 @@ export class TrajectorySpeedCoach {
 
     const baseline = this.baselineVector(bin);
     if (!baseline) return null;
-    const distance = vectorDistance(vector, baseline);
-    this.cycleDistances.push(distance);
+    const measuredDistance = vectorDistance(vector, baseline);
+    this.cycleDistances.push(measuredDistance);
     this.cycleCauses.push(dominantCause(vector, baseline));
 
     const nextCycleIndex = this.currentCycleIndex(sample.capturedAt);
