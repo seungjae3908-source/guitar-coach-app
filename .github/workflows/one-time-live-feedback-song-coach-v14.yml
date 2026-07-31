@@ -1,0 +1,807 @@
+name: One-time live feedback and song posture coach v14
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - .github/workflows/one-time-live-feedback-song-coach-v14.yml
+
+permissions:
+  contents: write
+
+jobs:
+  implement-test-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Implement posture feedback and song coach
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          def write(path: str, content: str):
+              target = Path(path)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content, encoding='utf-8')
+
+          def replace_once(text: str, old: str, new: str, label: str):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          write('mobile/config/song-chord-guides.ts', '''import type { GuitarModeId } from './guitar-mode-profiles';
+
+export type SongChordGuide = {
+  chords: string[];
+  note: string;
+};
+
+const GUIDES: Record<string, Record<string, string[]>> = {
+  'acoustic-stand-by-me': {
+    intro: ['A', 'F#m', 'D', 'E'],
+    verse: ['A', 'F#m', 'D', 'E'],
+    chorus: ['A', 'F#m', 'D', 'E'],
+    bridge: ['D', 'E', 'A', 'F#m'],
+    outro: ['A', 'F#m', 'D', 'E'],
+  },
+  'acoustic-photograph': {
+    intro: ['G', 'Em', 'C', 'D'],
+    verse: ['G', 'Em', 'C', 'D'],
+    chorus: ['G', 'D', 'Em', 'C'],
+    bridge: ['Em', 'C', 'G', 'D'],
+    outro: ['G', 'Em', 'C', 'D'],
+  },
+  'acoustic-fast-car': {
+    intro: ['C', 'G', 'Em', 'D'],
+    verse: ['C', 'G', 'Em', 'D'],
+    chorus: ['C', 'G', 'Em', 'D'],
+    bridge: ['Em', 'D', 'C', 'G'],
+    outro: ['C', 'G', 'Em', 'D'],
+  },
+  'acoustic-dust-in-the-wind': {
+    intro: ['C', 'Cmaj7', 'Cadd9', 'C'],
+    verse: ['C', 'G/B', 'Am', 'G'],
+    chorus: ['F', 'C/E', 'Dm', 'G'],
+    bridge: ['Am', 'G', 'F', 'G'],
+    outro: ['C', 'Cmaj7', 'Cadd9', 'C'],
+  },
+  'electric-seven-nation-army': {
+    intro: ['E5', 'G5', 'E5', 'D5'],
+    verse: ['E5', 'G5', 'A5', 'G5'],
+    chorus: ['E5', 'G5', 'A5', 'B5'],
+    bridge: ['A5', 'G5', 'E5', 'D5'],
+    outro: ['E5', 'G5', 'E5', 'D5'],
+  },
+  'electric-back-in-black': {
+    intro: ['E5', 'D5', 'A5', 'E5'],
+    verse: ['E5', 'D5', 'A5', 'E5'],
+    chorus: ['A5', 'E5', 'B5', 'A5'],
+    bridge: ['G5', 'D5', 'A5', 'E5'],
+    outro: ['E5', 'D5', 'A5', 'E5'],
+  },
+  'electric-sweet-child': {
+    intro: ['D', 'C', 'G', 'D'],
+    verse: ['D', 'C', 'G', 'D'],
+    chorus: ['A', 'C', 'D', 'D'],
+    bridge: ['Em', 'C', 'B7', 'Am'],
+    outro: ['D', 'C', 'G', 'D'],
+  },
+  'electric-sultans-of-swing': {
+    intro: ['Dm', 'C', 'Bb', 'A'],
+    verse: ['Dm', 'C', 'Bb', 'A'],
+    chorus: ['F', 'C', 'Bb', 'Dm'],
+    bridge: ['Gm', 'Bb', 'C', 'Dm'],
+    outro: ['Dm', 'C', 'Bb', 'A'],
+  },
+};
+
+const FALLBACK: Record<GuitarModeId, string[]> = {
+  acoustic: ['G', 'Em', 'C', 'D'],
+  electric: ['E5', 'G5', 'A5', 'B5'],
+};
+
+export function getSongChordGuide(songId: string, sectionId: string, mode: GuitarModeId): SongChordGuide {
+  const chords = GUIDES[songId]?.[sectionId] ?? GUIDES[songId]?.verse ?? FALLBACK[mode];
+  return {
+    chords,
+    note: '구간 연습용 코드 가이드입니다. 원곡의 완전한 채보가 아니라 자세·전환·리듬 훈련을 위한 단순화 진행입니다.',
+  };
+}
+
+export function chordAtSectionProgress(chords: string[], progress: number) {
+  if (!chords.length) return { index: 0, current: '-', next: '-' };
+  const safe = Math.max(0, Math.min(0.999999, Number.isFinite(progress) ? progress : 0));
+  const index = Math.min(chords.length - 1, Math.floor(safe * chords.length));
+  return {
+    index,
+    current: chords[index],
+    next: chords[(index + 1) % chords.length],
+  };
+}
+''')
+
+          write('mobile/services/posture-feedback-engine.ts', '''import type { PoseAnalysisResult, PoseLandmarkPoint } from '../modules/guitar-coach-native';
+
+export type PostureFrameSample = {
+  capturedAt: number;
+  result: PoseAnalysisResult;
+};
+
+export type PostureFeedbackResult = {
+  id: string;
+  status: 'cannot-judge' | 'correction' | 'warning' | 'success';
+  title: string;
+  instruction: string;
+  evidence: string;
+  nextGoal: string;
+  confidencePercent: number;
+  stableCount: number;
+  priority: number;
+  measurements: Array<{ label: string; value: string }>;
+};
+
+type Point = Pick<PoseLandmarkPoint, 'x' | 'y' | 'confidence'>;
+
+const midpoint = (left: Point, right: Point) => ({
+  x: (left.x + right.x) / 2,
+  y: (left.y + right.y) / 2,
+});
+
+const distance = (left: { x: number; y: number }, right: { x: number; y: number }) => (
+  Math.hypot(left.x - right.x, left.y - right.y)
+);
+
+function pointMap(result: PoseAnalysisResult) {
+  return new Map(result.landmarks.map((point) => [point.name, point]));
+}
+
+function percent(value: number) {
+  return Math.round(Math.max(0, Math.min(1, value)) * 100);
+}
+
+export function analyzePostureWindow(samples: PostureFrameSample[]): PostureFeedbackResult[] {
+  const latestSample = samples.at(-1);
+  if (!latestSample) return [];
+  const latest = latestSample.result;
+  const points = pointMap(latest);
+  const requiredNames = [
+    'nose', 'leftShoulder', 'rightShoulder', 'leftElbow', 'rightElbow',
+    'leftWrist', 'rightWrist', 'leftHip', 'rightHip',
+  ] as const;
+  const required = requiredNames.map((name) => points.get(name));
+  const visible = required.filter((point) => point && point.confidence >= 0.35) as PoseLandmarkPoint[];
+  const confidence = visible.length
+    ? visible.reduce((sum, point) => sum + point.confidence, 0) / requiredNames.length
+    : 0;
+
+  if (!latest.hasPerson || visible.length < requiredNames.length) {
+    return [{
+      id: 'posture-unavailable',
+      status: 'cannot-judge',
+      title: '자세 정밀 판정 불가',
+      instruction: '머리, 양쪽 어깨·팔꿈치·손목과 골반이 모두 화면 안에 들어오게 휴대폰 거리를 맞추세요.',
+      evidence: `필수 자세 관절 ${visible.length}/${requiredNames.length}개가 신뢰 기준을 통과했습니다.`,
+      nextGoal: '기타를 든 상태로 상체 전체가 보이게 한 뒤 같은 자세를 2초 유지하세요.',
+      confidencePercent: percent(confidence),
+      stableCount: 0,
+      priority: 15,
+      measurements: [{ label: '자세 관절', value: `${visible.length}/${requiredNames.length}` }],
+    }];
+  }
+
+  const nose = points.get('nose')!;
+  const leftShoulder = points.get('leftShoulder')!;
+  const rightShoulder = points.get('rightShoulder')!;
+  const leftHip = points.get('leftHip')!;
+  const rightHip = points.get('rightHip')!;
+  const rightElbow = points.get('rightElbow')!;
+  const shoulderMid = midpoint(leftShoulder, rightShoulder);
+  const hipMid = midpoint(leftHip, rightHip);
+  const shoulderWidth = Math.max(0.08, distance(leftShoulder, rightShoulder));
+  const shoulderTilt = Math.abs(leftShoulder.y - rightShoulder.y) / shoulderWidth;
+  const headOffset = Math.abs(nose.x - shoulderMid.x) / shoulderWidth;
+  const torsoLean = Math.abs(shoulderMid.x - hipMid.x) / shoulderWidth;
+  const elbowLift = Math.max(0, (rightShoulder.y - rightElbow.y) / shoulderWidth);
+
+  const recent = samples.filter((sample) => latestSample.capturedAt - sample.capturedAt <= 2_400);
+  const centers = recent.flatMap((sample) => {
+    const map = pointMap(sample.result);
+    const left = map.get('leftShoulder');
+    const right = map.get('rightShoulder');
+    if (!sample.result.hasPerson || !left || !right || left.confidence < 0.35 || right.confidence < 0.35) return [];
+    return [midpoint(left, right)];
+  });
+  const averageCenter = centers.length
+    ? centers.reduce((sum, item) => ({ x: sum.x + item.x, y: sum.y + item.y }), { x: 0, y: 0 })
+    : shoulderMid;
+  if (centers.length) {
+    averageCenter.x /= centers.length;
+    averageCenter.y /= centers.length;
+  }
+  const bodyJitter = centers.length >= 4
+    ? Math.sqrt(centers.reduce((sum, item) => sum + distance(item, averageCenter) ** 2, 0) / centers.length) / shoulderWidth
+    : 0;
+
+  const measurements = [
+    { label: '어깨 기울기', value: `${Math.round(shoulderTilt * 100)}%` },
+    { label: '머리 쏠림', value: `${Math.round(headOffset * 100)}%` },
+    { label: '상체 기울기', value: `${Math.round(torsoLean * 100)}%` },
+    { label: '몸 흔들림', value: `${Math.round(bodyJitter * 100)}%` },
+  ];
+  const feedback: PostureFeedbackResult[] = [];
+
+  if (shoulderTilt > 0.18) feedback.push({
+    id: 'posture-shoulder-tilt',
+    status: shoulderTilt > 0.30 ? 'warning' : 'correction',
+    title: '양쪽 어깨 높이가 크게 다릅니다',
+    instruction: '기타를 끌어올리려고 한쪽 어깨를 들지 말고, 스트랩이나 기타 위치를 조정해 어깨를 아래로 내려놓으세요.',
+    evidence: `어깨 높이 차이가 어깨 폭의 ${Math.round(shoulderTilt * 100)}%입니다.`,
+    nextGoal: '숨을 내쉬고 양쪽 어깨 높이 차이를 15% 아래로 3회 유지하세요.',
+    confidencePercent: percent(confidence),
+    stableCount: 0,
+    priority: 14,
+    measurements,
+  });
+
+  if (torsoLean > 0.24) feedback.push({
+    id: 'posture-torso-lean',
+    status: torsoLean > 0.38 ? 'warning' : 'correction',
+    title: '상체가 한쪽으로 쏠리고 있습니다',
+    instruction: '기타를 보기 위해 허리를 옆으로 꺾지 말고 골반 위에 가슴 중앙을 다시 올리세요.',
+    evidence: `어깨 중심과 골반 중심 차이가 어깨 폭의 ${Math.round(torsoLean * 100)}%입니다.`,
+    nextGoal: '가슴 중앙을 골반 중앙 위에 두고 같은 구절을 다시 연주하세요.',
+    confidencePercent: percent(confidence),
+    stableCount: 0,
+    priority: 13,
+    measurements,
+  });
+
+  if (headOffset > 0.30) feedback.push({
+    id: 'posture-head-offset',
+    status: 'correction',
+    title: '고개가 지판 쪽으로 과하게 빠졌습니다',
+    instruction: '눈만 지판으로 내리고 턱과 머리는 어깨 중앙 위에 남겨 목 긴장을 줄이세요.',
+    evidence: `머리 중심이 어깨 중앙에서 ${Math.round(headOffset * 100)}% 벗어났습니다.`,
+    nextGoal: '턱을 살짝 당긴 상태로 다음 코드 전환까지 유지하세요.',
+    confidencePercent: percent(confidence),
+    stableCount: 0,
+    priority: 12,
+    measurements,
+  });
+
+  if (bodyJitter > 0.075) feedback.push({
+    id: 'posture-body-jitter',
+    status: bodyJitter > 0.12 ? 'warning' : 'correction',
+    title: '연주할 때 상체가 박자마다 흔들립니다',
+    instruction: '리듬은 손목과 팔에서 만들고 몸통은 의자나 양발 위에 안정시켜 두세요.',
+    evidence: `최근 자세 중심 흔들림이 어깨 폭의 ${Math.round(bodyJitter * 100)}%입니다.`,
+    nextGoal: '다음 2마디 동안 가슴 중심 이동을 6% 아래로 줄이세요.',
+    confidencePercent: percent(confidence),
+    stableCount: 0,
+    priority: 11,
+    measurements,
+  });
+
+  if (elbowLift > 0.18) feedback.push({
+    id: 'posture-right-elbow-lift',
+    status: 'correction',
+    title: '오른쪽 팔꿈치가 어깨 쪽으로 올라갑니다',
+    instruction: '오른쪽 어깨 힘을 빼고 팔꿈치를 기타 옆면을 따라 자연스럽게 아래로 내리세요.',
+    evidence: `오른쪽 팔꿈치가 어깨선보다 ${Math.round(elbowLift * 100)}% 위에 있습니다.`,
+    nextGoal: '팔꿈치를 내린 뒤 손목만으로 같은 스트로크를 3회 반복하세요.',
+    confidencePercent: percent(confidence),
+    stableCount: 0,
+    priority: 10,
+    measurements,
+  });
+
+  if (!feedback.length && recent.length >= 6) {
+    feedback.push({
+      id: 'posture-balanced-success',
+      status: 'success',
+      title: '상체 중심과 어깨가 안정적입니다',
+      instruction: '현재 어깨 높이와 가슴 중심을 유지한 채 손목·손가락 동작만 이어가세요.',
+      evidence: `어깨 ${Math.round(shoulderTilt * 100)}% · 상체 ${Math.round(torsoLean * 100)}% · 흔들림 ${Math.round(bodyJitter * 100)}%로 안정 범위입니다.`,
+      nextGoal: '같은 자세를 다음 구간까지 유지하세요.',
+      confidencePercent: percent(confidence),
+      stableCount: 3,
+      priority: 8,
+      measurements,
+    });
+  }
+
+  return feedback.slice(0, 5);
+}
+''')
+
+          write('mobile/components/PostureFeedbackController.tsx', '''import { useEffect, useRef } from 'react';
+
+import { subscribeLiveAnalysis } from '../services/analysis-stream';
+import { publishLiveCoachFeedback } from '../services/live-coach-feedback';
+import { getLivePracticeContext, subscribeLivePracticeContext } from '../services/practice-session-context';
+import { analyzePostureWindow, type PostureFrameSample } from '../services/posture-feedback-engine';
+
+export default function PostureFeedbackController() {
+  const samplesRef = useRef<PostureFrameSample[]>([]);
+  const lastPublishedAtRef = useRef(new Map<string, number>());
+
+  useEffect(() => subscribeLivePracticeContext(() => {
+    samplesRef.current = [];
+    lastPublishedAtRef.current.clear();
+  }), []);
+
+  useEffect(() => subscribeLiveAnalysis((frame) => {
+    if (frame.kind !== 'pose') return;
+    const context = getLivePracticeContext();
+    if (!context?.active) return;
+
+    samplesRef.current.push({ capturedAt: frame.capturedAt, result: frame.result });
+    while (
+      samplesRef.current.length > 48
+      || (samplesRef.current[0] && frame.capturedAt - samplesRef.current[0].capturedAt > 4_000)
+    ) samplesRef.current.shift();
+
+    analyzePostureWindow(samplesRef.current).forEach((item) => {
+      const previousAt = lastPublishedAtRef.current.get(item.id) ?? 0;
+      const interval = item.status === 'success' ? 1_600 : 650;
+      if (frame.capturedAt - previousAt < interval) return;
+      lastPublishedAtRef.current.set(item.id, frame.capturedAt);
+      publishLiveCoachFeedback({
+        id: item.id,
+        capturedAt: frame.capturedAt,
+        status: item.status,
+        category: context.category,
+        title: item.title,
+        instruction: item.instruction,
+        evidence: item.evidence,
+        nextGoal: item.nextGoal,
+        confidencePercent: item.confidencePercent,
+        stableCount: item.stableCount,
+        priority: item.priority,
+        measurements: item.measurements,
+      });
+    });
+  }), []);
+
+  return null;
+}
+''')
+
+          write('mobile/tests/posture-feedback-engine.test.ts', '''import type { PoseAnalysisResult, PoseLandmarkPoint } from '../modules/guitar-coach-native';
+import { analyzePostureWindow } from '../services/posture-feedback-engine';
+
+let checks = 0;
+function assert(condition: unknown, message: string) {
+  checks += 1;
+  if (!condition) throw new Error(message);
+}
+
+const names: PoseLandmarkPoint['name'][] = [
+  'nose', 'leftShoulder', 'rightShoulder', 'leftElbow', 'rightElbow',
+  'leftWrist', 'rightWrist', 'leftHip', 'rightHip',
+];
+
+function result(overrides: Partial<Record<PoseLandmarkPoint['name'], { x: number; y: number }>> = {}): PoseAnalysisResult {
+  const defaults: Record<string, { x: number; y: number }> = {
+    nose: { x: 0.50, y: 0.18 },
+    leftShoulder: { x: 0.38, y: 0.35 },
+    rightShoulder: { x: 0.62, y: 0.35 },
+    leftElbow: { x: 0.32, y: 0.50 },
+    rightElbow: { x: 0.68, y: 0.50 },
+    leftWrist: { x: 0.42, y: 0.62 },
+    rightWrist: { x: 0.60, y: 0.62 },
+    leftHip: { x: 0.43, y: 0.70 },
+    rightHip: { x: 0.57, y: 0.70 },
+  };
+  return {
+    hasPerson: true,
+    imageWidth: 720,
+    imageHeight: 1280,
+    latencyMs: 30,
+    landmarks: names.map((name) => ({ name, ...(overrides[name] ?? defaults[name]), z: 0, confidence: 0.92 })),
+  };
+}
+
+{
+  const feedback = analyzePostureWindow([{ capturedAt: 1000, result: { ...result(), hasPerson: false, landmarks: [] } }]);
+  assert(feedback[0]?.status === 'cannot-judge', '사람이 없으면 자세를 추측하면 안 됩니다.');
+}
+
+{
+  const samples = Array.from({ length: 8 }, (_, index) => ({ capturedAt: 1000 + index * 180, result: result() }));
+  const feedback = analyzePostureWindow(samples);
+  assert(feedback.some((item) => item.status === 'success'), '안정된 자세에는 잘한 점이 나와야 합니다.');
+}
+
+{
+  const samples = Array.from({ length: 8 }, (_, index) => ({
+    capturedAt: 1000 + index * 180,
+    result: result({ leftShoulder: { x: 0.38, y: 0.25 }, rightShoulder: { x: 0.62, y: 0.42 } }),
+  }));
+  const feedback = analyzePostureWindow(samples);
+  assert(feedback.some((item) => item.id === 'posture-shoulder-tilt'), '어깨 기울기를 구체적으로 지적해야 합니다.');
+}
+
+{
+  const samples = Array.from({ length: 8 }, (_, index) => ({
+    capturedAt: 1000 + index * 180,
+    result: result({ leftHip: { x: 0.62, y: 0.70 }, rightHip: { x: 0.76, y: 0.70 } }),
+  }));
+  const feedback = analyzePostureWindow(samples);
+  assert(feedback.some((item) => item.id === 'posture-torso-lean'), '상체 쏠림을 구체적으로 지적해야 합니다.');
+}
+
+console.log(`Posture feedback engine tests passed: ${checks}`);
+''')
+
+          write('mobile/tests/song-chord-guides.test.ts', '''import { chordAtSectionProgress, getSongChordGuide } from '../config/song-chord-guides';
+
+let checks = 0;
+function assert(condition: unknown, message: string) {
+  checks += 1;
+  if (!condition) throw new Error(message);
+}
+
+const guide = getSongChordGuide('acoustic-stand-by-me', 'verse', 'acoustic');
+assert(guide.chords.join('-') === 'A-F#m-D-E', '등록곡의 구간 코드 진행을 반환해야 합니다.');
+assert(chordAtSectionProgress(guide.chords, 0).current === 'A', '구간 시작 코드를 반환해야 합니다.');
+assert(chordAtSectionProgress(guide.chords, 0.3).current === 'F#m', '진행률에 맞는 현재 코드를 반환해야 합니다.');
+assert(chordAtSectionProgress(guide.chords, 0.99).next === 'A', '마지막 코드 다음은 반복 첫 코드여야 합니다.');
+assert(getSongChordGuide('unknown', 'verse', 'electric').chords[0] === 'E5', '미등록곡도 모드별 안전한 연습 진행이 있어야 합니다.');
+
+console.log(`Song chord guide tests passed: ${checks}`);
+''')
+
+          # Mount the posture controller globally.
+          path = Path('mobile/CompleteBetaAppV060Plus.tsx')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              "import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';\n",
+              "import PracticeSessionRunnerV2 from './components/PracticeSessionRunnerV2';\nimport PostureFeedbackController from './components/PostureFeedbackController';\n",
+              'posture controller import',
+          )
+          text = replace_once(
+              text,
+              "      <TechniqueFeedbackController />\n",
+              "      <TechniqueFeedbackController />\n      <PostureFeedbackController />\n",
+              'posture controller mount',
+          )
+          path.write_text(text, encoding='utf-8')
+
+          # Add current/next chord display and real camera feedback to song studio.
+          path = Path('mobile/components/MasterSongStudioPanel.tsx')
+          text = path.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              "import type { GuitarModeId } from '../config/guitar-mode-profiles';\n",
+              "import type { GuitarModeId } from '../config/guitar-mode-profiles';\nimport type { PracticePreset } from '../config/personal-practice-presets';\nimport { chordAtSectionProgress, getSongChordGuide } from '../config/song-chord-guides';\n",
+              'song studio type imports',
+          )
+          text = replace_once(
+              text,
+              "import YouTubePracticePlayer, { type YouTubePlayerState, type YouTubeSeekRequest } from './YouTubePracticePlayer';\n",
+              "import LiveTeacherPanel from './LiveTeacherPanel';\nimport SessionCoachCamera from './SessionCoachCamera';\nimport YouTubePracticePlayer, { type YouTubePlayerState, type YouTubeSeekRequest } from './YouTubePracticePlayer';\n",
+              'song studio coach component imports',
+          )
+          text = replace_once(
+              text,
+              "import { normalizeYouTubeUrl } from '../services/youtube-url';\n",
+              "import { normalizeYouTubeUrl } from '../services/youtube-url';\nimport { clearLiveCoachFeedback } from '../services/live-coach-feedback';\nimport { clearLivePracticeContext, setLivePracticeContext } from '../services/practice-session-context';\n",
+              'song studio context imports',
+          )
+          text = replace_once(
+              text,
+              "  const [error, setError] = useState('');\n",
+              "  const [error, setError] = useState('');\n  const [coachRunning, setCoachRunning] = useState(false);\n",
+              'song studio coach state',
+          )
+          text = replace_once(
+              text,
+              "  const loadingSongRef = useRef(false);\n",
+              "  const loadingSongRef = useRef(false);\n  const lastSpokenChordRef = useRef('');\n",
+              'song studio chord speech ref',
+          )
+          loop_anchor = "  const loop = timeline.find((item) => item.section.id === loopSectionId) ?? active;\n"
+          loop_insert = '''  const loop = timeline.find((item) => item.section.id === loopSectionId) ?? active;
+  const activeSectionId = active?.section.id ?? song?.sections[0]?.id ?? 'intro';
+  const chordGuide = useMemo(
+    () => getSongChordGuide(song?.id ?? '', activeSectionId, mode),
+    [activeSectionId, mode, song?.id],
+  );
+  const sectionProgress = active && active.end > active.start
+    ? Math.max(0, Math.min(1, (currentTime - active.start) / (active.end - active.start)))
+    : 0;
+  const chordState = chordAtSectionProgress(chordGuide.chords, sectionProgress);
+  const studioPreset = useMemo<PracticePreset | null>(() => {
+    if (!song || !active) return null;
+    const category = song.targetCategories.includes('strumming')
+      ? 'strumming'
+      : song.targetCategories[0] ?? 'chords';
+    return {
+      id: `song-studio:${song.id}:${active.section.id}`,
+      guitarMode: mode,
+      category,
+      title: `${song.title} · ${active.section.label} 실시간 코치`,
+      goal: active.section.coachCue,
+      startBpm: song.baseBpm,
+      targetBpm: song.baseBpm,
+      durationSeconds: 600,
+      pattern: chordGuide.chords.join(' → '),
+      cameraFocus: 'full-body',
+      checkpoints: [
+        '머리·양쪽 어깨·팔꿈치·손목·골반이 모두 보이는지',
+        active.section.rightHand,
+        active.section.leftHand,
+        `현재 코드 진행 ${chordGuide.chords.join(' → ')}`,
+      ],
+      automaticFeedbackRules: [
+        '자세 관절이 부족하면 판정 불가',
+        '어깨 기울기·상체 쏠림·머리 위치·몸 흔들림을 구체적으로 지적',
+        '문제가 없을 때만 잘한 점을 표시',
+      ],
+    };
+  }, [active, chordGuide.chords, mode, song]);
+'''
+          text = replace_once(text, loop_anchor, loop_insert, 'song studio chord state')
+
+          cleanup_anchor = '''  useEffect(() => () => {
+    void stopCoachSpeechAsync();
+  }, []);
+'''
+          cleanup_insert = '''  useEffect(() => () => {
+    void stopCoachSpeechAsync();
+  }, []);
+
+  useEffect(() => {
+    if (!coachRunning || !studioPreset) {
+      clearLivePracticeContext();
+      return;
+    }
+    clearLiveCoachFeedback();
+    setLivePracticeContext({
+      active: true,
+      guitarMode: studioPreset.guitarMode,
+      presetId: studioPreset.id,
+      title: studioPreset.title,
+      goal: studioPreset.goal,
+      pattern: studioPreset.pattern,
+      category: studioPreset.category,
+      cameraFocus: studioPreset.cameraFocus,
+      bpm: studioPreset.startBpm,
+      targetBpm: studioPreset.targetBpm,
+      pulsesPerBeat: 2,
+      microphoneEnabled: false,
+      calibrationConfidencePercent: null,
+      startedAt: Date.now(),
+    });
+    return () => {
+      clearLivePracticeContext();
+      clearLiveCoachFeedback();
+    };
+  }, [coachRunning, studioPreset]);
+'''
+          text = replace_once(text, cleanup_anchor, cleanup_insert, 'song studio live context')
+
+          section_voice_anchor = '''  useEffect(() => {
+    if (!voiceEnabled || !sectionVoiceEnabled || playerState !== 'playing' || !active?.section) return;
+    if (lastSpokenSectionRef.current === active.section.id) return;
+    lastSpokenSectionRef.current = active.section.id;
+    if (!isCoachSpeechAvailable) return;
+    void prepareCoachSpeechAsync()
+      .then(() => speakCoachPhraseAsync(
+        `${active.section.label}. ${active.section.technique}. ${active.section.coachCue}`,
+        { interrupt: false, speechRate: 1.03 },
+      ))
+      .catch(() => undefined);
+  }, [active?.section, playerState, sectionVoiceEnabled, voiceEnabled]);
+'''
+          section_voice_insert = section_voice_anchor + '''
+  useEffect(() => {
+    if (!coachRunning || !voiceEnabled || !sectionVoiceEnabled || playerState !== 'playing') return;
+    const key = `${activeSectionId}:${chordState.index}`;
+    if (lastSpokenChordRef.current === key) return;
+    lastSpokenChordRef.current = key;
+    if (!isCoachSpeechAvailable) return;
+    void prepareCoachSpeechAsync()
+      .then(() => speakCoachPhraseAsync(
+        `현재 ${chordState.current} 코드. 다음 ${chordState.next} 코드입니다.`,
+        { interrupt: false, speechRate: 1.02 },
+      ))
+      .catch(() => undefined);
+  }, [activeSectionId, chordState.current, chordState.index, chordState.next, coachRunning, playerState, sectionVoiceEnabled, voiceEnabled]);
+'''
+          text = replace_once(text, section_voice_anchor, section_voice_insert, 'song studio chord voice')
+
+          url_card_anchor = "      <View style={styles.urlCard}>\n"
+          chord_ui = '''      <View style={styles.chordCoachCard}>
+        <View style={styles.chordTopRow}>
+          <View style={styles.currentChordWrap}>
+            <Text style={styles.chordLabel}>현재 코드</Text>
+            <Text style={styles.currentChord}>{chordState.current}</Text>
+          </View>
+          <View style={styles.nextChordWrap}>
+            <Text style={styles.chordLabel}>다음 코드</Text>
+            <Text style={styles.nextChord}>{chordState.next}</Text>
+          </View>
+        </View>
+        <View style={styles.chordProgressionRow}>
+          {chordGuide.chords.map((chord, index) => (
+            <View key={`${activeSectionId}-${chord}-${index}`} style={[styles.chordChip, index === chordState.index && styles.chordChipActive]}>
+              <Text style={[styles.chordChipText, index === chordState.index && styles.chordChipTextActive]}>{chord}</Text>
+            </View>
+          ))}
+        </View>
+        <Text style={styles.chordGuideNote}>{chordGuide.note}</Text>
+      </View>
+
+'''
+          text = replace_once(text, url_card_anchor, chord_ui + url_card_anchor, 'song studio chord UI')
+
+          transport_anchor = "      <View style={styles.transportCard}>\n"
+          coach_ui = '''      <View style={styles.studioCoachCard}>
+        <View style={styles.studioCoachHeader}>
+          <View style={styles.studioCoachHeaderText}>
+            <Text style={styles.studioCoachEyebrow}>LIVE POSTURE & PLAYING COACH</Text>
+            <Text style={styles.studioCoachTitle}>곡을 들으면서 내 자세 실시간 지적</Text>
+            <Text style={styles.studioCoachGuide}>카메라에서 어깨·머리·상체·팔꿈치·손목을 읽고, 잘못된 점과 잘된 점을 근거와 함께 표시하고 음성으로 안내합니다.</Text>
+          </View>
+          <Pressable
+            onPress={() => setCoachRunning((value) => !value)}
+            style={[styles.coachToggle, coachRunning && styles.coachToggleActive]}
+          >
+            <Text style={[styles.coachToggleText, coachRunning && styles.coachToggleTextActive]}>{coachRunning ? '코치 종료' : '코치 시작'}</Text>
+          </Pressable>
+        </View>
+        {coachRunning && studioPreset ? (
+          <>
+            <SessionCoachCamera running category={studioPreset.category} cameraFocus="full-body" />
+            <LiveTeacherPanel preset={studioPreset} running voiceEnabled={voiceEnabled} />
+          </>
+        ) : (
+          <View style={styles.coachReadyBox}>
+            <Text style={styles.coachReadyTitle}>시작하면 이렇게 지적합니다</Text>
+            <Text style={styles.coachReadyText}>• 잘못됨: 어깨 들림, 머리 쏠림, 상체 기울기, 몸 흔들림</Text>
+            <Text style={styles.coachReadyText}>• 잘됨: 상체 중심 안정, 어깨 균형, 자세 유지 성공</Text>
+            <Text style={styles.coachReadyText}>• 근거 부족: 관절이 가려지면 점수 대신 판정 불가</Text>
+          </View>
+        )}
+      </View>
+
+'''
+          text = replace_once(text, transport_anchor, coach_ui + transport_anchor, 'song studio live coach UI')
+
+          style_insert = '''
+  chordCoachCard: { borderRadius: 16, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#0d1d31', padding: 13, marginTop: 12 },
+  chordTopRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10 },
+  currentChordWrap: { flex: 1.25, borderRadius: 13, backgroundColor: '#1f6feb', padding: 12 },
+  nextChordWrap: { flex: 1, borderRadius: 13, backgroundColor: '#161b22', borderWidth: 1, borderColor: '#30363d', padding: 12 },
+  chordLabel: { color: '#b1bac4', fontSize: 8, fontWeight: '900' },
+  currentChord: { color: '#ffffff', fontSize: 34, lineHeight: 39, fontWeight: '900', marginTop: 3 },
+  nextChord: { color: '#79c0ff', fontSize: 25, lineHeight: 31, fontWeight: '900', marginTop: 5 },
+  chordProgressionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 11 },
+  chordChip: { minWidth: 48, borderRadius: 10, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', paddingHorizontal: 10, paddingVertical: 8, alignItems: 'center' },
+  chordChipActive: { backgroundColor: '#238636', borderColor: '#7ee787' },
+  chordChipText: { color: '#b1bac4', fontSize: 12, fontWeight: '900' },
+  chordChipTextActive: { color: '#ffffff' },
+  chordGuideNote: { color: '#8b949e', fontSize: 7, lineHeight: 12, marginTop: 9 },
+  studioCoachCard: { borderRadius: 16, borderWidth: 1, borderColor: '#2ea043', backgroundColor: '#0d2117', padding: 10, marginTop: 12 },
+  studioCoachHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, padding: 3 },
+  studioCoachHeaderText: { flex: 1 },
+  studioCoachEyebrow: { color: '#7ee787', fontSize: 7, fontWeight: '900', letterSpacing: 0.8 },
+  studioCoachTitle: { color: '#ffffff', fontSize: 15, lineHeight: 20, fontWeight: '900', marginTop: 3 },
+  studioCoachGuide: { color: '#b1bac4', fontSize: 8, lineHeight: 13, marginTop: 4 },
+  coachToggle: { borderRadius: 10, borderWidth: 1, borderColor: '#2ea043', paddingHorizontal: 11, paddingVertical: 9 },
+  coachToggleActive: { backgroundColor: '#da3633', borderColor: '#f85149' },
+  coachToggleText: { color: '#7ee787', fontSize: 9, fontWeight: '900' },
+  coachToggleTextActive: { color: '#ffffff' },
+  coachReadyBox: { borderRadius: 12, backgroundColor: '#161b22', padding: 11, marginTop: 10 },
+  coachReadyTitle: { color: '#f0f6fc', fontSize: 10, fontWeight: '900' },
+  coachReadyText: { color: '#b1bac4', fontSize: 8, lineHeight: 14, marginTop: 4 },
+'''
+          last_close = text.rfind('\n});')
+          if last_close < 0:
+              raise SystemExit('song studio styles closing marker is missing')
+          text = text[:last_close] + style_insert + text[last_close:]
+          path.write_text(text, encoding='utf-8')
+
+          # Add the two new quality gates to the existing script.
+          path = Path('mobile/package.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          quality = data['scripts']['quality:analysis']
+          compile_anchor = 'services/continuous-tracking-quality.ts '
+          if 'services/posture-feedback-engine.ts' not in quality:
+              quality = quality.replace(
+                  compile_anchor,
+                  compile_anchor + 'services/posture-feedback-engine.ts config/song-chord-guides.ts ',
+                  1,
+              )
+              quality = quality.replace(
+                  'tests/continuous-tracking-quality.test.ts &&',
+                  'tests/continuous-tracking-quality.test.ts tests/posture-feedback-engine.test.ts tests/song-chord-guides.test.ts &&',
+                  1,
+              )
+              quality += ' && node .quality-dist/tests/posture-feedback-engine.test.js && node .quality-dist/tests/song-chord-guides.test.js'
+          data['scripts']['quality:analysis'] = quality
+          path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          # Bump only the separate test package build number.
+          path = Path('mobile/app.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+          data['expo']['android']['versionCode'] = 14
+          path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Install and run full quality gates
+        working-directory: mobile
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+
+      - name: Generate Android native project
+        working-directory: mobile
+        env:
+          CI: 1
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build and verify ARM64 APK
+        working-directory: mobile/android
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+          build_tools=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+          tools="$ANDROID_HOME/build-tools/$build_tools"
+          release_dir='app/build/outputs/apk/release'
+          output='app/build/outputs/apk/guitar-coach-ai-v14.apk'
+          signed=$(find "$release_dir" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -n 1 || true)
+          unsigned=$(find "$release_dir" -maxdepth 1 -type f -name '*unsigned.apk' | head -n 1 || true)
+          if [ -n "$signed" ]; then
+            cp "$signed" "$output"
+          elif [ -n "$unsigned" ]; then
+            "$tools/zipalign" -f 4 "$unsigned" /tmp/guitar-coach-ai-v14-aligned.apk
+            "$tools/apksigner" sign --ks app/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$output" /tmp/guitar-coach-ai-v14-aligned.apk
+          else
+            echo 'Release APK was not generated.'
+            exit 1
+          fi
+          "$tools/apksigner" verify --verbose "$output"
+          test $(stat -c%s "$output") -gt 1000000
+          sha256sum "$output"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guitar-coach-ai-live-song-coach-v14-apk
+          path: mobile/android/app/build/outputs/apk/guitar-coach-ai-v14.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Commit validated implementation
+        run: |
+          rm -f .github/workflows/one-time-live-feedback-song-coach-v14.yml
+          rm -rf mobile/android mobile/.quality-dist mobile/node_modules
+          git config user.name 'guitar-coach-ci'
+          git config user.email 'guitar-coach-ci@users.noreply.github.com'
+          git add mobile .github/workflows/one-time-live-feedback-song-coach-v14.yml
+          git commit -m 'Connect live posture feedback and song studio coaching'
+          git push origin HEAD:agent/live-coach-compat-v055
