@@ -42,37 +42,12 @@ jobs:
 
           path = Path('mobile/components/MasterSongStudioPanel.tsx')
           text = path.read_text(encoding='utf-8')
-          effect = '''  useEffect(() => {
-            if (!coachRunning || !studioPreset) {
-              clearLivePracticeContext();
-              return;
-            }
-            clearLiveCoachFeedback();
-            setLivePracticeContext({
-              active: true,
-              guitarMode: studioPreset.guitarMode,
-              presetId: studioPreset.id,
-              title: studioPreset.title,
-              goal: studioPreset.goal,
-              pattern: studioPreset.pattern,
-              category: studioPreset.category,
-              cameraFocus: studioPreset.cameraFocus,
-              bpm: studioPreset.startBpm,
-              targetBpm: studioPreset.targetBpm,
-              pulsesPerBeat: 2,
-              microphoneEnabled: false,
-              calibrationConfidencePercent: null,
-              startedAt: Date.now(),
-            });
-            return () => {
-              clearLivePracticeContext();
-              clearLiveCoachFeedback();
-            };
-          }, [coachRunning, studioPreset]);
-          '''
-          if text.count(effect) != 1:
-              raise SystemExit(f'live context effect count is {text.count(effect)}')
-          text = text.replace(effect, '', 1)
+          effect_start_marker = "  useEffect(() => {\n    if (!coachRunning || !studioPreset) {"
+          effect_end_marker = "  }, [coachRunning, studioPreset]);\n"
+          effect_start = text.index(effect_start_marker)
+          effect_end = text.index(effect_end_marker, effect_start) + len(effect_end_marker)
+          effect = text[effect_start:effect_end]
+          text = text[:effect_start] + text[effect_end:]
           declaration_end = "  }, [active, chordGuide.chords, mode, song]);\n"
           if text.count(declaration_end) != 1:
               raise SystemExit(f'studio preset declaration marker count is {text.count(declaration_end)}')
