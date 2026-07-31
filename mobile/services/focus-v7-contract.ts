@@ -16,8 +16,8 @@ export type FocusV7Evidence = {
 
 export function focusV7CameraHeight(viewportWidth: number, viewportHeight: number) {
   const portraitFourThree = Math.max(280, viewportWidth * 4 / 3);
-  const available = Math.max(320, viewportHeight - 300);
-  return Math.round(Math.min(portraitFourThree, available, viewportHeight * 0.62));
+  const availableAfterControls = Math.max(320, viewportHeight - 350);
+  return Math.round(Math.min(portraitFourThree, availableAfterControls, viewportHeight * 0.58));
 }
 
 export function canShowFocusV7Coaching(evidence: FocusV7Evidence) {
