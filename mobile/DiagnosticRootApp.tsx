@@ -17,9 +17,10 @@ export default function DiagnosticRootApp() {
   useEffect(() => {
     void recordRuntimeDiagnostic('app', 'app_mounted', {
       version: '0.6.0',
-      versionCode: 17,
+      versionCode: 19,
       diagnosticsLauncher: true,
-      cameraCompatibilityRecovery: true,
+      calibratedRightHandRoi: true,
+      microphoneDisabledInFocusValidation: true,
     });
   }, []);
 
