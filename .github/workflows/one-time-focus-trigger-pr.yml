@@ -1,0 +1,60 @@
+name: One-time focus integration PR trigger
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/one-time-focus-trigger-pr.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Execute registered exact patch script
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          workflow = Path('.github/workflows/one-time-focus-analysis-youtube.yml').read_text()
+          marker_start = "          python3 - <<'PY'\n"
+          marker_end = "\n          PY\n\n      - name: Type-check and run quality regression tests"
+          start = workflow.index(marker_start) + len(marker_start)
+          end = workflow.index(marker_end, start)
+          script = dedent(workflow[start:end])
+          exec(compile(script, 'focus-integration-patch.py', 'exec'))
+          Path('.github/workflows/one-time-focus-trigger-pr.yml').unlink()
+          PY
+
+      - name: Type-check and run quality regression tests
+        working-directory: mobile
+        run: |
+          npm ci
+          npm run typecheck
+
+      - name: Commit integrated implementation
+        run: |
+          git config user.name guitar-coach-focus-bot
+          git config user.email guitar-coach-focus-bot@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m "Activate focus modes, wrist tracking, and YouTube selection"
+          git push origin HEAD:agent/live-coach-compat-v055
