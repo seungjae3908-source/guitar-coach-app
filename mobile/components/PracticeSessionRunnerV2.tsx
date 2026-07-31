@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 
 import type { GuitarModeId } from '../config/guitar-mode-profiles';
 import { stopNativeAudioAnalysisAsync } from '../modules/guitar-coach-audio';
-import PracticeSessionRunnerV6 from './PracticeSessionRunnerV6';
+import PracticeSessionRunnerV7 from './PracticeSessionRunnerV7';
 
 export default function PracticeSessionRunnerV2({
   mode,
@@ -21,7 +21,7 @@ export default function PracticeSessionRunnerV2({
   }, []);
 
   return (
-    <PracticeSessionRunnerV6
+    <PracticeSessionRunnerV7
       mode={mode}
       voiceCoachEnabled={voiceCoachEnabled}
       onClose={onClose}
