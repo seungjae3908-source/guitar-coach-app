@@ -17,7 +17,6 @@ import type { PracticePreset } from '../config/personal-practice-presets';
 import type {
   GuitarStringTrackingResult,
   HandAnalysisResult,
-  HandLandmarkPoint,
   PickColor,
 } from '../modules/guitar-coach-hand';
 import {
@@ -27,6 +26,10 @@ import {
   type PoseLandmarkPoint,
 } from '../modules/guitar-coach-native';
 import { publishLiveAnalysisFrame } from '../services/analysis-stream';
+import {
+  cameraRecoveryDecision,
+  initialAnalysisDelayMs,
+} from '../services/camera-analysis-recovery';
 import type { MotionSample } from '../services/trajectory-speed-engine';
 
 type Size = { width: number; height: number };
@@ -55,8 +58,8 @@ type NativeStringVisionModule = {
 const HandModule = requireOptionalNativeModule<NativeHandModule>('GuitarCoachHand');
 const StringModule = requireOptionalNativeModule<NativeStringVisionModule>('GuitarCoachStringVision');
 
-const RIGHT_HAND_REGION: Region = { left: 0.06, top: 0.18, right: 0.94, bottom: 0.96 };
-const LEFT_HAND_REGION: Region = { left: 0.03, top: 0.08, right: 0.97, bottom: 0.92 };
+const RIGHT_HAND_REGION: Region = { left: 0.16, top: 0.22, right: 0.90, bottom: 0.96 };
+const LEFT_HAND_REGION: Region = { left: 0.06, top: 0.10, right: 0.94, bottom: 0.92 };
 const HAND_LINKS: Array<[number, number]> = [
   [0, 1], [1, 2], [2, 3], [3, 4],
   [0, 5], [5, 6], [6, 7], [7, 8],
@@ -94,20 +97,12 @@ function handCenter(result: HandAnalysisResult) {
   };
 }
 
-function isAcceptedHand(
-  result: HandAnalysisResult,
-  focus: PracticePreset['cameraFocus'],
-  tracking: GuitarStringTrackingResult | null,
-) {
-  if (!result.hasHand || result.landmarks.length < 21 || result.handednessScore < 0.46) return false;
+function isAcceptedHand(result: HandAnalysisResult, focus: PracticePreset['cameraFocus']) {
+  if (!result.hasHand || result.landmarks.length < 21 || result.handednessScore < 0.44) return false;
   const wrist = result.landmarks[0];
   const center = handCenter(result);
   const region = regionFor(focus);
-  if (!wrist || !pointInside(wrist, region) || !pointInside(center, region)) return false;
-  if (focus === 'right-hand') {
-    return Boolean(tracking?.detected && tracking.visibleLineCount >= 3 && tracking.confidence >= 0.28);
-  }
-  return true;
+  return Boolean(wrist && pointInside(wrist, region) && pointInside(center, region));
 }
 
 function pickColor(category: PracticeCategoryId, focus: PracticePreset['cameraFocus']): PickColor {
@@ -270,13 +265,18 @@ export default function AutoFocusCoachCamera({
   onStatus?: (status: string) => void;
 }) {
   const cameraRef = useRef<CameraView | null>(null);
-  const busyRef = useRef(false);
+  const captureBusyRef = useRef(false);
   const frameRef = useRef(0);
+  const readyAtRef = useRef(0);
+  const captureFailuresRef = useRef(0);
+  const appStateRef = useRef(AppState.currentState);
+  const stringFrameRef = useRef(0);
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState<CameraType>(cameraFocus === 'full-body' ? 'front' : 'back');
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraKey, setCameraKey] = useState(0);
-  const [error, setError] = useState('');
+  const [cameraError, setCameraError] = useState('');
+  const [analysisError, setAnalysisError] = useState('');
   const [status, setStatus] = useState('카메라 연결 중');
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [handResult, setHandResult] = useState<HandAnalysisResult | null>(null);
@@ -289,56 +289,89 @@ export default function AutoFocusCoachCamera({
   };
 
   useEffect(() => {
-    setFacing(cameraFocus === 'full-body' ? 'front' : 'back');
+    const nextFacing: CameraType = cameraFocus === 'full-body' ? 'front' : 'back';
+    setFacing(nextFacing);
     setCameraReady(false);
-    setError('');
+    setCameraError('');
+    setAnalysisError('');
     setHandResult(null);
     setPoseResult(null);
     frameRef.current = 0;
+    captureFailuresRef.current = 0;
+    stringFrameRef.current = 0;
     setCameraKey((value) => value + 1);
-  }, [cameraFocus, category]);
+  }, [cameraFocus]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
-      if (next !== 'active' || !permission?.granted) return;
-      setCameraReady(false);
-      setError('');
-      setCameraKey((value) => value + 1);
+      const previous = appStateRef.current;
+      appStateRef.current = next;
+      if (previous === 'active' || next !== 'active' || !permission?.granted) return;
+      const timer = setTimeout(() => {
+        setCameraReady(false);
+        setCameraError('');
+        setAnalysisError('');
+        setCameraKey((value) => value + 1);
+      }, 350);
+      return () => clearTimeout(timer);
     });
     return () => subscription.remove();
   }, [permission?.granted]);
 
   useEffect(() => {
-    if (!permission?.granted || !cameraReady || error) return;
+    if (!permission?.granted || cameraReady || cameraError) return;
+    const timer = setTimeout(() => {
+      setCameraError('카메라 영상 준비 신호가 없습니다. 다른 앱의 카메라를 종료한 뒤 다시 연결하세요.');
+    }, 8_000);
+    return () => clearTimeout(timer);
+  }, [cameraError, cameraReady, permission?.granted, cameraKey]);
+
+  useEffect(() => {
+    if (!permission?.granted || !cameraReady || cameraError) return;
+
     if (cameraFocus === 'full-body' && !isLiveCoachNativeAvailable) {
-      setError('자세 분석 모듈을 사용할 수 없습니다.');
+      setAnalysisError('카메라 영상은 정상입니다. 자세 AI 모듈만 사용할 수 없습니다.');
       return;
     }
     if (cameraFocus !== 'full-body' && !HandModule?.androidHandCoachAvailable) {
-      setError('손 관절 분석 모듈을 사용할 수 없습니다.');
+      setAnalysisError('카메라 영상은 정상입니다. 손 관절 AI 모듈만 사용할 수 없습니다.');
       return;
     }
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const targetInterval = cameraFocus === 'full-body' ? 760 : cameraFocus === 'right-hand' ? 320 : 430;
+
     const schedule = (delay: number) => {
       if (!cancelled) timer = setTimeout(capture, delay);
     };
+
     const capture = async () => {
-      if (cancelled || busyRef.current || !cameraRef.current) {
-        schedule(100);
+      if (cancelled || captureBusyRef.current || !cameraRef.current) {
+        schedule(180);
         return;
       }
-      busyRef.current = true;
+
+      const waitForReady = initialAnalysisDelayMs(readyAtRef.current);
+      if (waitForReady > 0) {
+        schedule(waitForReady);
+        return;
+      }
+
+      captureBusyRef.current = true;
       const startedAt = Date.now();
+      let failureKind: 'capture' | 'analysis' = 'capture';
+
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: cameraFocus === 'full-body' ? 0.30 : 0.22,
+          quality: cameraFocus === 'full-body' ? 0.28 : 0.20,
           shutterSound: false,
           mirror: facing === 'front',
-          skipProcessing: false,
+          skipProcessing: true,
         });
-        if (!photo?.uri) throw new Error('카메라 프레임을 가져오지 못했습니다.');
+        if (!photo?.uri) throw new Error('분석 프레임을 가져오지 못했습니다.');
+
+        failureKind = 'analysis';
         const capturedAt = Date.now();
 
         if (cameraFocus === 'full-body') {
@@ -351,37 +384,44 @@ export default function AutoFocusCoachCamera({
             if (coachingActive) publishLiveAnalysisFrame({ kind: 'pose', capturedAt, result });
           }
         } else {
-          const color = pickColor(category, cameraFocus);
-          const hand = await HandModule!.analyzeHandAsync(photo.uri, color);
+          const hand = await HandModule!.analyzeHandAsync(photo.uri, pickColor(category, cameraFocus));
           let tracking: GuitarStringTrackingResult | null = null;
-          if (cameraFocus === 'right-hand' && StringModule?.androidStringVisionAvailable) {
+          stringFrameRef.current += 1;
+          const shouldAnalyzeStrings = cameraFocus === 'right-hand'
+            && Boolean(StringModule?.androidStringVisionAvailable)
+            && (stringFrameRef.current === 1 || stringFrameRef.current % 4 === 0);
+
+          if (shouldAnalyzeStrings) {
             try {
-              tracking = StringModule.androidAdaptiveStringRegionAvailable && StringModule.analyzeStringsInRegionAsync
-                ? await StringModule.analyzeStringsInRegionAsync(
+              tracking = StringModule!.androidAdaptiveStringRegionAvailable && StringModule!.analyzeStringsInRegionAsync
+                ? await StringModule!.analyzeStringsInRegionAsync(
                     photo.uri,
                     focusRegion.left,
                     focusRegion.top,
                     focusRegion.right,
                     focusRegion.bottom,
-                    0.52,
-                    0.64,
+                    0.54,
+                    0.66,
                   )
-                : await StringModule.analyzeStringsAsync(photo.uri);
+                : await StringModule!.analyzeStringsAsync(photo.uri);
               tracking = tracking ? { ...tracking, stabilityConfidence: tracking.confidence } : null;
             } catch {
               tracking = null;
             }
           }
+
           const result: HandAnalysisResult = tracking ? { ...hand, stringTracking: tracking } : hand;
-          const accepted = isAcceptedHand(result, cameraFocus, tracking);
+          const accepted = isAcceptedHand(result, cameraFocus);
           if (!cancelled) {
             setHandResult(accepted ? result : null);
             frameRef.current += 1;
             onFrameCount?.(frameRef.current);
-            if (!hand.hasHand) updateStatus('손을 찾는 중');
-            else if (!accepted && cameraFocus === 'right-hand') updateStatus('ROI 밖 손 무시 · 브리지·사운드홀 안에 오른손을 맞추세요');
+            if (!hand.hasHand) updateStatus('분석 영역에서 손을 찾는 중');
+            else if (!accepted && cameraFocus === 'right-hand') updateStatus('ROI 밖 손 무시 · 브리지~사운드홀 안에 오른손을 맞추세요');
             else if (!accepted) updateStatus('왼손과 지판을 분석 영역 안에 맞추세요');
+            else if (cameraFocus === 'right-hand' && !tracking?.detected) updateStatus('오른손 관절 분석 중 · 기타줄 기준을 찾는 중');
             else updateStatus(coachingActive ? '궤적 분석 + 레슨 피드백 중' : '관절·각도·궤적 자동 분석 중');
+
             if (accepted) {
               const sample = motionSample(result, capturedAt);
               if (sample) onMotionSample?.(sample);
@@ -389,30 +429,53 @@ export default function AutoFocusCoachCamera({
             }
           }
         }
-        if (!cancelled) setError('');
+
+        captureFailuresRef.current = 0;
+        if (!cancelled) setAnalysisError('');
       } catch (caught) {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : '카메라 분석 중 오류가 발생했습니다.');
+        captureFailuresRef.current += 1;
+        const decision = cameraRecoveryDecision(failureKind, captureFailuresRef.current, targetInterval);
+        if (!cancelled) {
+          const detail = caught instanceof Error ? caught.message : 'AI 분석 중 오류가 발생했습니다.';
+          setAnalysisError(`${decision.message} ${detail}`);
+          updateStatus('카메라 영상 유지 · AI 분석 자동 재시도 중');
+        }
+        schedule(decision.retryDelayMs);
+        captureBusyRef.current = false;
+        return;
       } finally {
-        busyRef.current = false;
-        const interval = cameraFocus === 'full-body' ? 650 : cameraFocus === 'right-hand' ? 165 : 240;
-        schedule(Math.max(35, interval - (Date.now() - startedAt)));
+        captureBusyRef.current = false;
       }
+
+      schedule(Math.max(90, targetInterval - (Date.now() - startedAt)));
     };
-    schedule(120);
+
+    schedule(initialAnalysisDelayMs(readyAtRef.current));
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      busyRef.current = false;
+      captureBusyRef.current = false;
     };
-  }, [cameraFocus, cameraReady, category, coachingActive, error, facing, permission?.granted]);
+  }, [cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, cameraError]);
 
   const onLayout = (event: LayoutChangeEvent) => {
     setSize({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height });
   };
 
-  const retry = () => {
-    setError('');
+  const retryCamera = () => {
+    setCameraError('');
+    setAnalysisError('');
     setCameraReady(false);
+    captureFailuresRef.current = 0;
+    setCameraKey((value) => value + 1);
+  };
+
+  const switchCamera = () => {
+    setCameraReady(false);
+    setCameraError('');
+    setAnalysisError('');
+    captureFailuresRef.current = 0;
+    setFacing((value) => value === 'front' ? 'back' : 'front');
     setCameraKey((value) => value + 1);
   };
 
@@ -446,16 +509,19 @@ export default function AutoFocusCoachCamera({
         facing={facing}
         mirror={facing === 'front'}
         mode="picture"
-        ratio="4:3"
         animateShutter={false}
         onCameraReady={() => {
+          readyAtRef.current = Date.now();
+          captureFailuresRef.current = 0;
           setCameraReady(true);
-          setError('');
-          updateStatus('카메라 연결 완료 · 자동 분석 준비');
+          setCameraError('');
+          setAnalysisError('');
+          updateStatus('카메라 영상 연결 완료 · AI 안정화 중');
         }}
         onMountError={(event) => {
+          const decision = cameraRecoveryDecision('mount', 1, 800);
           setCameraReady(false);
-          setError(event.message || '카메라를 열지 못했습니다.');
+          setCameraError(`${decision.message} ${event.message || ''}`.trim());
         }}
       />
 
@@ -481,22 +547,28 @@ export default function AutoFocusCoachCamera({
       ) : null}
 
       <View pointerEvents="none" style={styles.topStatus}>
-        <Text style={[styles.badge, cameraReady && styles.badgeReady]}>{cameraReady ? '자동 분석 ON' : '카메라 연결 중'}</Text>
-        <Text style={[styles.badge, coachingActive && styles.badgeCoach]}>{coachingActive ? '피드백 ON' : '피드백 대기'}</Text>
+        <Text style={[styles.badge, cameraReady && styles.badgeReady]}>{cameraReady ? '영상 ON' : '영상 연결 중'}</Text>
+        <Text style={[styles.badge, coachingActive && styles.badgeCoach]}>{coachingActive ? '피드백 ON' : '자동 분석'}</Text>
       </View>
 
       <View style={styles.bottomStatus}>
-        <Text style={styles.statusText} numberOfLines={2}>{error || status}</Text>
-        <Pressable onPress={() => setFacing((value) => value === 'front' ? 'back' : 'front')} style={styles.smallButton}>
+        <View style={styles.statusBox}>
+          <Text style={styles.statusText} numberOfLines={2}>{cameraError || status}</Text>
+          {analysisError && !cameraError ? <Text style={styles.analysisText} numberOfLines={2}>{analysisError}</Text> : null}
+        </View>
+        <Pressable onPress={switchCamera} style={styles.smallButton}>
           <Text style={styles.smallButtonText}>카메라 전환</Text>
         </Pressable>
       </View>
 
-      {error ? (
+      {cameraError ? (
         <View style={styles.errorOverlay}>
-          <Text style={styles.errorTitle}>분석을 계속할 수 없습니다</Text>
-          <Text style={styles.errorText}>{error}</Text>
-          <Pressable onPress={retry} style={styles.retryButton}><Text style={styles.retryText}>다시 연결</Text></Pressable>
+          <Text style={styles.errorTitle}>카메라 영상을 열지 못했습니다</Text>
+          <Text style={styles.errorText}>{cameraError}</Text>
+          <View style={styles.errorRow}>
+            <Pressable onPress={retryCamera} style={styles.retryButton}><Text style={styles.retryText}>다시 연결</Text></Pressable>
+            <Pressable onPress={() => void Linking.openSettings()} style={styles.settingsButton}><Text style={styles.settingsText}>휴대폰 설정</Text></Pressable>
+          </View>
         </View>
       ) : null}
     </View>
@@ -516,8 +588,10 @@ const styles = StyleSheet.create({
   badge: { color: '#f2cc60', backgroundColor: 'rgba(13,17,23,0.82)', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 5, fontSize: 8, fontWeight: '900', overflow: 'hidden' },
   badgeReady: { color: '#7ee787' },
   badgeCoach: { color: '#79c0ff' },
-  bottomStatus: { position: 'absolute', left: 8, right: 8, bottom: 8, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  statusText: { flex: 1, color: '#ffffff', backgroundColor: 'rgba(13,17,23,0.82)', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 6, fontSize: 8, lineHeight: 12, overflow: 'hidden' },
+  bottomStatus: { position: 'absolute', left: 8, right: 8, bottom: 8, flexDirection: 'row', alignItems: 'flex-end', gap: 7 },
+  statusBox: { flex: 1, backgroundColor: 'rgba(13,17,23,0.84)', borderRadius: 9, paddingHorizontal: 8, paddingVertical: 6 },
+  statusText: { color: '#ffffff', fontSize: 8, lineHeight: 12 },
+  analysisText: { color: '#f2cc60', fontSize: 7, lineHeight: 11, marginTop: 2 },
   smallButton: { minWidth: 66, minHeight: 34, borderRadius: 9, backgroundColor: 'rgba(13,17,23,0.88)', borderWidth: 1, borderColor: '#6e7681', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 7 },
   smallButtonText: { color: '#f0f6fc', fontSize: 8, fontWeight: '900' },
   handLine: { position: 'absolute', height: 2, backgroundColor: 'rgba(126,231,135,0.94)' },
@@ -531,6 +605,9 @@ const styles = StyleSheet.create({
   errorOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(13,17,23,0.94)', padding: 22 },
   errorTitle: { color: '#ff7b72', fontSize: 15, fontWeight: '900', textAlign: 'center' },
   errorText: { color: '#f0b7b2', fontSize: 10, lineHeight: 16, textAlign: 'center', marginTop: 7 },
-  retryButton: { minHeight: 42, borderRadius: 11, backgroundColor: '#1f6feb', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, marginTop: 14 },
+  errorRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
+  retryButton: { minHeight: 42, borderRadius: 11, backgroundColor: '#1f6feb', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   retryText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
+  settingsButton: { minHeight: 42, borderRadius: 11, borderWidth: 1, borderColor: '#6e7681', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
+  settingsText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
 });
