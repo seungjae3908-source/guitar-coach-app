@@ -39,6 +39,45 @@ jobs:
           lines = workflow[start:end].splitlines()
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
           exec(compile(script, 'live-feedback-song-coach-v14.py', 'exec'))
+
+          path = Path('mobile/components/MasterSongStudioPanel.tsx')
+          text = path.read_text(encoding='utf-8')
+          effect = '''  useEffect(() => {
+            if (!coachRunning || !studioPreset) {
+              clearLivePracticeContext();
+              return;
+            }
+            clearLiveCoachFeedback();
+            setLivePracticeContext({
+              active: true,
+              guitarMode: studioPreset.guitarMode,
+              presetId: studioPreset.id,
+              title: studioPreset.title,
+              goal: studioPreset.goal,
+              pattern: studioPreset.pattern,
+              category: studioPreset.category,
+              cameraFocus: studioPreset.cameraFocus,
+              bpm: studioPreset.startBpm,
+              targetBpm: studioPreset.targetBpm,
+              pulsesPerBeat: 2,
+              microphoneEnabled: false,
+              calibrationConfidencePercent: null,
+              startedAt: Date.now(),
+            });
+            return () => {
+              clearLivePracticeContext();
+              clearLiveCoachFeedback();
+            };
+          }, [coachRunning, studioPreset]);
+          '''
+          if text.count(effect) != 1:
+              raise SystemExit(f'live context effect count is {text.count(effect)}')
+          text = text.replace(effect, '', 1)
+          declaration_end = "  }, [active, chordGuide.chords, mode, song]);\n"
+          if text.count(declaration_end) != 1:
+              raise SystemExit(f'studio preset declaration marker count is {text.count(declaration_end)}')
+          text = text.replace(declaration_end, declaration_end + '\n' + effect, 1)
+          path.write_text(text, encoding='utf-8')
           PY
       - name: Install and run full quality gates
         working-directory: mobile
