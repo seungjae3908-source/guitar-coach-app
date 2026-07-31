@@ -80,6 +80,16 @@ jobs:
               raise SystemExit('camera reset patch block not found in registered script')
           script = script.replace(old_reset_block, new_reset_block, 1)
 
+          old_wrist_call = "text = replace_once(text, old_dots, new_dots, 'wrist overlay')"
+          new_wrist_call = '\n'.join([
+              "wrist_overlay_start = text.index('      {result.landmarks.map((point) => (')",
+              "wrist_overlay_end = text.index('      {result.pick.detected ? (', wrist_overlay_start)",
+              'text = text[:wrist_overlay_start] + new_dots + text[wrist_overlay_end:]',
+          ])
+          if old_wrist_call not in script:
+              raise SystemExit('wrist overlay call not found in registered script')
+          script = script.replace(old_wrist_call, new_wrist_call, 1)
+
           exec(compile(script, 'focus-integration-patch.py', 'exec'))
           for temporary in [
               '.github/workflows/one-time-focus-trigger-pr.yml',
