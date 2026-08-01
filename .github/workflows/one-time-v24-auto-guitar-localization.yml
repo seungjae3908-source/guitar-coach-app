@@ -1,0 +1,133 @@
+name: Apply v24 automatic guitar localization
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Connect automatic guitar localization
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          service_path = Path('mobile/services/guitar-auto-detection.ts')
+          service = service_path.read_text()
+          service = replace_once(
+              service,
+              "  const longest = [...lines].sort((a, b) => distance(b, { x: b.endX, y: b.endY }) - distance(a, { x: a.endX, y: a.endY }))[0] ?? lines[0];",
+              "  const lineLength = (line: AutoStringLine) => Math.hypot(line.endX - line.startX, line.endY - line.startY);\n  const longest = [...lines].sort((a, b) => lineLength(b) - lineLength(a))[0] ?? lines[0];",
+              'string line length',
+          )
+          service_path.write_text(service)
+
+          runner_path = Path('mobile/components/PracticeSessionRunnerV8.tsx')
+          runner = runner_path.read_text()
+          old_import = '''import FocusCoachCameraV7, {\n  clearFocusV7RightHandRegion,\n  loadFocusV7RightHandRegion,\n  RightHandCalibrationV7,\n} from './FocusCoachCameraV7';'''
+          new_import = '''import AutomaticGuitarCalibrationV9 from './AutomaticGuitarCalibrationV9';\nimport FocusCoachCameraV7, {\n  clearFocusV7RightHandRegion,\n  loadFocusV7RightHandRegion,\n} from './FocusCoachCameraV7';'''
+          runner = replace_once(runner, old_import, new_import, 'automatic calibration import')
+          runner = replace_once(
+              runner,
+              "const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v8:calibration-reset:v2';",
+              "const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v9:auto-guitar-reset:v3';",
+              'automatic calibration reset key',
+          )
+          runner = replace_once(
+              runner,
+              '''        <RightHandCalibrationV7\n          initialFacing={initialFacing}\n          onCancel={onCancel}\n          onSaved={(facing) => onSaved(facing)}\n        />''',
+              '''        <AutomaticGuitarCalibrationV9\n          initialFacing={initialFacing}\n          onCancel={onCancel}\n          onSaved={(facing) => onSaved(facing)}\n        />''',
+              'automatic calibration surface',
+          )
+          runner = runner.replace('FOCUS V8 · v22', 'FOCUS V9 · v24')
+          runner = runner.replace('FOCUS V8 ·', 'FOCUS V9 ·')
+          runner_path.write_text(runner)
+
+          camera_path = Path('mobile/components/FocusCoachCameraV7.tsx')
+          camera = camera_path.read_text()
+          camera = camera.replace('FOCUS V8 · v22 촬영 보정', 'FOCUS V9 · v24 수동 보정')
+          camera = camera.replace('이 카메라는 사운드홀·브리지 보정이 필요합니다.', '기타 위치 자동 인식 또는 수동 보정이 필요합니다.')
+          camera_path.write_text(camera)
+
+          plus_path = Path('mobile/CompleteBetaAppV060Plus.tsx')
+          plus = plus_path.read_text().replace('v23', 'v24')
+          plus_path.write_text(plus)
+
+          app_path = Path('mobile/app.json')
+          app = json.loads(app_path.read_text())
+          app['expo']['android']['versionCode'] = 24
+          app_path.write_text(json.dumps(app, ensure_ascii=False, indent=2) + '\n')
+
+          diagnostic_path = Path('mobile/DiagnosticRootApp.tsx')
+          diagnostic = diagnostic_path.read_text()
+          diagnostic = replace_once(diagnostic, 'versionCode: 23,', 'versionCode: 24,', 'diagnostic version')
+          diagnostic = replace_once(
+              diagnostic,
+              "      focusScreen: 'V8-coordinate-map',",
+              "      focusScreen: 'V9-automatic-guitar-localization',\n      automaticGuitarLocalization: true,\n      guitarEvidence: 'six-string-bundle-plus-playing-hand',\n      automaticEvidenceFrames: 3,\n      manualCalibrationFallback: true,",
+              'diagnostic automatic guitar flags',
+          )
+          diagnostic_path.write_text(diagnostic)
+
+          runtime_path = Path('mobile/services/runtime-diagnostics.ts')
+          runtime = runtime_path.read_text()
+          runtime = replace_once(runtime, 'versionCode: 23,', 'versionCode: 24,', 'runtime version')
+          runtime = replace_once(
+              runtime,
+              "validationScope: 'v23-raised-five-tab-navigation-eight-connected-tools-focus-v8-coordinate-map',",
+              "validationScope: 'v24-six-string-playing-hand-auto-localization-three-frame-gate-manual-fallback',",
+              'runtime scope',
+          )
+          runtime_path.write_text(runtime)
+
+          package_path = Path('mobile/package.json')
+          package_data = json.loads(package_path.read_text())
+          quality = package_data['scripts']['quality:analysis']
+          quality = replace_once(
+              quality,
+              'services/camera-preview-transform.ts services/right-hand-motion-tracker.ts',
+              'services/camera-preview-transform.ts services/guitar-auto-detection.ts services/right-hand-motion-tracker.ts',
+              'quality service inclusion',
+          )
+          quality = replace_once(
+              quality,
+              'tests/camera-preview-transform.test.ts tests/right-hand-motion-tracker.test.ts',
+              'tests/camera-preview-transform.test.ts tests/guitar-auto-detection.test.ts tests/right-hand-motion-tracker.test.ts',
+              'quality test compilation',
+          )
+          quality = replace_once(
+              quality,
+              'node .quality-dist/tests/camera-preview-transform.test.js && node .quality-dist/tests/right-hand-motion-tracker.test.js',
+              'node .quality-dist/tests/camera-preview-transform.test.js && node .quality-dist/tests/guitar-auto-detection.test.js && node .quality-dist/tests/right-hand-motion-tracker.test.js',
+              'quality test execution',
+          )
+          package_data['scripts']['quality:analysis'] = quality
+          package_path.write_text(json.dumps(package_data, ensure_ascii=False, indent=2) + '\n')
+          PY
+
+      - name: Commit v24 automatic guitar localization
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mobile/services/guitar-auto-detection.ts mobile/tests/guitar-auto-detection.test.ts mobile/components/AutomaticGuitarCalibrationV9.tsx mobile/components/PracticeSessionRunnerV8.tsx mobile/components/FocusCoachCameraV7.tsx mobile/CompleteBetaAppV060Plus.tsx mobile/app.json mobile/DiagnosticRootApp.tsx mobile/services/runtime-diagnostics.ts mobile/package.json
+          git diff --cached --check
+          git commit -m 'Add evidence-gated automatic guitar localization in v24'
+          git push origin HEAD:agent/live-coach-compat-v055
