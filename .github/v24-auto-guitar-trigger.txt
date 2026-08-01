@@ -1,1 +1,0 @@
-trigger automatic guitar localization v24
