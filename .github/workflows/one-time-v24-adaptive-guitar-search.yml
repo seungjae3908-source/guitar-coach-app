@@ -1,0 +1,60 @@
+name: Apply v24 adaptive guitar search
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Focus guitar string search around detected playing hand
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          path = Path('mobile/components/AutomaticGuitarCalibrationV9.tsx')
+          text = path.read_text()
+          text = replace_once(
+              text,
+              '''type NativeStringVisionModule = {\n  androidStringVisionAvailable: boolean;\n  analyzeStringsAsync(uri: string): Promise<GuitarStringTrackingResult>;\n};''',
+              '''type NativeStringVisionModule = {\n  androidStringVisionAvailable: boolean;\n  androidAdaptiveStringRegionAvailable?: boolean;\n  analyzeStringsAsync(uri: string): Promise<GuitarStringTrackingResult>;\n  analyzeStringsInRegionAsync?: (\n    uri: string,\n    left: number,\n    top: number,\n    right: number,\n    bottom: number,\n    focusX: number,\n    focusY: number,\n  ) => Promise<GuitarStringTrackingResult>;\n};''',
+              'adaptive string module type',
+          )
+
+          helper = '''function buildRawStringSearchRegion(hand: HandAnalysisResult) {\n  if (!hand.hasHand || hand.landmarks.length < 21) return null;\n  const points = hand.landmarks.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));\n  if (points.length < 21) return null;\n  const tips = [4, 8, 12, 16, 20].map((index) => hand.landmarks[index]).filter(Boolean);\n  const focusPoints = tips.length ? tips : points;\n  const focusX = clamp(focusPoints.reduce((sum, point) => sum + point.x, 0) / focusPoints.length, 0, 1);\n  const focusY = clamp(focusPoints.reduce((sum, point) => sum + point.y, 0) / focusPoints.length, 0, 1);\n  const ys = points.map((point) => point.y);\n  let top = clamp(Math.min(...ys, focusY) - 0.24, 0.01, 0.95);\n  let bottom = clamp(Math.max(...ys, focusY) + 0.24, 0.05, 0.99);\n  if (bottom - top < 0.44) {\n    const center = (top + bottom) / 2;\n    top = clamp(center - 0.22, 0.01, 0.55);\n    bottom = clamp(center + 0.22, 0.45, 0.99);\n  }\n  return { left: 0.01, top, right: 0.99, bottom, focusX, focusY };\n}\n\n'''
+          text = replace_once(text, 'function remapHandToPreview(', helper + 'function remapHandToPreview(', 'adaptive search helper')
+
+          text = replace_once(
+              text,
+              '''        const [rawHand, rawStrings] = await Promise.all([\n          HandModule!.analyzeHandAsync(photo.uri, 'none'),\n          StringVisionModule!.analyzeStringsAsync(photo.uri),\n        ]);''',
+              '''        const rawHand = await HandModule!.analyzeHandAsync(photo.uri, 'none');\n        const searchRegion = buildRawStringSearchRegion(rawHand);\n        const rawStrings = searchRegion\n          && StringVisionModule!.androidAdaptiveStringRegionAvailable\n          && StringVisionModule!.analyzeStringsInRegionAsync\n          ? await StringVisionModule!.analyzeStringsInRegionAsync(\n              photo.uri,\n              searchRegion.left,\n              searchRegion.top,\n              searchRegion.right,\n              searchRegion.bottom,\n              searchRegion.focusX,\n              searchRegion.focusY,\n            )\n          : await StringVisionModule!.analyzeStringsAsync(photo.uri);''',
+              'adaptive string analysis call',
+          )
+          path.write_text(text)
+          PY
+
+      - name: Commit adaptive guitar search
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mobile/components/AutomaticGuitarCalibrationV9.tsx
+          git diff --cached --check
+          git commit -m 'Search guitar strings around the detected playing hand'
+          git push origin HEAD:agent/live-coach-compat-v055
