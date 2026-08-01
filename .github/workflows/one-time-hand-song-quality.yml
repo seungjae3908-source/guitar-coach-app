@@ -26,8 +26,8 @@ jobs:
         run: |
           set -euo pipefail
           for part in .github/hand-song-repair/part-*; do
-            printf '%s bytes=' "$part"
-            wc -c < "$part" | tr -d ' '\n            printf ' blob='
-            git hash-object "$part"
+            bytes="$(wc -c < "$part")"
+            blob="$(git hash-object "$part")"
+            echo "$part bytes=$bytes blob=$blob"
           done
           exit 1
