@@ -4,24 +4,26 @@ plugins {
 }
 
 group = 'expo.modules.guitarcoachnative'
-version = '0.3.0'
+version = '0.4.0'
 
 android {
   namespace "expo.modules.guitarcoachnative"
   defaultConfig {
-    versionCode 3
-    versionName '0.3.0'
+    versionCode 4
+    versionName '0.4.0'
   }
 }
 
-def handModelDir = file("$projectDir/src/main/assets")
-def handModelFile = file("$handModelDir/hand_landmarker.task")
+def visionModelDir = file("$projectDir/src/main/assets")
+def handModelFile = file("$visionModelDir/hand_landmarker.task")
 def handModelUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task'
+def guitarObjectModelFile = file("$visionModelDir/efficientdet_lite0.tflite")
+def guitarObjectModelUrl = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite'
 
 tasks.register('downloadHandLandmarkerModel') {
   outputs.file(handModelFile)
   doLast {
-    handModelDir.mkdirs()
+    visionModelDir.mkdirs()
     if (!handModelFile.exists() || handModelFile.length() < 1_000_000L) {
       logger.lifecycle('Downloading official MediaPipe Hand Landmarker model...')
       new URL(handModelUrl).withInputStream { input ->
@@ -31,9 +33,23 @@ tasks.register('downloadHandLandmarkerModel') {
   }
 }
 
+tasks.register('downloadGuitarObjectModel') {
+  outputs.file(guitarObjectModelFile)
+  doLast {
+    visionModelDir.mkdirs()
+    if (!guitarObjectModelFile.exists() || guitarObjectModelFile.length() < 2_000_000L) {
+      logger.lifecycle('Downloading official MediaPipe EfficientDet-Lite0 object detector model...')
+      new URL(guitarObjectModelUrl).withInputStream { input ->
+        guitarObjectModelFile.withOutputStream { output -> output << input }
+      }
+    }
+  }
+}
+
 afterEvaluate {
   tasks.named('preBuild').configure {
     dependsOn(tasks.named('downloadHandLandmarkerModel'))
+    dependsOn(tasks.named('downloadGuitarObjectModel'))
   }
 }
 
