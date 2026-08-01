@@ -1,4 +1,5 @@
 import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
+import { File } from 'expo-file-system';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -188,27 +189,27 @@ function HandOverlay({ result, size }: { result: HandAnalysisResult | null; size
       })}
       {result.landmarks.map((point) => (
         <View
-key={point.index}
-style={[
-  point.index === 0 ? styles.wristDot : styles.handDot,
-  {
-    left: point.x * size.width - (point.index === 0 ? 7 : 4),
-    top: point.y * size.height - (point.index === 0 ? 7 : 4),
-  },
-]}
+          key={point.index}
+          style={[
+            point.index === 0 ? styles.wristDot : styles.handDot,
+            {
+              left: point.x * size.width - (point.index === 0 ? 7 : 4),
+              top: point.y * size.height - (point.index === 0 ? 7 : 4),
+            },
+          ]}
         />
       ))}
       {result.landmarks[0] ? (
         <Text
-style={[
-  styles.wristLabel,
-  {
-    left: Math.max(2, result.landmarks[0].x * size.width + 8),
-    top: Math.max(2, result.landmarks[0].y * size.height - 10),
-  },
-]}
+          style={[
+            styles.wristLabel,
+            {
+              left: Math.max(2, result.landmarks[0].x * size.width + 8),
+              top: Math.max(2, result.landmarks[0].y * size.height - 10),
+            },
+          ]}
         >
-손목
+          손목
         </Text>
       ) : null}
       {result.pick.detected ? (
@@ -253,7 +254,7 @@ export default function SessionCoachCamera({
   const analysisProfile = cameraAnalysisProfile(category);
   const [selectedPlan, setSelectedPlan] = useState<AnalysisPlan>(firstMode);
   const [activeMode, setActiveMode] = useState<AnalysisMode>(firstMode);
-  const [facing, setFacing] = useState<CameraType>(firstMode === 'full' ? 'front' : 'back');
+  const [facing, setFacing] = useState<CameraType>('front');
   const [cameraKey, setCameraKey] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -289,7 +290,7 @@ export default function SessionCoachCamera({
   }, [running, selectedPlan]);
 
   useEffect(() => {
-    setFacing(activeMode === 'full' ? 'front' : 'back');
+    setFacing('front');
     setCameraReady(false);
     setCameraError('');
     setAnalysisError('');
@@ -348,14 +349,20 @@ export default function SessionCoachCamera({
       }
       analysisBusyRef.current = true;
       const startedAt = Date.now();
+      let capturedUri: string | null = null;
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: activeMode === 'full' ? 0.30 : analysisProfile.photoQuality,
+          quality: activeMode === 'full'
+            ? 0.30
+            : facing === 'front'
+              ? Math.max(0.42, analysisProfile.photoQuality)
+              : analysisProfile.photoQuality,
           shutterSound: false,
           mirror: facing === 'front',
           skipProcessing: false,
         });
-        if (!photo?.uri || cancelled) throw new Error('카메라 프레임을 가져오지 못했습니다.');
+        capturedUri = photo?.uri ?? null;
+        if (!capturedUri || cancelled) throw new Error('카메라 프레임을 가져오지 못했습니다.');
 
         handFrameIndexRef.current += 1;
         const refreshStringVision = handFrameIndexRef.current === 1
@@ -363,16 +370,16 @@ export default function SessionCoachCamera({
 
         if (activeMode === 'full') {
           if (fullPassRef.current === 'pose' || !isDetailedHandCoachAvailable) {
-            const result = await analyzePoseAsync(photo.uri);
+            const result = await analyzePoseAsync(capturedUri);
             if (!cancelled) setPoseResult(result);
             fullPassRef.current = 'hand';
           } else {
-            const result = await analyzeHandWithStringsAsync(photo.uri, pickColorFor(activeMode, category), { refreshStringVision });
+            const result = await analyzeHandWithStringsAsync(capturedUri, pickColorFor(activeMode, category), { refreshStringVision });
             if (!cancelled) setHandResult(result);
             fullPassRef.current = 'pose';
           }
         } else {
-          const result = await analyzeHandWithStringsAsync(photo.uri, pickColorFor(activeMode, category), { refreshStringVision });
+          const result = await analyzeHandWithStringsAsync(capturedUri, pickColorFor(activeMode, category), { refreshStringVision });
           if (!cancelled) setHandResult(result);
         }
         if (!cancelled) {
@@ -384,6 +391,14 @@ export default function SessionCoachCamera({
           setAnalysisError(caught instanceof Error ? caught.message : '카메라 분석 중 오류가 발생했습니다.');
         }
       } finally {
+        if (capturedUri) {
+          try {
+            const capturedFile = new File(capturedUri);
+            if (capturedFile.exists) capturedFile.delete();
+          } catch {
+            // 카메라 캐시는 다음 운영체제 정리 주기에 맡깁니다.
+          }
+        }
         analysisBusyRef.current = false;
         const targetInterval = activeMode === 'full' ? 780 : analysisProfile.captureIntervalMs;
         schedule(Math.max(45, targetInterval - (Date.now() - startedAt)));
@@ -503,7 +518,7 @@ export default function SessionCoachCamera({
           <Text style={styles.title}>{modeTitle(activeMode)}</Text>
         </View>
         <Pressable onPress={switchCamera} style={styles.cameraSwitch}>
-          <Text style={styles.cameraSwitchText}>{facing === 'front' ? '전면' : '후면'} 전환</Text>
+          <Text style={styles.cameraSwitchText}>{facing === 'front' ? '후면으로' : '전면으로'}</Text>
         </Pressable>
       </View>
 
