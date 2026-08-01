@@ -1,0 +1,430 @@
+name: Apply selfie hand precision tracking
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - .github/selfie-hand-precision-trigger.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: selfie-hand-precision-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  patch-and-verify:
+    if: github.actor != 'github-actions[bot]' && github.actor != 'guitar-coach-quality-bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Connect two-stage selfie hand precision analysis
+        run: |
+          cat > mobile/services/hand-precision-region.ts <<'TYPESCRIPT'
+          export type HandPrecisionPoint = { x: number; y: number };
+
+          export type HandPrecisionRegion = {
+            left: number;
+            top: number;
+            right: number;
+            bottom: number;
+          };
+
+          export type HandPrecisionDecision = {
+            shouldRefine: boolean;
+            reason: 'no-hand' | 'insufficient-landmarks' | 'invalid-landmarks' | 'hand-too-small' | 'already-detailed' | 'region-ready';
+            sourcePalmSize: number;
+            sourceEdgeMargin: number;
+            regionArea: number;
+            region?: HandPrecisionRegion;
+          };
+
+          const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value));
+
+          function fitAxis(center: number, requestedSize: number) {
+            const size = clamp(requestedSize, 0.06, 0.98);
+            let start = center - size / 2;
+            let end = center + size / 2;
+            if (start < 0.01) {
+              end += 0.01 - start;
+              start = 0.01;
+            }
+            if (end > 0.99) {
+              start -= end - 0.99;
+              end = 0.99;
+            }
+            return { start: clamp(start, 0.01, 0.93), end: clamp(end, 0.07, 0.99) };
+          }
+
+          export function decideHandPrecisionRegion(input: {
+            hasHand: boolean;
+            landmarks: HandPrecisionPoint[];
+          }): HandPrecisionDecision {
+            if (!input.hasHand) {
+              return { shouldRefine: false, reason: 'no-hand', sourcePalmSize: 0, sourceEdgeMargin: 0, regionArea: 1 };
+            }
+            if (input.landmarks.length < 21) {
+              return { shouldRefine: false, reason: 'insufficient-landmarks', sourcePalmSize: 0, sourceEdgeMargin: 0, regionArea: 1 };
+            }
+
+            const points = input.landmarks.slice(0, 21);
+            if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+              return { shouldRefine: false, reason: 'invalid-landmarks', sourcePalmSize: 0, sourceEdgeMargin: 0, regionArea: 1 };
+            }
+
+            const xs = points.map((point) => clamp(point.x, 0, 1));
+            const ys = points.map((point) => clamp(point.y, 0, 1));
+            const minimumX = Math.min(...xs);
+            const maximumX = Math.max(...xs);
+            const minimumY = Math.min(...ys);
+            const maximumY = Math.max(...ys);
+            const wrist = points[0];
+            const middleMcp = points[9];
+            const sourcePalmSize = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y);
+            const sourceEdgeMargin = Math.min(minimumX, 1 - maximumX, minimumY, 1 - maximumY);
+
+            if (sourcePalmSize < 0.025) {
+              return { shouldRefine: false, reason: 'hand-too-small', sourcePalmSize, sourceEdgeMargin, regionArea: 1 };
+            }
+
+            const boxWidth = Math.max(0.02, maximumX - minimumX);
+            const boxHeight = Math.max(0.02, maximumY - minimumY);
+            const horizontalPadding = Math.max(0.075, sourcePalmSize * 0.72);
+            const verticalPadding = Math.max(0.085, sourcePalmSize * 0.82);
+            const requestedWidth = clamp(Math.max(0.32, boxWidth + horizontalPadding * 2, sourcePalmSize * 3.15), 0.32, 0.78);
+            const requestedHeight = clamp(Math.max(0.36, boxHeight + verticalPadding * 2, sourcePalmSize * 3.55), 0.36, 0.82);
+            const horizontal = fitAxis((minimumX + maximumX) / 2, requestedWidth);
+            const vertical = fitAxis((minimumY + maximumY) / 2, requestedHeight);
+            const region = {
+              left: horizontal.start,
+              top: vertical.start,
+              right: horizontal.end,
+              bottom: vertical.end,
+            };
+            const regionArea = (region.right - region.left) * (region.bottom - region.top);
+            const alreadyDetailed = sourcePalmSize >= 0.30 && sourceEdgeMargin >= 0.075 && boxWidth >= 0.34 && boxHeight >= 0.34;
+
+            if (alreadyDetailed || regionArea >= 0.76) {
+              return { shouldRefine: false, reason: 'already-detailed', sourcePalmSize, sourceEdgeMargin, regionArea, region };
+            }
+
+            return { shouldRefine: true, reason: 'region-ready', sourcePalmSize, sourceEdgeMargin, regionArea, region };
+          }
+          TYPESCRIPT
+
+          cat > mobile/tests/hand-precision-region.test.ts <<'TYPESCRIPT'
+          import { decideHandPrecisionRegion, type HandPrecisionPoint } from '../services/hand-precision-region';
+
+          function assert(condition: boolean, message: string) {
+            if (!condition) throw new Error(message);
+          }
+
+          function hand(centerX: number, centerY: number, scale: number): HandPrecisionPoint[] {
+            return Array.from({ length: 21 }, (_, index) => {
+              const column = index % 5;
+              const row = Math.floor(index / 5);
+              return {
+                x: centerX + (column - 2) * scale * 0.42,
+                y: centerY + (row - 2) * scale * 0.38,
+              };
+            }).map((point, index) => index === 0
+              ? { x: centerX, y: centerY + scale * 0.72 }
+              : index === 9
+                ? { x: centerX, y: centerY }
+                : point);
+          }
+
+          {
+            const decision = decideHandPrecisionRegion({ hasHand: true, landmarks: hand(0.52, 0.54, 0.14) });
+            assert(decision.shouldRefine, '화면에서 작은 손은 ROI 재분석을 요청해야 합니다.');
+            assert(Boolean(decision.region), 'ROI 재분석에는 유효한 영역이 있어야 합니다.');
+            assert(decision.regionArea > 0.10 && decision.regionArea < 0.76, 'ROI는 확대 효과가 있으면서 너무 작지 않아야 합니다.');
+          }
+
+          {
+            const landmarks = hand(0.08, 0.18, 0.12).map((point) => ({
+              x: Math.max(0.002, point.x),
+              y: Math.max(0.002, point.y),
+            }));
+            const decision = decideHandPrecisionRegion({ hasHand: true, landmarks });
+            const region = decision.region!;
+            assert(region.left >= 0.01 && region.top >= 0.01, '화면 가장자리 손 ROI는 원본 범위를 벗어나면 안 됩니다.');
+            assert(region.right <= 0.99 && region.bottom <= 0.99, '화면 가장자리 손 ROI의 반대쪽 경계도 유효해야 합니다.');
+            assert(region.left <= Math.min(...landmarks.map((point) => point.x)), 'ROI는 보이는 손의 왼쪽을 포함해야 합니다.');
+          }
+
+          {
+            const decision = decideHandPrecisionRegion({ hasHand: true, landmarks: hand(0.5, 0.5, 0.44) });
+            assert(!decision.shouldRefine, '이미 화면에 크게 보이는 손을 다시 과도하게 확대하면 안 됩니다.');
+          }
+
+          {
+            const decision = decideHandPrecisionRegion({ hasHand: true, landmarks: hand(0.5, 0.5, 0.12).slice(0, 10) });
+            assert(!decision.shouldRefine && decision.reason === 'insufficient-landmarks', '관절점이 부족하면 정밀 결과를 꾸며내면 안 됩니다.');
+          }
+
+          console.log('hand-precision-region tests passed');
+          TYPESCRIPT
+
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          hand_index = Path('mobile/modules/guitar-coach-hand/index.ts')
+          text = hand_index.read_text(encoding='utf-8')
+
+          marker = "import { requireOptionalNativeModule } from 'expo';\n"
+          replacement = marker + "\nimport { decideHandPrecisionRegion, type HandPrecisionRegion } from '../../services/hand-precision-region';\n"
+          if marker not in text:
+              raise SystemExit('hand wrapper import marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          marker = "export type HandLandmarkPoint = { index: number; name: HandLandmarkName; x: number; y: number; z: number };\n"
+          replacement = marker + "export type HandPrecisionMetadata = {\n  applied: boolean;\n  passes: 1 | 2;\n  reason: string;\n  sourcePalmSize: number;\n  sourceEdgeMargin: number;\n  regionArea: number;\n  region?: HandPrecisionRegion;\n  fallbackReason?: string;\n};\n"
+          if marker not in text:
+              raise SystemExit('hand landmark type marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          marker = "  pick: PickAnalysisResult;\n  stringTracking?: GuitarStringTrackingResult;\n};"
+          replacement = "  pick: PickAnalysisResult;\n  analysisRegion?: HandPrecisionRegion;\n  precision?: HandPrecisionMetadata;\n  stringTracking?: GuitarStringTrackingResult;\n};"
+          if marker not in text:
+              raise SystemExit('hand result marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          marker = "type GuitarCoachHandModule = {\n  androidHandCoachAvailable: boolean;\n  analyzeHandAsync(uri: string, pickColor: PickColor): Promise<HandAnalysisResult>;\n};"
+          replacement = "type GuitarCoachHandModule = {\n  androidHandCoachAvailable: boolean;\n  androidHandRegionAnalysisAvailable?: boolean;\n  analyzeHandAsync(uri: string, pickColor: PickColor): Promise<HandAnalysisResult>;\n  analyzeHandInRegionAsync?: (\n    uri: string,\n    pickColor: PickColor,\n    left: number,\n    top: number,\n    right: number,\n    bottom: number,\n  ) => Promise<HandAnalysisResult>;\n};"
+          if marker not in text:
+              raise SystemExit('native hand module type marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          marker = """async function analyzeHandRawAsync(uri: string, pickColor: PickColor) {
+  if (!NativeModule) throw new Error('손가락 상세 분석 모듈을 사용할 수 없습니다.');
+  return NativeModule.analyzeHandAsync(uri, pickColor);
+}
+"""
+          replacement = """type CachedHandPrecisionRegion = {
+  capturedAt: number;
+  pickColor: PickColor;
+  handedness: string;
+  region: HandPrecisionRegion;
+};
+
+let cachedHandPrecisionRegion: CachedHandPrecisionRegion | null = null;
+
+function precisionMetadata(
+  decision: ReturnType<typeof decideHandPrecisionRegion>,
+  overrides: Partial<HandPrecisionMetadata> = {},
+): HandPrecisionMetadata {
+  return {
+    applied: false,
+    passes: 1,
+    reason: decision.reason,
+    sourcePalmSize: decision.sourcePalmSize,
+    sourceEdgeMargin: decision.sourceEdgeMargin,
+    regionArea: decision.regionArea,
+    region: decision.region,
+    ...overrides,
+  };
+}
+
+async function analyzeHandRawAsync(uri: string, pickColor: PickColor) {
+  if (!NativeModule) throw new Error('손가락 상세 분석 모듈을 사용할 수 없습니다.');
+  return NativeModule.analyzeHandAsync(uri, pickColor);
+}
+
+async function analyzeHandPrecisionAsync(uri: string, pickColor: PickColor, enabled: boolean) {
+  if (!NativeModule) throw new Error('손가락 상세 분석 모듈을 사용할 수 없습니다.');
+  const analyzeRegion = NativeModule.analyzeHandInRegionAsync;
+  const regionAvailable = enabled && Boolean(NativeModule.androidHandRegionAnalysisAvailable && analyzeRegion);
+  const now = Date.now();
+
+  if (regionAvailable && analyzeRegion && cachedHandPrecisionRegion
+    && cachedHandPrecisionRegion.pickColor === pickColor
+    && now - cachedHandPrecisionRegion.capturedAt <= 1_600) {
+    const cached = cachedHandPrecisionRegion;
+    try {
+      const tracked = await analyzeRegion(
+        uri,
+        pickColor,
+        cached.region.left,
+        cached.region.top,
+        cached.region.right,
+        cached.region.bottom,
+      );
+      const handednessStable = cached.handedness === 'Unknown'
+        || tracked.handedness === 'Unknown'
+        || cached.handedness === tracked.handedness
+        || tracked.handednessScore < 0.62;
+      if (tracked.hasHand && tracked.landmarks.length >= 21 && tracked.handednessScore >= 0.30 && handednessStable) {
+        const decision = decideHandPrecisionRegion(tracked);
+        const nextRegion = decision.region ?? cached.region;
+        cachedHandPrecisionRegion = {
+          capturedAt: now,
+          pickColor,
+          handedness: tracked.handedness,
+          region: nextRegion,
+        };
+        return {
+          ...tracked,
+          precision: precisionMetadata(decision, {
+            applied: true,
+            passes: 1,
+            reason: 'tracked-region',
+            region: cached.region,
+            regionArea: (cached.region.right - cached.region.left) * (cached.region.bottom - cached.region.top),
+          }),
+        };
+      }
+    } catch {
+      // ROI를 놓치면 바로 전체 프레임 재탐색으로 복구합니다.
+    }
+    cachedHandPrecisionRegion = null;
+  }
+
+  const first = await analyzeHandRawAsync(uri, pickColor);
+  const decision = decideHandPrecisionRegion(first);
+  const base = { ...first, precision: precisionMetadata(decision) };
+  if (!regionAvailable || !analyzeRegion || !decision.shouldRefine || !decision.region) {
+    return regionAvailable
+      ? base
+      : { ...base, precision: { ...base.precision, fallbackReason: enabled ? 'region-analysis-unavailable' : 'precision-disabled' } };
+  }
+
+  try {
+    const region = decision.region;
+    const refined = await analyzeRegion(uri, pickColor, region.left, region.top, region.right, region.bottom);
+    const acceptable = refined.hasHand
+      && refined.landmarks.length >= 21
+      && refined.handednessScore >= Math.max(0.30, first.handednessScore - 0.18);
+    if (!acceptable) {
+      cachedHandPrecisionRegion = null;
+      return {
+        ...base,
+        precision: { ...base.precision, fallbackReason: 'refined-result-low-confidence' },
+      };
+    }
+
+    const nextDecision = decideHandPrecisionRegion(refined);
+    cachedHandPrecisionRegion = {
+      capturedAt: now,
+      pickColor,
+      handedness: refined.handedness,
+      region: nextDecision.region ?? region,
+    };
+    return {
+      ...refined,
+      latencyMs: first.latencyMs + refined.latencyMs,
+      precision: precisionMetadata(decision, {
+        applied: true,
+        passes: 2,
+        reason: 'reacquired-and-refined',
+        region,
+      }),
+    };
+  } catch {
+    cachedHandPrecisionRegion = null;
+    return {
+      ...base,
+      precision: { ...base.precision, fallbackReason: 'region-analysis-failed' },
+    };
+  }
+}
+"""
+          if marker not in text:
+              raise SystemExit('raw hand analysis marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          marker = "type LiveHandAnalysisOptions = {\n  refreshStringVision?: boolean;\n  reuseStringVisionMs?: number;\n};"
+          replacement = "type LiveHandAnalysisOptions = {\n  refreshStringVision?: boolean;\n  reuseStringVisionMs?: number;\n  precisionRegion?: boolean;\n};"
+          if marker not in text:
+              raise SystemExit('live hand options marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          marker = "  const hand = await analyzeHandRawAsync(uri, pickColor);"
+          replacement = "  const hand = await analyzeHandPrecisionAsync(uri, pickColor, options.precisionRegion !== false);"
+          if marker not in text:
+              raise SystemExit('live hand invocation marker not found')
+          text = text.replace(marker, replacement, 1)
+          hand_index.write_text(text, encoding='utf-8')
+
+          native = Path('mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachHandModule.kt')
+          text = native.read_text(encoding='utf-8')
+          marker = '        cleanupFile(uri)\n'
+          if marker not in text:
+              raise SystemExit('native cleanup marker not found')
+          text = text.replace(marker, '', 1)
+          marker = '    while (max(bounds.outWidth, bounds.outHeight) / sampleSize > 1_280) sampleSize *= 2'
+          replacement = '    while (max(bounds.outWidth, bounds.outHeight) / sampleSize > 2_048) sampleSize *= 2'
+          if marker not in text:
+              raise SystemExit('native decode size marker not found')
+          native.write_text(text.replace(marker, replacement, 1), encoding='utf-8')
+
+          camera = Path('mobile/components/SessionCoachCamera.tsx')
+          text = camera.read_text(encoding='utf-8')
+          replacements = [
+              ("const [facing, setFacing] = useState<CameraType>(firstMode === 'full' ? 'front' : 'back');", "const [facing, setFacing] = useState<CameraType>('front');"),
+              ("    setFacing(activeMode === 'full' ? 'front' : 'back');", "    setFacing('front');"),
+              ("          quality: activeMode === 'full' ? 0.30 : analysisProfile.photoQuality,", "          quality: activeMode === 'full'\n            ? 0.30\n            : facing === 'front'\n              ? Math.max(0.42, analysisProfile.photoQuality)\n              : analysisProfile.photoQuality,"),
+              ("<Text style={styles.cameraSwitchText}>{facing === 'front' ? '전면' : '후면'} 전환</Text>", "<Text style={styles.cameraSwitchText}>{facing === 'front' ? '후면으로' : '전면으로'}</Text>"),
+              ("{handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms", "{handResult.handedness} · 관절 {handResult.landmarks.length}개 · {handResult.precision?.applied ? '손 영역 정밀 추적' : '전체 탐색'} · 처리 {Math.round(handResult.latencyMs)}ms"),
+          ]
+          for marker, replacement in replacements:
+              if marker not in text:
+                  raise SystemExit(f'camera marker not found: {marker[:60]}')
+              text = text.replace(marker, replacement, 1)
+          camera.write_text(text, encoding='utf-8')
+
+          package_path = Path('mobile/package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          quality = package['scripts']['quality:analysis']
+          compile_marker = ' tests/camera-analysis-recovery.test.ts && node'
+          compile_replacement = ' tests/camera-analysis-recovery.test.ts services/hand-precision-region.ts tests/hand-precision-region.test.ts && node'
+          if compile_marker not in quality:
+              raise SystemExit('quality compile marker not found')
+          quality = quality.replace(compile_marker, compile_replacement, 1)
+          quality += ' && node .quality-dist/tests/hand-precision-region.test.js'
+          package['scripts']['quality:analysis'] = quality
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run TypeScript and executable quality gates
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build Android release
+        working-directory: mobile/android
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Commit verified selfie hand precision tracking
+        run: |
+          rm -f .github/workflows/one-time-selfie-hand-precision.yml .github/selfie-hand-precision-trigger.txt
+          git config user.name "guitar-coach-quality-bot"
+          git config user.email "guitar-coach-quality-bot@users.noreply.github.com"
+          git add mobile/services/hand-precision-region.ts mobile/tests/hand-precision-region.test.ts mobile/modules/guitar-coach-hand/index.ts mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachHandModule.kt mobile/components/SessionCoachCamera.tsx mobile/package.json .github/workflows/one-time-selfie-hand-precision.yml .github/selfie-hand-precision-trigger.txt
+          git commit -m "Add S26 selfie hand precision tracking"
+          git push origin HEAD:agent/live-coach-compat-v055
