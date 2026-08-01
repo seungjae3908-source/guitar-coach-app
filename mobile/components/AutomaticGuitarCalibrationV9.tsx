@@ -35,7 +35,17 @@ type NativeHandModule = {
 };
 type NativeStringVisionModule = {
   androidStringVisionAvailable: boolean;
+  androidAdaptiveStringRegionAvailable?: boolean;
   analyzeStringsAsync(uri: string): Promise<GuitarStringTrackingResult>;
+  analyzeStringsInRegionAsync?: (
+    uri: string,
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+    focusX: number,
+    focusY: number,
+  ) => Promise<GuitarStringTrackingResult>;
 };
 
 const HandModule = requireOptionalNativeModule<NativeHandModule>('GuitarCoachHand');
@@ -45,6 +55,25 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 function roiKey(facing: CameraType) {
   return `${ROI_KEY_PREFIX}:${facing}`;
+}
+
+function buildRawStringSearchRegion(hand: HandAnalysisResult) {
+  if (!hand.hasHand || hand.landmarks.length < 21) return null;
+  const points = hand.landmarks.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (points.length < 21) return null;
+  const tips = [4, 8, 12, 16, 20].map((index) => hand.landmarks[index]).filter(Boolean);
+  const focusPoints = tips.length ? tips : points;
+  const focusX = clamp(focusPoints.reduce((sum, point) => sum + point.x, 0) / focusPoints.length, 0, 1);
+  const focusY = clamp(focusPoints.reduce((sum, point) => sum + point.y, 0) / focusPoints.length, 0, 1);
+  const ys = points.map((point) => point.y);
+  let top = clamp(Math.min(...ys, focusY) - 0.24, 0.01, 0.95);
+  let bottom = clamp(Math.max(...ys, focusY) + 0.24, 0.05, 0.99);
+  if (bottom - top < 0.44) {
+    const center = (top + bottom) / 2;
+    top = clamp(center - 0.22, 0.01, 0.55);
+    bottom = clamp(center + 0.22, 0.45, 0.99);
+  }
+  return { left: 0.01, top, right: 0.99, bottom, focusX, focusY };
 }
 
 function remapHandToPreview(result: HandAnalysisResult, preview: Size, image: PixelSize): HandAnalysisResult {
@@ -231,10 +260,21 @@ export default function AutomaticGuitarCalibrationV9({
           width: Math.max(1, Number(photo.width) || size.width),
           height: Math.max(1, Number(photo.height) || size.height),
         };
-        const [rawHand, rawStrings] = await Promise.all([
-          HandModule!.analyzeHandAsync(photo.uri, 'none'),
-          StringVisionModule!.analyzeStringsAsync(photo.uri),
-        ]);
+        const rawHand = await HandModule!.analyzeHandAsync(photo.uri, 'none');
+        const searchRegion = buildRawStringSearchRegion(rawHand);
+        const rawStrings = searchRegion
+          && StringVisionModule!.androidAdaptiveStringRegionAvailable
+          && StringVisionModule!.analyzeStringsInRegionAsync
+          ? await StringVisionModule!.analyzeStringsInRegionAsync(
+              photo.uri,
+              searchRegion.left,
+              searchRegion.top,
+              searchRegion.right,
+              searchRegion.bottom,
+              searchRegion.focusX,
+              searchRegion.focusY,
+            )
+          : await StringVisionModule!.analyzeStringsAsync(photo.uri);
         if (cancelled) return;
         const hand = remapHandToPreview(rawHand, size, photoSize);
         const strings = remapStringsToPreview(rawStrings, size, photoSize);
