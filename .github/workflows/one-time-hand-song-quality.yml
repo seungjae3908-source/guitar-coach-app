@@ -21,45 +21,13 @@ jobs:
           ref: agent/live-coach-compat-v055
           fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - name: Apply checked repair
+      - name: Inspect repair payload integrity
         shell: bash
         run: |
-          python3 <<'PY'
-          from pathlib import Path
-          import base64
-          import zlib
-
-          parts = sorted(Path('.github/hand-song-repair').glob('part-*'))
-          if not parts:
-              raise RuntimeError('repair payload parts are missing')
-          payload = ''.join(part.read_text().strip() for part in parts)
-          source = zlib.decompress(base64.b64decode(payload)).decode('utf-8')
-          exec(compile(source, 'hand-song-repair', 'exec'), {'__name__': '__main__'})
-          PY
-
-      - name: Install mobile dependencies
-        working-directory: mobile
-        run: npm ci
-
-      - name: Run mobile typecheck and quality tests
-        working-directory: mobile
-        run: npm run typecheck
-
-      - name: Commit verified repair
-        shell: bash
-        run: |
-          git config user.name "guitar-coach-quality-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git rm .github/workflows/one-time-hand-song-quality.yml
-          git rm .github/hand-song-quality-trigger.txt
-          git rm -r .github/hand-song-repair
-          git add mobile
-          git commit -m "Fix hand precision gating and rebuild song capo theory"
-          git push origin HEAD:agent/live-coach-compat-v055
+          set -euo pipefail
+          for part in .github/hand-song-repair/part-*; do
+            printf '%s bytes=' "$part"
+            wc -c < "$part" | tr -d ' '\n            printf ' blob='
+            git hash-object "$part"
+          done
+          exit 1
