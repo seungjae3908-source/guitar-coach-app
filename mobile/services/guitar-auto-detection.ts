@@ -82,7 +82,8 @@ export function isPlausiblePlayingHand(hand: AutoHandEvidence) {
 
 function averageStringSpacing(lines: AutoStringLine[]) {
   if (lines.length < 2) return 0;
-  const longest = [...lines].sort((a, b) => distance(b, { x: b.endX, y: b.endY }) - distance(a, { x: a.endX, y: a.endY }))[0] ?? lines[0];
+  const lineLength = (line: AutoStringLine) => Math.hypot(line.endX - line.startX, line.endY - line.startY);
+  const longest = [...lines].sort((a, b) => lineLength(b) - lineLength(a))[0] ?? lines[0];
   const dx = longest.endX - longest.startX;
   const dy = longest.endY - longest.startY;
   const magnitude = Math.max(0.000001, Math.hypot(dx, dy));

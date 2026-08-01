@@ -157,10 +157,10 @@ export async function buildRuntimeDiagnosticReport(extra: Record<string, unknown
     app: {
       name: '기타 코치 AI 완성형 베타',
       version: '0.6.0',
-      versionCode: 23,
+      versionCode: 24,
       packageName: 'com.seungjae.guitarcoach.livetest',
       branch: 'agent/live-coach-compat-v055',
-      validationScope: 'v23-raised-five-tab-navigation-eight-connected-tools-focus-v8-coordinate-map',
+      validationScope: 'v24-six-string-playing-hand-auto-localization-three-frame-gate-manual-fallback',
     },
     device: deviceSummary(),
     runtime: snapshot.state,

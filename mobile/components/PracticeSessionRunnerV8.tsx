@@ -43,13 +43,13 @@ import {
   type MotionSample,
   type TrajectoryCoachResult,
 } from '../services/trajectory-speed-engine';
+import AutomaticGuitarCalibrationV9 from './AutomaticGuitarCalibrationV9';
 import FocusCoachCameraV7, {
   clearFocusV7RightHandRegion,
   loadFocusV7RightHandRegion,
-  RightHandCalibrationV7,
 } from './FocusCoachCameraV7';
 
-const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v8:calibration-reset:v2';
+const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v9:auto-guitar-reset:v3';
 
 function formatTime(seconds: number) {
   const minute = Math.floor(seconds / 60);
@@ -99,7 +99,7 @@ function CalibrationSurfaceV8({
   return (
     <View style={styles.calibrationRoot}>
       <View style={[styles.calibrationCameraShell, { width: cameraSize.width, height: cameraSize.height }]}>
-        <RightHandCalibrationV7
+        <AutomaticGuitarCalibrationV9
           initialFacing={initialFacing}
           onCancel={onCancel}
           onSaved={(facing) => onSaved(facing)}
@@ -343,7 +343,7 @@ export default function PracticeSessionRunnerV8({
         cameraMode: preset.cameraFocus,
         microphoneUsed: false,
         metronomeUsed: isAdvancedMetronomeAvailable,
-        notes: `FOCUS V8 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,
+        notes: `FOCUS V9 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,
       };
       try {
         await savePracticeSession(record);
@@ -424,7 +424,7 @@ export default function PracticeSessionRunnerV8({
 
         {!calibrationChecked ? (
           <View style={styles.loadingSurface}>
-            <Text style={styles.loadingBuild}>FOCUS V8 · v22</Text>
+            <Text style={styles.loadingBuild}>FOCUS V9 · v24</Text>
             <Text style={styles.loadingText}>촬영 설정 확인 중</Text>
           </View>
         ) : calibrationVisible && preset.cameraFocus === 'right-hand' ? (
@@ -445,7 +445,7 @@ export default function PracticeSessionRunnerV8({
           <View style={styles.practiceRoot}>
             <View style={styles.header}>
               <View style={styles.headerCopy}>
-                <Text style={styles.buildBadge}>FOCUS V8 · v22 · 마이크 OFF</Text>
+                <Text style={styles.buildBadge}>FOCUS V9 · v24 · 마이크 OFF</Text>
                 <Text style={styles.headerTitle}>집중교정</Text>
               </View>
               <Pressable onPress={() => void stopLesson(true)} style={styles.closeButton}>

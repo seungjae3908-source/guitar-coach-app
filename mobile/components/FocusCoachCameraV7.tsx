@@ -398,7 +398,7 @@ export function RightHandCalibrationV7({
       ) : null}
 
       <View pointerEvents="none" style={styles.calibrationHeader}>
-        <Text style={styles.calibrationBuild}>FOCUS V8 · v22 촬영 보정</Text>
+        <Text style={styles.calibrationBuild}>FOCUS V9 · v24 수동 보정</Text>
         <Text style={styles.calibrationTitle}>
           {step === 'soundhole' ? '1. 사운드홀 중앙을 터치하세요' : step === 'bridge' ? '2. 브리지 중앙을 터치하세요' : '3. 초록 영역을 확인하세요'}
         </Text>
@@ -512,7 +512,7 @@ export default function FocusCoachCameraV7({
     void loadFocusV7RightHandRegion(facing).then((stored) => {
       if (cancelled) return;
       if (!stored) {
-        updateStatus('이 카메라는 사운드홀·브리지 보정이 필요합니다.');
+        updateStatus('기타 위치 자동 인식 또는 수동 보정이 필요합니다.');
         onNeedCalibration?.(facing);
         return;
       }
