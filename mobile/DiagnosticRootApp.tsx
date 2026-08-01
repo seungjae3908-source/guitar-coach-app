@@ -17,7 +17,9 @@ export default function DiagnosticRootApp() {
   useEffect(() => {
     void recordRuntimeDiagnostic('app', 'app_mounted', {
       version: '0.6.0',
-      versionCode: 22,
+      versionCode: 23,
+      productShell: 'raised-five-tab-navigation',
+      connectedMoreTools: 8,
       focusScreen: 'V8-coordinate-map',
       fixedThreeByFourCamera: true,
       primaryActionBeforeCamera: true,
@@ -67,7 +69,7 @@ const styles = StyleSheet.create({
   floatingButton: {
     position: 'absolute',
     right: 12,
-    bottom: 28,
+    bottom: 118,
     minWidth: 62,
     height: 48,
     borderRadius: 24,
