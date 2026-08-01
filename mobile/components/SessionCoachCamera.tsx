@@ -15,6 +15,7 @@ import {
 import type { PracticeCategoryId } from '../config/guitar-mode-profiles';
 import type { PracticePreset } from '../config/personal-practice-presets';
 import { cameraAnalysisProfile } from '../services/focus-practice-mode';
+import { effectiveHandDetailSize } from '../services/hand-precision-region';
 import {
   analyzeHandWithStringsAsync,
   type HandAnalysisResult,
@@ -231,9 +232,8 @@ function HandOverlay({ result, size }: { result: HandAnalysisResult | null; size
 }
 
 function handSize(result: HandAnalysisResult | null) {
-  const wrist = result?.landmarks[0];
-  const middleMcp = result?.landmarks[9];
-  return wrist && middleMcp ? Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y) : 0;
+  if (!result) return 0;
+  return effectiveHandDetailSize({ landmarks: result.landmarks, precision: result.precision });
 }
 
 export default function SessionCoachCamera({
@@ -355,7 +355,7 @@ export default function SessionCoachCamera({
           quality: activeMode === 'full'
             ? 0.30
             : facing === 'front'
-              ? Math.max(0.42, analysisProfile.photoQuality)
+              ? Math.max(0.60, analysisProfile.photoQuality)
               : analysisProfile.photoQuality,
           shutterSound: false,
           mirror: facing === 'front',
@@ -464,6 +464,7 @@ export default function SessionCoachCamera({
   }
 
   const size = handSize(handResult);
+  const precisionApplied = Boolean(handResult?.precision?.applied);
   const wristPoint = handResult?.landmarks.find((point) => point.name === 'wrist');
   const middleMcpPoint = handResult?.landmarks.find((point) => point.name === 'middleMcp');
   const wristEdgeMargin = wristPoint
@@ -486,7 +487,7 @@ export default function SessionCoachCamera({
         ? '손이 작습니다 · 카메라 가까이'
         : size > 0.68
           ? '손가락 끝이 잘립니다 · 조금 멀리'
-          : `손 추적 ${Math.round(handResult.handednessScore * 100)}%`;
+          : `손 추적 ${Math.round(handResult.handednessScore * 100)}%${precisionApplied ? ' · ROI 2차 정밀' : ''}`;
 
   return (
     <View style={styles.root}>

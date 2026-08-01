@@ -260,16 +260,16 @@ class GuitarCoachHandModule : Module() {
     val sourcePalmSize = palmSize(pass.landmarks)
     val sourceEdgeMargin = minOf(minimumX, 1.0 - maximumX, minimumY, 1.0 - maximumY)
 
-    if (sourcePalmSize < 0.025) {
+    if (sourcePalmSize < 0.016) {
       return PrecisionDecision(false, "hand-too-small", sourcePalmSize, sourceEdgeMargin, 1.0, null)
     }
 
     val boxWidth = max(0.02, maximumX - minimumX)
     val boxHeight = max(0.02, maximumY - minimumY)
-    val horizontalPadding = max(0.075, sourcePalmSize * 0.72)
-    val verticalPadding = max(0.085, sourcePalmSize * 0.82)
-    val requestedWidth = maxOf(0.32, boxWidth + horizontalPadding * 2.0, sourcePalmSize * 3.15).coerceIn(0.32, 0.78)
-    val requestedHeight = maxOf(0.36, boxHeight + verticalPadding * 2.0, sourcePalmSize * 3.55).coerceIn(0.36, 0.82)
+    val horizontalPadding = max(0.06, sourcePalmSize * 0.68)
+    val verticalPadding = max(0.07, sourcePalmSize * 0.76)
+    val requestedWidth = maxOf(0.28, boxWidth + horizontalPadding * 2.0, sourcePalmSize * 3.0).coerceIn(0.28, 0.78)
+    val requestedHeight = maxOf(0.32, boxHeight + verticalPadding * 2.0, sourcePalmSize * 3.35).coerceIn(0.32, 0.82)
     val horizontal = fitAxis((minimumX + maximumX) / 2.0, requestedWidth)
     val vertical = fitAxis((minimumY + maximumY) / 2.0, requestedHeight)
     val region = NormalizedRegion(horizontal.first, vertical.first, horizontal.second, vertical.second).normalized()

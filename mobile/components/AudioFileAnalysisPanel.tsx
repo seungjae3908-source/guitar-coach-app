@@ -15,11 +15,13 @@ import {
   isAudioFileAnalysisAvailable,
 } from '../modules/guitar-coach-audio-file';
 import { saveSongProject } from '../services/song-project-store';
-import type {
-  SongBar,
-  SongKey,
-  SongPracticeStyle,
-  SongSheetDraft,
+import {
+  buildSongBarEvents,
+  detectedKeyToSongKey,
+  type SongBar,
+  type SongKey,
+  type SongPracticeStyle,
+  type SongSheetDraft,
 } from '../services/song-sheet-engine';
 
 const STYLES: Array<{ id: SongPracticeStyle; label: string }> = [
@@ -41,20 +43,7 @@ function formatTime(seconds: number) {
 }
 
 function keyForDraft(detected: string): SongKey {
-  const normalized = detected.trim();
-  const root = normalized.split(' ')[0] ?? 'C';
-  const minor = normalized.includes('minor');
-  if (minor) {
-    if (root === 'E' || root === 'F' || root === 'F#' || root === 'G') return 'Em';
-    if (root === 'D' || root === 'D#') return 'Dm';
-    return 'Am';
-  }
-  if (root === 'G' || root === 'G#') return 'G';
-  if (root === 'D' || root === 'D#') return 'D';
-  if (root === 'A' || root === 'A#') return 'A';
-  if (root === 'E' || root === 'B') return 'E';
-  if (root === 'F' || root === 'F#') return 'F';
-  return 'C';
+  return detectedKeyToSongKey(detected);
 }
 
 function instruction(style: SongPracticeStyle, mode: GuitarModeId, index: number) {
@@ -69,8 +58,8 @@ function analysisToDraft(input: {
   mode: GuitarModeId;
   style: SongPracticeStyle;
 }): SongSheetDraft {
-  const reliable = input.result.chords.filter((segment) => segment.chord !== 'N.C.' && segment.confidence >= 0.12);
-  const source = reliable.length ? reliable : input.result.chords.filter((segment) => segment.chord !== 'N.C.');
+  const reliable = input.result.chords.filter((segment) => segment.chord !== 'N.C.' && segment.confidence >= 0.42);
+  const source = reliable;
   const stride = Math.max(1, Math.ceil(source.length / 32));
   const selected = source.filter((_, index) => index % stride === 0).slice(0, 32);
   const now = new Date().toISOString();
@@ -85,6 +74,15 @@ function analysisToDraft(input: {
     beats: 4,
     instruction: `${instruction(input.style, input.mode, index)} · 원음 ${formatTime(segment.startSeconds)}~${formatTime(segment.endSeconds)} · 신뢰 ${Math.round(segment.confidence * 100)}%`,
     section: index < 2 ? 'intro' : index >= Math.floor(Math.max(1, selected.length) / 2) ? 'chorus' : 'verse',
+    soundingChord: segment.chord,
+    events: buildSongBarEvents({
+      barId: `bar-${index + 1}`,
+      chord: segment.chord,
+      beats: 4,
+      style: input.style,
+      guitarMode: input.mode,
+      variation: index,
+    }),
   }));
   const cleanName = input.fileName.replace(/\.[^.]+$/, '') || '로컬 음원 분석';
   return {
@@ -93,10 +91,13 @@ function analysisToDraft(input: {
     title: cleanName,
     artist: `로컬 음원 분석 · ${formatTime(input.result.durationSeconds)}`,
     key: keyForDraft(input.result.key),
+    shapeKey: keyForDraft(input.result.key),
+    capo: 0,
     bpm: input.result.bpm > 0 ? Math.min(220, Math.max(35, Math.round(input.result.bpm))) : 80,
     beatsPerBar: 4,
     style: input.style,
     bars,
+    notationVersion: 3,
     source: 'offline-draft',
     createdAt: now,
     updatedAt: now,
@@ -149,7 +150,8 @@ export default function AudioFileAnalysisPanel({ mode }: { mode: GuitarModeId })
       if (!isAudioFileAnalysisAvailable) throw new Error('이 APK에는 로컬 음원 분석 모듈이 없습니다.');
       const next = await analyzeLocalAudioFileAsync(fileUri, 120);
       setResult(next);
-      setStatus(`분석 완료 · ${next.chords.length}개 코드 구간 후보`);
+      const reliableCount = next.chords.filter((segment) => segment.chord !== 'N.C.' && segment.confidence >= 0.42).length;
+      setStatus(`분석 완료 · 신뢰 가능한 코드 ${reliableCount}개 / 전체 후보 ${next.chords.length}개`);
     } catch (caught) {
       setResult(null);
       setStatus('분석 실패');
@@ -220,7 +222,7 @@ export default function AudioFileAnalysisPanel({ mode }: { mode: GuitarModeId })
           <Text style={styles.sectionTitle}>시간별 코드 후보</Text>
           <View style={styles.chordGrid}>
             {result.chords.slice(0, 48).map((segment, index) => (
-              <View key={`${segment.startSeconds}-${index}`} style={[styles.chordCard, segment.confidence < 0.35 && styles.chordCardLow]}>
+              <View key={`${segment.startSeconds}-${index}`} style={[styles.chordCard, segment.confidence < 0.42 && styles.chordCardLow]}>
                 <Text style={styles.chordTime}>{formatTime(segment.startSeconds)}~{formatTime(segment.endSeconds)}</Text>
                 <Text style={styles.chordName}>{segment.chord}</Text>
                 <Text style={styles.chordConfidence}>{Math.round(segment.confidence * 100)}%</Text>

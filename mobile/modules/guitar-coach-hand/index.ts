@@ -2,6 +2,7 @@ import { requireOptionalNativeModule } from 'expo';
 
 import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../services/analysis-stream';
 import { getLivePracticeContext } from '../../services/practice-session-context';
+import { effectiveHandDetailSize, hasUsableHandDetail, type HandPrecisionPayload } from '../../services/hand-precision-region';
 
 export type HandLandmarkName =
   | 'wrist'
@@ -94,6 +95,8 @@ export type HandAnalysisResult = {
   landmarks: HandLandmarkPoint[];
   pick: PickAnalysisResult;
   stringTracking?: GuitarStringTrackingResult;
+  precision?: HandPrecisionPayload;
+  analysisRegion?: { left: number; top: number; right: number; bottom: number } | null;
 };
 
 type GuitarCoachHandModule = {
@@ -170,10 +173,7 @@ function averageLineSpacing(lines: GuitarStringLine[]) {
 
 function palmSize(result: HandAnalysisResult) {
   if (!result.hasHand || result.landmarks.length < 10) return 0;
-  return Math.hypot(
-    result.landmarks[0].x - result.landmarks[9].x,
-    result.landmarks[0].y - result.landmarks[9].y,
-  );
+  return effectiveHandDetailSize({ landmarks: result.landmarks, precision: result.precision });
 }
 
 function shouldPublishForCoach(result: HandAnalysisResult, pickColor: PickColor) {
@@ -192,7 +192,7 @@ function shouldPublishForCoach(result: HandAnalysisResult, pickColor: PickColor)
     || context.category === 'leadTechnique';
 
   if (pickColor === 'auto') return rightHandCategory;
-  if (pickColor === 'none') return leftHandCategory && palmSize(result) >= 0.18;
+  if (pickColor === 'none') return leftHandCategory && hasUsableHandDetail(result);
   return rightHandCategory;
 }
 

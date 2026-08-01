@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { HandAnalysisResult, HandLandmarkPoint } from '../modules/guitar-coach-hand';
 import { subscribeLiveAnalysis } from '../services/analysis-stream';
 import { publishLiveCoachFeedback } from '../services/live-coach-feedback';
+import { effectiveHandDetailSize } from '../services/hand-precision-region';
 import {
   getLivePracticeContext,
   subscribeLivePracticeContext,
@@ -92,6 +93,7 @@ function toRightHandSample(
   const middleMcp = points.get('middleMcp');
   if (!result.hasHand || !wrist || !middleMcp) return null;
   const palmSize = distance(wrist, middleMcp);
+  const detailPalmSize = effectiveHandDetailSize({ landmarks: result.landmarks, precision: result.precision });
 
   const specifications: Record<RightHandFingerId, { base: string; pip: string; dip: string; tip: string }> = {
     thumb: { base: 'thumbCmc', pip: 'thumbMcp', dip: 'thumbIp', tip: 'thumbTip' },
@@ -117,7 +119,7 @@ function toRightHandSample(
       1,
       result.handednessScore
         * Math.min(1, Math.min(wrist.x, 1 - wrist.x, wrist.y, 1 - wrist.y) / 0.07)
-        * Math.min(1, palmSize / 0.16),
+        * Math.min(1, detailPalmSize / 0.16),
     ),
     palmSize,
     wrist: { x: wrist.x, y: wrist.y },
@@ -182,6 +184,7 @@ function toGenericTechniqueSample(
       category: context.category,
       handConfidence: result.handednessScore,
       palmSize: 0,
+      detailPalmSize: 0,
       wristAngle: 0,
       wristX: 0,
       wristY: 0,
@@ -199,6 +202,7 @@ function toGenericTechniqueSample(
   const safeWrist = wrist!;
   const safeMiddleMcp = middleMcp!;
   const palmSize = distance(safeWrist, safeMiddleMcp);
+  const detailPalmSize = effectiveHandDetailSize({ landmarks: result.landmarks, precision: result.precision });
   const safePalm = Math.max(0.001, palmSize);
   const hits: TechniqueHitSample[] = (result.continuous?.newHits ?? []).map((hit) => ({
     capturedAt: hit.capturedAt,
@@ -215,6 +219,7 @@ function toGenericTechniqueSample(
     category: context.category,
     handConfidence: result.handednessScore,
     palmSize,
+    detailPalmSize,
     wristAngle: Math.atan2(safeMiddleMcp.y - safeWrist.y, safeMiddleMcp.x - safeWrist.x) * 180 / Math.PI,
     wristX: safeWrist.x,
     wristY: safeWrist.y,

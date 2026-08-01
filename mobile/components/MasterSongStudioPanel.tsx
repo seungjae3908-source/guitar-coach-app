@@ -40,6 +40,7 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5] as const;
 type StoredSongStudio = Record<string, {
   youtubeUrl: string;
   syncOffsetSeconds: number;
+  capo?: number;
   updatedAt: string;
 }>;
 
@@ -84,6 +85,7 @@ export default function MasterSongStudioPanel({
   const [playerState, setPlayerState] = useState<YouTubePlayerState>('unstarted');
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1);
   const [syncOffsetSeconds, setSyncOffsetSeconds] = useState(0);
+  const [capo, setCapo] = useState(0);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [loopSectionId, setLoopSectionId] = useState('');
   const [sectionVoiceEnabled, setSectionVoiceEnabled] = useState(true);
@@ -113,6 +115,7 @@ export default function MasterSongStudioPanel({
       setYoutubeUrl(loadedUrl);
       setAppliedYoutubeUrl(loadedUrl);
       setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);
+      setCapo(stored?.capo ?? getSongChordGuide(nextSong.id, nextSong.sections[0]?.id ?? 'verse', mode).defaultCapo);
       setLoopSectionId(nextSong.sections[0]?.id ?? '');
     }).catch((caught) => {
       if (!cancelled) setError(caught instanceof Error ? caught.message : '곡 스튜디오 설정을 불러오지 못했습니다.');
@@ -141,6 +144,7 @@ export default function MasterSongStudioPanel({
         setYoutubeUrl(loadedUrl);
         setAppliedYoutubeUrl(loadedUrl);
         setSyncOffsetSeconds(stored?.syncOffsetSeconds ?? 0);
+        setCapo(stored?.capo ?? getSongChordGuide(song.id, song.sections[0]?.id ?? 'verse', mode).defaultCapo);
       })
       .catch(() => undefined);
   }, [song?.id]);
@@ -167,13 +171,14 @@ export default function MasterSongStudioPanel({
   const loop = timeline.find((item) => item.section.id === loopSectionId) ?? active;
   const activeSectionId = active?.section.id ?? song?.sections[0]?.id ?? 'intro';
   const chordGuide = useMemo(
-    () => getSongChordGuide(song?.id ?? '', activeSectionId, mode),
-    [activeSectionId, mode, song?.id],
+    () => getSongChordGuide(song?.id ?? '', activeSectionId, mode, capo),
+    [activeSectionId, capo, mode, song?.id],
   );
   const sectionProgress = active && active.end > active.start
     ? Math.max(0, Math.min(1, (currentTime - active.start) / (active.end - active.start)))
     : 0;
-  const chordState = chordAtSectionProgress(chordGuide.chords, sectionProgress);
+  const chordState = chordAtSectionProgress(chordGuide.chords, sectionProgress, chordGuide.beatWeights);
+  const soundingChordState = chordAtSectionProgress(chordGuide.soundingChords, sectionProgress, chordGuide.beatWeights);
   const studioPreset = useMemo<PracticePreset | null>(() => {
     if (!song || !active) return null;
     const category = song.targetCategories.includes('strumming')
@@ -262,11 +267,11 @@ export default function MasterSongStudioPanel({
     if (!isCoachSpeechAvailable) return;
     void prepareCoachSpeechAsync()
       .then(() => speakCoachPhraseAsync(
-        `현재 ${chordState.current} 코드. 다음 ${chordState.next} 코드입니다.`,
+        `현재 ${chordState.current} 폼, 실제 울림 ${soundingChordState.current}. 다음 ${chordState.next} 폼입니다.`,
         { interrupt: false, speechRate: 1.02 },
       ))
       .catch(() => undefined);
-  }, [activeSectionId, chordState.current, chordState.index, chordState.next, coachRunning, playerState, sectionVoiceEnabled, voiceEnabled]);
+  }, [activeSectionId, chordState.current, chordState.index, chordState.next, coachRunning, playerState, sectionVoiceEnabled, soundingChordState.current, voiceEnabled]);
 
   const selectSong = async (nextSong: TrainingSong) => {
     setError('');
@@ -285,6 +290,7 @@ export default function MasterSongStudioPanel({
     current[song.id] = {
       youtubeUrl: canonicalUrl,
       syncOffsetSeconds,
+      capo,
       updatedAt: new Date().toISOString(),
     };
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(current));
@@ -374,21 +380,30 @@ export default function MasterSongStudioPanel({
       <View style={styles.chordCoachCard}>
         <View style={styles.chordTopRow}>
 <View style={styles.currentChordWrap}>
-  <Text style={styles.chordLabel}>현재 코드</Text>
+  <Text style={styles.chordLabel}>현재 연주 폼</Text>
   <Text style={styles.currentChord}>{chordState.current}</Text>
+  <Text style={styles.chordLabel}>실제 울림 {soundingChordState.current}</Text>
 </View>
 <View style={styles.nextChordWrap}>
-  <Text style={styles.chordLabel}>다음 코드</Text>
+  <Text style={styles.chordLabel}>다음 연주 폼</Text>
   <Text style={styles.nextChord}>{chordState.next}</Text>
+  <Text style={styles.chordLabel}>울림 {soundingChordState.next}</Text>
 </View>
         </View>
         <View style={styles.chordProgressionRow}>
 {chordGuide.chords.map((chord, index) => (
   <View key={`${activeSectionId}-${chord}-${index}`} style={[styles.chordChip, index === chordState.index && styles.chordChipActive]}>
-    <Text style={[styles.chordChipText, index === chordState.index && styles.chordChipTextActive]}>{chord}</Text>
+    <Text style={[styles.chordChipText, index === chordState.index && styles.chordChipTextActive]}>{chord}{chordGuide.soundingChords[index] !== chord ? ` · ${chordGuide.soundingChords[index]}` : ''}</Text>
   </View>
 ))}
         </View>
+        <View style={styles.syncRow}>
+          <Pressable onPress={() => setCapo((value) => Math.max(0, value - 1))} style={styles.syncButton}><Text style={styles.syncText}>카포 -1</Text></Pressable>
+          <View style={styles.syncValueWrap}><Text style={styles.syncLabel}>카포</Text><Text style={styles.syncValue}>{capo}</Text></View>
+          <Pressable onPress={() => setCapo((value) => Math.min(11, value + 1))} style={styles.syncButton}><Text style={styles.syncText}>카포 +1</Text></Pressable>
+        </View>
+        <Text style={styles.chordGuideNote}>폼 Key {chordGuide.shapeKey} · 실제 Key {chordGuide.soundingKey} · {chordGuide.tuning}</Text>
+        <Text style={styles.chordGuideNote}>스트럼 {chordGuide.strumPattern}</Text>
         <Text style={styles.chordGuideNote}>{chordGuide.note}</Text>
       </View>
 

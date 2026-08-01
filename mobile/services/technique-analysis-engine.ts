@@ -17,6 +17,7 @@ export type TechniqueFrameSample = {
   category: PracticeCategoryId;
   handConfidence: number;
   palmSize: number;
+  detailPalmSize?: number;
   wristAngle: number;
   wristX: number;
   wristY: number;
@@ -144,8 +145,9 @@ export function analyzeTechniqueWindow(samples: TechniqueFrameSample[]): Techniq
     }];
   }
 
-  if (latest.palmSize < 0.13 || latest.palmSize > 0.68) {
-    const tooSmall = latest.palmSize < 0.13;
+  const detailPalmSize = latest.detailPalmSize ?? latest.palmSize;
+  if (detailPalmSize < 0.105 || latest.palmSize > 0.68) {
+    const tooSmall = detailPalmSize < 0.105;
     return [{
       id: tooSmall ? 'technique-hand-too-small' : 'technique-hand-too-large',
       status: 'cannot-judge',
@@ -153,11 +155,14 @@ export function analyzeTechniqueWindow(samples: TechniqueFrameSample[]): Techniq
       instruction: tooSmall
         ? '손목과 손가락 끝이 모두 들어오는 범위에서 휴대폰을 더 가까이 두세요.'
         : '손목과 다섯 손가락 끝이 모두 들어오도록 휴대폰을 조금 멀리 두세요.',
-      evidence: `화면 대비 손바닥 길이가 ${latest.palmSize.toFixed(2)}입니다.`,
-      nextGoal: '손바닥 길이를 화면의 약 18~55%로 유지하세요.',
+      evidence: `원본 손 크기 ${latest.palmSize.toFixed(2)}, 정밀 분석 기준 ${detailPalmSize.toFixed(2)}입니다.`,
+      nextGoal: '손목과 손가락 끝이 모두 보이는 상태에서 정밀 분석 기준 11% 이상을 유지하세요.',
       confidencePercent: confidence,
       priority: 7,
-      measurements: [{ label: '손 크기', value: latest.palmSize.toFixed(2) }],
+      measurements: [
+        { label: '원본 손 크기', value: latest.palmSize.toFixed(2) },
+        { label: '정밀 손 크기', value: detailPalmSize.toFixed(2) },
+      ],
     }];
   }
 

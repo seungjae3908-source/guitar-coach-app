@@ -30,12 +30,14 @@ import {
   nextChordInPalette,
   replaceSongBarChord,
   SongBeatEvent,
+  SONG_KEYS,
   SongKey,
   SongPracticeStyle,
   SongSheetDraft,
+  setSongSheetCapo,
 } from '../services/song-sheet-engine';
 
-const KEYS: SongKey[] = ['C', 'G', 'D', 'A', 'E', 'F', 'Am', 'Em', 'Dm'];
+const KEYS: SongKey[] = SONG_KEYS;
 const STYLES: Array<{ id: SongPracticeStyle; label: string }> = [
   { id: 'strum', label: '스트럼' },
   { id: 'arpeggio', label: '아르페지오' },
@@ -91,6 +93,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
   const [keyName, setKeyName] = useState<SongKey>(mode === 'acoustic' ? 'G' : 'E');
   const [style, setStyle] = useState<SongPracticeStyle>(mode === 'acoustic' ? 'strum' : 'riff');
   const [bpm, setBpm] = useState(80);
+  const [capo, setCapo] = useState(0);
   const [barCount, setBarCount] = useState(8);
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1);
   const [loopStart, setLoopStart] = useState(0);
@@ -117,6 +120,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
   useEffect(() => {
     setKeyName(mode === 'acoustic' ? 'G' : 'E');
     setStyle(mode === 'acoustic' ? 'strum' : 'riff');
+    setCapo(0);
     setDraft(null);
     setCurrentBarIndex(0);
     setCurrentBeat(1);
@@ -182,6 +186,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
       title,
       artist,
       key: keyName,
+      capo,
       bpm,
       beatsPerBar: 4,
       style,
@@ -224,6 +229,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
     setTitle(structured.title);
     setArtist(structured.artist);
     setKeyName(structured.key);
+    setCapo(structured.capo ?? 0);
     setStyle(structured.style);
     setBpm(structured.bpm);
     setBarCount(structured.bars.length);
@@ -234,6 +240,11 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
     setCurrentSubdivision(1);
     setStatus('저장된 악보를 구조화된 박 단위 악보로 불러왔습니다.');
   };
+
+  useEffect(() => {
+    if (!draft || running || draft.capo === capo) return;
+    setDraft(setSongSheetCapo(draft, capo));
+  }, [capo, draft, running]);
 
   const cycleChord = (barId: string, currentChord: string) => {
     if (!draft || running) return;
@@ -328,6 +339,14 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
             </View>
           </View>
           <View style={styles.numberBlock}>
+            <Text style={styles.label}>카포</Text>
+            <View style={styles.stepRow}>
+              <SmallButton label="-1" onPress={() => setCapo((value) => Math.max(0, value - 1))} disabled={running} />
+              <Text style={styles.numberValue}>{capo}</Text>
+              <SmallButton label="+1" onPress={() => setCapo((value) => Math.min(11, value + 1))} disabled={running} />
+            </View>
+          </View>
+          <View style={styles.numberBlock}>
             <Text style={styles.label}>마디 수</Text>
             <View style={styles.stepRow}>
               <SmallButton label="-1" onPress={() => setBarCount((value) => Math.max(4, value - 1))} disabled={running} />
@@ -349,15 +368,16 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
           <View style={styles.songHeader}>
             <View style={styles.songHeaderText}>
               <Text style={styles.songTitle}>{draft.title}</Text>
-              <Text style={styles.songMeta}>{draft.artist || '연습용 생성 악보'} · Key {draft.key} · {draft.bpm} BPM · {draft.style}</Text>
+              <Text style={styles.songMeta}>{draft.artist || '연습용 생성 악보'} · 원키 {draft.key} · 폼 Key {draft.shapeKey ?? draft.key} · 카포 {draft.capo ?? 0} · {draft.bpm} BPM · {draft.style}</Text>
             </View>
-            <View style={styles.sourceBadge}><Text style={styles.sourceText}>생성 악보 V2</Text></View>
+            <View style={styles.sourceBadge}><Text style={styles.sourceText}>생성 악보 V3</Text></View>
           </View>
 
           <View style={styles.nowCard}>
             <View style={styles.nowBlock}>
               <Text style={styles.nowLabel}>현재 · {currentBarIndex + 1}마디 {currentBeat}박 {currentSubdivision === 1 ? '앞' : '뒤'}</Text>
               <Text style={styles.currentChord}>{currentBar?.chord ?? '-'}</Text>
+              <Text style={styles.currentEvent}>실제 울림 {currentBar?.soundingChord ?? currentBar?.chord ?? '-'}</Text>
               <Text style={styles.currentEvent}>{eventMainText(currentEvent)}</Text>
               <Text style={styles.instruction}>{eventTargetText(currentEvent)}</Text>
             </View>
@@ -418,6 +438,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
               >
                 <Text style={styles.barNumber}>{index + 1} · {bar.section}</Text>
                 <Text style={styles.barChord}>{bar.chord}</Text>
+                <Text style={styles.barInstruction}>울림 {bar.soundingChord ?? bar.chord}</Text>
                 <Text style={styles.barInstruction} numberOfLines={3}>{compactBarNotation(bar)}</Text>
               </Pressable>
             ))}
@@ -436,7 +457,7 @@ export default function SongPracticePanel({ mode }: { mode: GuitarModeId }) {
             <View key={project.id} style={styles.projectRow}>
               <Pressable onPress={() => loadProject(project)} style={styles.projectMain}>
                 <Text style={styles.projectTitle}>{project.title}</Text>
-                <Text style={styles.projectMeta}>{project.guitarMode === 'acoustic' ? '통기타' : '일렉'} · {project.key} · {project.bpm} BPM · {project.bars.length}마디 · 악보 V{project.notationVersion ?? 1}</Text>
+                <Text style={styles.projectMeta}>{project.guitarMode === 'acoustic' ? '통기타' : '일렉'} · 원키 {project.key} · 카포 {project.capo ?? 0} · {project.bpm} BPM · {project.bars.length}마디 · 악보 V{project.notationVersion ?? 1}</Text>
               </Pressable>
               <Pressable onPress={() => removeProject(project)} style={styles.deleteButton}><Text style={styles.deleteText}>삭제</Text></Pressable>
             </View>

@@ -375,6 +375,8 @@ class GuitarCoachAudioFileModule : Module() {
     val beatSeconds = if (bpm in 40.0..240.0) 60.0 / bpm else 1.0
     val segmentSeconds = beatSeconds.coerceIn(0.35, 1.5)
     val raw = mutableListOf<ChordSegment>()
+    val sortedEnergies = frames.map { it.energy }.filter { it > 0.0 }.sorted()
+    val medianEnergy = if (sortedEnergies.isEmpty()) 0.0 else sortedEnergies[sortedEnergies.size / 2]
     var start = 0.0
     while (start < durationSeconds && raw.size < 512) {
       val end = min(durationSeconds, start + segmentSeconds)
@@ -382,7 +384,12 @@ class GuitarCoachAudioFileModule : Module() {
       if (selected.isNotEmpty()) {
         val chroma = DoubleArray(12)
         selected.forEach { frame -> for (pitch in 0 until 12) chroma[pitch] += frame.chroma[pitch] }
-        val candidate = bestChord(chroma)
+        val segmentEnergy = selected.map { it.energy }.average()
+        val candidate = if (medianEnergy > 0.0 && segmentEnergy < medianEnergy * 0.18) {
+          ChordCandidate("N.C.", 0.0)
+        } else {
+          bestChord(chroma)
+        }
         raw += ChordSegment(start, end, candidate.name, candidate.confidence)
       }
       start = end
@@ -419,25 +426,39 @@ class GuitarCoachAudioFileModule : Module() {
     var bestName = "N.C."
     var bestScore = Double.NEGATIVE_INFINITY
     var secondScore = Double.NEGATIVE_INFINITY
+    var bestCoverage = 0.0
     for (root in 0 until 12) {
-      listOf(
-        "${PITCH_NAMES[root]}" to intArrayOf(root, (root + 4) % 12, (root + 7) % 12),
-        "${PITCH_NAMES[root]}m" to intArrayOf(root, (root + 3) % 12, (root + 7) % 12)
-      ).forEach { (name, notes) ->
+      val templates = listOf(
+        "${PITCH_NAMES[root]}" to intArrayOf(0, 4, 7),
+        "${PITCH_NAMES[root]}m" to intArrayOf(0, 3, 7),
+        "${PITCH_NAMES[root]}7" to intArrayOf(0, 4, 7, 10),
+        "${PITCH_NAMES[root]}maj7" to intArrayOf(0, 4, 7, 11),
+        "${PITCH_NAMES[root]}m7" to intArrayOf(0, 3, 7, 10),
+        "${PITCH_NAMES[root]}sus2" to intArrayOf(0, 2, 7),
+        "${PITCH_NAMES[root]}sus4" to intArrayOf(0, 5, 7),
+        "${PITCH_NAMES[root]}5" to intArrayOf(0, 7)
+      )
+      templates.forEach { (name, intervals) ->
+        val notes = intervals.map { (root + it) % 12 }.toSet()
         val chordEnergy = notes.sumOf { chroma[it] }
-        val rootBonus = chroma[root] * 0.2
-        val score = chordEnergy + rootBonus
+        val nonChordEnergy = (0 until 12).filterNot { it in notes }.sumOf { chroma[it] }
+        val rootBonus = chroma[root] * 0.18
+        val fifthBonus = chroma[(root + 7) % 12] * 0.08
+        val complexityPenalty = max(0, notes.size - 3) * 0.012
+        val score = chordEnergy + rootBonus + fifthBonus - nonChordEnergy * 0.34 - complexityPenalty
         if (score > bestScore) {
           secondScore = bestScore
           bestScore = score
           bestName = name
+          bestCoverage = chordEnergy
         } else if (score > secondScore) {
           secondScore = score
         }
       }
     }
-    val confidence = ((bestScore - secondScore) * 5.0 + (bestScore - 0.42) * 1.2).coerceIn(0.0, 1.0)
-    return ChordCandidate(bestName, confidence)
+    val margin = (bestScore - secondScore).coerceAtLeast(0.0)
+    val confidence = (margin * 7.0 + (bestCoverage - 0.50) * 1.45).coerceIn(0.0, 1.0)
+    return if (bestCoverage < 0.48 || confidence < 0.14) ChordCandidate("N.C.", confidence) else ChordCandidate(bestName, confidence)
   }
 
   private data class DecodedAudio(
