@@ -1,1 +1,0 @@
-Apply and verify S26 selfie hand precision tracking.
