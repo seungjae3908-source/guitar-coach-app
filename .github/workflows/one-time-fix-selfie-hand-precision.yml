@@ -1,0 +1,45 @@
+name: Fix selfie precision boundary test and retry
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - .github/fix-selfie-hand-precision-trigger.txt
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-retry:
+    if: github.actor != 'github-actions[bot]' && github.actor != 'guitar-coach-quality-bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Correct edge safety assertion and retrigger verification
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/one-time-selfie-hand-precision.yml')
+          text = workflow.read_text(encoding='utf-8')
+          marker = "assert(region.left <= Math.min(...landmarks.map((point) => point.x)), 'ROI는 보이는 손의 왼쪽을 포함해야 합니다.');"
+          replacement = "assert(region.left <= Math.max(0.01, Math.min(...landmarks.map((point) => point.x))), 'ROI는 안전 여백 안에서 보이는 손의 왼쪽을 포함해야 합니다.');"
+          if marker not in text:
+              raise SystemExit('selfie boundary assertion marker not found')
+          workflow.write_text(text.replace(marker, replacement, 1), encoding='utf-8')
+
+          trigger = Path('.github/selfie-hand-precision-trigger.txt')
+          trigger.write_text(trigger.read_text(encoding='utf-8') + 'Retry after verified edge-boundary correction.\n', encoding='utf-8')
+          PY
+
+          rm -f .github/workflows/one-time-fix-selfie-hand-precision.yml .github/fix-selfie-hand-precision-trigger.txt
+          git config user.name "guitar-coach-quality-bot"
+          git config user.email "guitar-coach-quality-bot@users.noreply.github.com"
+          git add .github/workflows/one-time-selfie-hand-precision.yml .github/selfie-hand-precision-trigger.txt .github/workflows/one-time-fix-selfie-hand-precision.yml .github/fix-selfie-hand-precision-trigger.txt
+          git commit -m "Fix selfie hand precision edge test"
+          git push origin HEAD:agent/live-coach-compat-v055
