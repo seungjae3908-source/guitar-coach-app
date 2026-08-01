@@ -1,0 +1,127 @@
+name: Apply Focus v22 camera coordinate fix
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Patch preview photo coordinate mapping
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          camera_path = Path('mobile/components/FocusCoachCameraV7.tsx')
+          camera = camera_path.read_text()
+
+          camera = replace_once(
+              camera,
+              "import { publishLiveAnalysisFrame } from '../services/analysis-stream';\nimport {\n  ConsecutiveHandGate,",
+              "import { publishLiveAnalysisFrame } from '../services/analysis-stream';\nimport {\n  imagePointToPreview,\n  previewRegionToImage,\n  type PixelSize,\n} from '../services/camera-preview-transform';\nimport {\n  ConsecutiveHandGate,",
+              'camera transform import',
+          )
+
+          helper = '''function remapHandResultToPreview(\n  result: HandAnalysisResult,\n  previewSize: Size,\n  imageSize: PixelSize,\n): HandAnalysisResult {\n  if (previewSize.width <= 0 || previewSize.height <= 0) return result;\n  const safeImageSize = {\n    width: Math.max(1, imageSize.width),\n    height: Math.max(1, imageSize.height),\n  };\n  const landmarks = result.landmarks.map((point) => {\n    const mapped = imagePointToPreview(point, previewSize, safeImageSize);\n    return { ...point, x: mapped.x, y: mapped.y };\n  });\n  const pick = result.pick.detected\n    ? (() => {\n        const mapped = imagePointToPreview(\n          { x: result.pick.centerX, y: result.pick.centerY },\n          previewSize,\n          safeImageSize,\n        );\n        return { ...result.pick, centerX: mapped.x, centerY: mapped.y };\n      })()\n    : result.pick;\n  return { ...result, landmarks, pick };\n}\n\n'''
+          camera = replace_once(camera, 'function Segment({', helper + 'function Segment({', 'preview result helper')
+          camera = replace_once(
+              camera,
+              "<Text style={styles.calibrationBuild}>FOCUS V7 · 촬영 보정</Text>",
+              "<Text style={styles.calibrationBuild}>FOCUS V8 · v22 촬영 보정</Text>",
+              'calibration build label',
+          )
+          camera = replace_once(
+              camera,
+              "const interval = cameraFocus === 'full-body' ? 760 : 460;",
+              "const interval = cameraFocus === 'full-body' ? 760 : 680;",
+              'hand capture interval',
+          )
+          camera = replace_once(
+              camera,
+              "quality: cameraFocus === 'full-body' ? 0.32 : 0.42,",
+              "quality: cameraFocus === 'full-body' ? 0.40 : 0.68,",
+              'capture quality',
+          )
+
+          old_hand = '''          const activeRegion = cameraFocus === 'right-hand' ? region : LEFT_HAND_REGION;\n          if (!activeRegion) throw new Error('손 분석 영역이 없습니다.');\n          const result = cameraFocus === 'right-hand'\n            ? await HandModule!.analyzeHandInRegionAsync!(\n                photo.uri,\n                pickColor(category, cameraFocus),\n                activeRegion.left,\n                activeRegion.top,\n                activeRegion.right,\n                activeRegion.bottom,\n              )\n            : await HandModule!.analyzeHandAsync(photo.uri, 'none');\n          const checked = validateHandInRegion(result.landmarks, activeRegion);'''
+
+          new_hand = '''          const activeRegion = cameraFocus === 'right-hand' ? region : LEFT_HAND_REGION;\n          if (!activeRegion) throw new Error('손 분석 영역이 없습니다.');\n          if (size.width <= 0 || size.height <= 0) throw new Error('카메라 미리보기 크기를 확인하지 못했습니다.');\n          const photoSize: PixelSize = {\n            width: Math.max(1, Number(photo.width) || size.width),\n            height: Math.max(1, Number(photo.height) || size.height),\n          };\n          let rawResult: HandAnalysisResult;\n          if (cameraFocus === 'right-hand') {\n            const photoRegion = previewRegionToImage(activeRegion, size, photoSize, 0.025);\n            rawResult = await HandModule!.analyzeHandInRegionAsync!(\n              photo.uri,\n              pickColor(category, cameraFocus),\n              photoRegion.left,\n              photoRegion.top,\n              photoRegion.right,\n              photoRegion.bottom,\n            );\n          } else {\n            rawResult = await HandModule!.analyzeHandAsync(photo.uri, 'none');\n          }\n          const result = remapHandResultToPreview(\n            rawResult,\n            size,\n            {\n              width: Math.max(1, rawResult.imageWidth || photoSize.width),\n              height: Math.max(1, rawResult.imageHeight || photoSize.height),\n            },\n          );\n          const checked = validateHandInRegion(result.landmarks, activeRegion);'''
+          camera = replace_once(camera, old_hand, new_hand, 'hand analysis mapping')
+          camera = replace_once(
+              camera,
+              "}, [cameraError, cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, region]);",
+              "}, [cameraError, cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, region, size.height, size.width]);",
+              'camera effect dependencies',
+          )
+          camera_path.write_text(camera)
+
+          runner_path = Path('mobile/components/PracticeSessionRunnerV8.tsx')
+          runner = runner_path.read_text()
+          runner = runner.replace("guitar-coach:focus-v8:calibration-reset:v1", "guitar-coach:focus-v8:calibration-reset:v2")
+          runner = runner.replace('v21', 'v22')
+
+          old_calibration = '''function CalibrationSurfaceV8({\n  initialFacing,\n  onSaved,\n  onCancel,\n}: {\n  initialFacing: CameraType;\n  onSaved: (facing: CameraType) => void;\n  onCancel: () => void;\n}) {\n  return (\n    <View style={styles.calibrationRoot}>\n      <RightHandCalibrationV7\n        initialFacing={initialFacing}\n        onCancel={onCancel}\n        onSaved={(facing) => onSaved(facing)}\n      />\n      <View pointerEvents="none" style={styles.calibrationVersionPatch}>\n        <Text style={styles.calibrationVersionText}>FOCUS V8 · v22 촬영 보정</Text>\n      </View>\n    </View>\n  );\n}'''
+          new_calibration = '''function CalibrationSurfaceV8({\n  initialFacing,\n  onSaved,\n  onCancel,\n}: {\n  initialFacing: CameraType;\n  onSaved: (facing: CameraType) => void;\n  onCancel: () => void;\n}) {\n  const { width, height } = useWindowDimensions();\n  const cameraSize = focusV8CameraSize(width, height);\n  return (\n    <View style={styles.calibrationRoot}>\n      <View style={[styles.calibrationCameraShell, { width: cameraSize.width, height: cameraSize.height }]}>\n        <RightHandCalibrationV7\n          initialFacing={initialFacing}\n          onCancel={onCancel}\n          onSaved={(facing) => onSaved(facing)}\n        />\n      </View>\n    </View>\n  );\n}'''
+          runner = replace_once(runner, old_calibration, new_calibration, 'calibration camera ratio')
+          runner = replace_once(
+              runner,
+              "  calibrationRoot: { flex: 1, backgroundColor: '#000000' },\n  calibrationVersionPatch: { position: 'absolute', top: 66, alignSelf: 'center', minWidth: 190, height: 24, borderRadius: 8, backgroundColor: 'rgba(13,17,23,0.98)', alignItems: 'center', justifyContent: 'center', zIndex: 90, paddingHorizontal: 10 },\n  calibrationVersionText: { color: '#7ee787', fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },",
+              "  calibrationRoot: { flex: 1, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 10 },\n  calibrationCameraShell: { borderRadius: 16, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },",
+              'calibration styles',
+          )
+          runner_path.write_text(runner)
+
+          app_path = Path('mobile/app.json')
+          app = app_path.read_text()
+          app = replace_once(app, '"versionCode": 21', '"versionCode": 22', 'app version')
+          app_path.write_text(app)
+
+          diagnostic_path = Path('mobile/DiagnosticRootApp.tsx')
+          diagnostic = diagnostic_path.read_text()
+          diagnostic = replace_once(diagnostic, 'versionCode: 21,', 'versionCode: 22,', 'diagnostic version')
+          diagnostic = replace_once(diagnostic, "focusScreen: 'V8',", "focusScreen: 'V8-coordinate-map',", 'diagnostic focus screen')
+          diagnostic = replace_once(
+              diagnostic,
+              'currentSessionEvidenceFrames: 12,',
+              'currentSessionEvidenceFrames: 12,\n      previewPhotoCoordinateMapping: true,\n      calibrationMatchesTrackingAspectRatio: true,',
+              'diagnostic coordinate flags',
+          )
+          diagnostic_path.write_text(diagnostic)
+
+          runtime_path = Path('mobile/services/runtime-diagnostics.ts')
+          runtime = runtime_path.read_text()
+          runtime = replace_once(runtime, 'versionCode: 21,', 'versionCode: 22,', 'runtime version')
+          runtime = replace_once(
+              runtime,
+              "validationScope: 'focus-v8-fixed-three-by-four-primary-action-first-current-session-12-no-microphone',",
+              "validationScope: 'focus-v8-preview-photo-coordinate-map-matched-three-by-four-current-session-12-no-microphone',",
+              'runtime validation scope',
+          )
+          runtime_path.write_text(runtime)
+          PY
+
+      - name: Commit Focus v22 coordinate fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mobile/components/FocusCoachCameraV7.tsx mobile/components/PracticeSessionRunnerV8.tsx mobile/app.json mobile/DiagnosticRootApp.tsx mobile/services/runtime-diagnostics.ts
+          git diff --cached --check
+          git commit -m 'Fix preview and photo coordinates in Focus v22'
+          git push origin HEAD:agent/live-coach-compat-v055
