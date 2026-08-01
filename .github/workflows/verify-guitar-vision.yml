@@ -9,6 +9,7 @@ on:
       - 'mobile/services/guitar-auto-detection.ts'
       - 'mobile/tests/guitar-auto-detection.test.ts'
       - 'mobile/modules/guitar-coach-native/**'
+      - 'mobile/GUITAR_VISION_BUILD_TRIGGER.txt'
       - '.github/workflows/verify-guitar-vision.yml'
   workflow_dispatch:
 
@@ -32,7 +33,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
