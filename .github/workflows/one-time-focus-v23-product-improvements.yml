@@ -1,0 +1,183 @@
+name: Apply Focus v23 product improvements
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Patch bottom navigation and focus tools
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          # Raise the legacy five-tab shell as well, so no entry path can sit under Samsung navigation.
+          legacy_path = Path('mobile/CompleteBetaAppV060.tsx')
+          legacy = legacy_path.read_text()
+          legacy = replace_once(
+              legacy,
+              "  bottomBar: { flexDirection: 'row', backgroundColor: '#161b22', borderTopWidth: 1, borderTopColor: '#30363d', paddingHorizontal: 5, paddingTop: 6, paddingBottom: 7 },",
+              "  bottomBar: { flexDirection: 'row', backgroundColor: '#161b22', borderTopWidth: 1, borderTopColor: '#30363d', paddingHorizontal: 7, paddingTop: 8, paddingBottom: 30 },",
+              'legacy bottom bar lift',
+          )
+          legacy = replace_once(
+              legacy,
+              "  screenContent: { padding: 14, paddingBottom: 40 },",
+              "  screenContent: { padding: 14, paddingBottom: 104 },",
+              'legacy content bottom space',
+          )
+          legacy_path.write_text(legacy)
+
+          runner_path = Path('mobile/components/PracticeSessionRunnerV8.tsx')
+          runner = runner_path.read_text()
+          runner = runner.replace('FOCUS V8 · v22', 'FOCUS V8 · v23')
+
+          runner = replace_once(
+              runner,
+              "  const [cameraFacing, setCameraFacing] = useState<CameraType>('back');\n",
+              "  const [cameraFacing, setCameraFacing] = useState<CameraType>('back');\n  const [manualMistakes, setManualMistakes] = useState(0);\n  const [sessionSummary, setSessionSummary] = useState<{\n    durationSeconds: number;\n    bpmEnd: number;\n    confidencePercent: number;\n    stableCycles: number;\n    correction: string;\n    reinforcement: string;\n  } | null>(null);\n",
+              'focus feature states',
+          )
+
+          runner = replace_once(
+              runner,
+              "    setSavedMessage('');\n  }, [preset?.id, running]);",
+              "    setSavedMessage('');\n    setManualMistakes(0);\n    setSessionSummary(null);\n  }, [preset?.id, running]);",
+              'preset reset tools',
+          )
+
+          runner = replace_once(
+              runner,
+              "    setTrajectory(null);\n    clearLatestLiveAnalysisFrames();",
+              "    setTrajectory(null);\n    setManualMistakes(0);\n    setSessionSummary(null);\n    clearLatestLiveAnalysisFrames();",
+              'start reset tools',
+          )
+
+          runner = replace_once(
+              runner,
+              "      const endedAt = Date.now();\n      const final = finalTrajectoryRef.current;\n      const record: PracticeSessionRecord = {",
+              "      const endedAt = Date.now();\n      const final = finalTrajectoryRef.current;\n      const durationSeconds = Math.max(1, Math.floor((endedAt - startedAt) / 1_000));\n      setSessionSummary({\n        durationSeconds,\n        bpmEnd: bpmRef.current,\n        confidencePercent: final?.confidencePercent ?? 0,\n        stableCycles: final?.stableCycles ?? 0,\n        correction: final?.correction ?? '손 인식 증거가 충분하지 않아 세부 교정을 만들지 않았습니다.',\n        reinforcement: final?.reinforcement ?? `${subjectLabel(preset.cameraFocus)}가 초록 영역 안에서 유지되도록 느린 속도로 다시 반복하세요.`,\n      });\n      const record: PracticeSessionRecord = {",
+              'session summary creation',
+          )
+
+          runner = replace_once(
+              runner,
+              "        durationSeconds: Math.max(1, Math.floor((endedAt - startedAt) / 1_000)),",
+              "        durationSeconds,",
+              'record duration reuse',
+          )
+          runner = replace_once(runner, '        manualMistakes: 0,', '        manualMistakes,', 'manual mistakes persistence')
+          runner = replace_once(
+              runner,
+              "        notes: `FOCUS V8 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,",
+              "        notes: `FOCUS V8 v23 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 수동 실수 ${manualMistakes} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,",
+              'record notes',
+          )
+
+          runner = replace_once(
+              runner,
+              "  const waitingMessage = focusV8WaitingMessage(evidence, label);\n",
+              "  const waitingMessage = focusV8WaitingMessage(evidence, label);\n  const remainingSeconds = Math.max(0, preset.durationSeconds - elapsedSeconds);\n",
+              'remaining time',
+          )
+
+          mode_block = '''            <View style={styles.modeRow}>\n              {FOCUS_MODE_OPTIONS.map((option) => (\n                <Pressable\n                  key={option.id}\n                  disabled={running}\n                  onPress={() => setFocusMode(option.id)}\n                  style={[styles.modeButton, focusMode === option.id && styles.modeButtonActive, running && styles.disabled]}\n                >\n                  <Text style={[styles.modeButtonText, focusMode === option.id && styles.modeButtonTextActive]}>\n                    {option.label.replace(' 모드', '').replace('왼손·코드', '왼손')}\n                  </Text>\n                </Pressable>\n              ))}\n            </View>\n'''
+          routine_block = mode_block + '''\n            <View style={styles.routineBar}>\n              <View style={styles.routineCopy}>\n                <Text style={styles.routineEyebrow}>현재 루틴 · {Math.round(preset.durationSeconds / 60)}분</Text>\n                <Text style={styles.routineTitle} numberOfLines={1}>{preset.title}</Text>\n              </View>\n              <Pressable\n                disabled={running || matchingPresets.length < 2}\n                onPress={cycleRoutine}\n                style={[styles.routineChange, (running || matchingPresets.length < 2) && styles.disabled]}\n              >\n                <Text style={styles.routineChangeText}>다음 루틴</Text>\n              </Pressable>\n            </View>\n'''
+          runner = replace_once(runner, mode_block, routine_block, 'routine selector')
+
+          runner = replace_once(
+              runner,
+              "                  {running ? '메트로놈·궤적 비교 실행 중' : preset.title}",
+              "                  {running ? `${formatTime(elapsedSeconds)} 경과 · ${formatTime(remainingSeconds)} 남음` : `${preset.startBpm}→${preset.targetBpm} BPM`}",
+              'start subline',
+          )
+
+          feedback_open = '''            <ScrollView\n              style={styles.feedbackScroll}\n              contentContainerStyle={styles.feedbackContent}\n              showsVerticalScrollIndicator\n            >\n'''
+          tools = feedback_open + '''              <View style={styles.sessionToolRow}>\n                <Pressable\n                  disabled={!running}\n                  onPress={() => setManualMistakes((value) => value + 1)}\n                  style={[styles.sessionTool, !running && styles.disabled]}\n                >\n                  <Text style={styles.sessionToolLabel}>실수 기록</Text>\n                  <Text style={styles.sessionToolValue}>+1 · 현재 {manualMistakes}</Text>\n                </Pressable>\n                <Pressable onPress={() => void applyBpm(preset.startBpm)} style={styles.sessionTool}>\n                  <Text style={styles.sessionToolLabel}>속도 복귀</Text>\n                  <Text style={styles.sessionToolValue}>{preset.startBpm} BPM</Text>\n                </Pressable>\n                <View style={styles.sessionTool}>\n                  <Text style={styles.sessionToolLabel}>남은 시간</Text>\n                  <Text style={styles.sessionToolValue}>{formatTime(remainingSeconds)}</Text>\n                </View>\n              </View>\n\n'''
+          runner = replace_once(runner, feedback_open, tools, 'session tools')
+
+          old_next = '''              {!running && matchingPresets.length > 1 ? (\n                <Pressable onPress={cycleRoutine} style={styles.nextRoutineButton}>\n                  <Text style={styles.nextRoutineLabel}>다음 루틴</Text>\n                  <Text style={styles.nextRoutineTitle} numberOfLines={1}>{preset.title}</Text>\n                </Pressable>\n              ) : null}\n'''
+          summary_block = '''              {sessionSummary ? (\n                <View style={styles.summaryPanel}>\n                  <Text style={styles.summaryEyebrow}>방금 끝난 세션</Text>\n                  <Text style={styles.summaryTitle}>{formatTime(sessionSummary.durationSeconds)} · {sessionSummary.bpmEnd} BPM · 신뢰도 {sessionSummary.confidencePercent}%</Text>\n                  <Text style={styles.sectionLabel}>먼저 고칠 한 가지</Text>\n                  <Text style={styles.feedbackBody}>{sessionSummary.correction}</Text>\n                  <Text style={styles.sectionLabel}>다음 연습</Text>\n                  <Text style={styles.feedbackBody}>{sessionSummary.reinforcement}</Text>\n                  <View style={styles.metricsRow}>\n                    <Text style={styles.metric}>안정 반복 {sessionSummary.stableCycles}</Text>\n                    <Text style={styles.metric}>수동 실수 {manualMistakes}</Text>\n                  </View>\n                </View>\n              ) : null}\n'''
+          runner = replace_once(runner, old_next, summary_block, 'session summary panel')
+
+          runner = replace_once(
+              runner,
+              "  practiceRoot: { flex: 1, backgroundColor: '#0d1117', paddingBottom: Platform.OS === 'android' ? 14 : 8 },",
+              "  practiceRoot: { flex: 1, backgroundColor: '#0d1117', paddingBottom: Platform.OS === 'android' ? 34 : 12 },",
+              'focus bottom lift',
+          )
+
+          style_anchor = "  disabled: { opacity: 0.48 },\n\n  primaryControlRow:"
+          style_insert = "  disabled: { opacity: 0.48 },\n\n  routineBar: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: '#0d1117' },\n  routineCopy: { flex: 1, minWidth: 0, borderRadius: 12, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', paddingHorizontal: 11, paddingVertical: 7 },\n  routineEyebrow: { color: '#79c0ff', fontSize: 7, fontWeight: '900' },\n  routineTitle: { color: '#ffffff', fontSize: 10, fontWeight: '900', marginTop: 2 },\n  routineChange: { minWidth: 82, minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: '#6e7681', backgroundColor: '#21262d', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },\n  routineChangeText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },\n\n  primaryControlRow:"
+          runner = replace_once(runner, style_anchor, style_insert, 'routine styles')
+
+          runner = replace_once(
+              runner,
+              "  feedbackPanel: { borderRadius: 14, borderWidth: 1, padding: 13 },",
+              "  sessionToolRow: { flexDirection: 'row', gap: 6, marginBottom: 9 },\n  sessionTool: { flex: 1, minHeight: 54, borderRadius: 12, borderWidth: 1, borderColor: '#30363d', backgroundColor: '#161b22', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },\n  sessionToolLabel: { color: '#8b949e', fontSize: 7, fontWeight: '900' },\n  sessionToolValue: { color: '#ffffff', fontSize: 9, fontWeight: '900', marginTop: 4, textAlign: 'center' },\n  feedbackPanel: { borderRadius: 14, borderWidth: 1, padding: 13 },",
+              'session tool styles',
+          )
+
+          runner = replace_once(
+              runner,
+              "  nextRoutineButton: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: '#6e7681', backgroundColor: '#161b22', justifyContent: 'center', paddingHorizontal: 12, marginTop: 9 },\n  nextRoutineLabel: { color: '#79c0ff', fontSize: 8, fontWeight: '900' },\n  nextRoutineTitle: { color: '#ffffff', fontSize: 10, fontWeight: '800', marginTop: 2 },",
+              "  summaryPanel: { borderRadius: 14, borderWidth: 1, borderColor: '#1f6feb', backgroundColor: '#111d2f', padding: 13, marginTop: 9 },\n  summaryEyebrow: { color: '#79c0ff', fontSize: 8, fontWeight: '900', letterSpacing: 0.6 },\n  summaryTitle: { color: '#ffffff', fontSize: 13, lineHeight: 19, fontWeight: '900', marginTop: 4 },",
+              'summary styles',
+          )
+          runner_path.write_text(runner)
+
+          app_path = Path('mobile/app.json')
+          app = app_path.read_text()
+          app = replace_once(app, '"versionCode": 22', '"versionCode": 23', 'app version')
+          app_path.write_text(app)
+
+          diagnostic_path = Path('mobile/DiagnosticRootApp.tsx')
+          diagnostic = diagnostic_path.read_text()
+          diagnostic = replace_once(diagnostic, 'versionCode: 22,', 'versionCode: 23,', 'diagnostic version')
+          diagnostic = replace_once(diagnostic, "focusScreen: 'V8-coordinate-map',", "focusScreen: 'V8-v23-product-shell',", 'diagnostic focus label')
+          diagnostic = replace_once(
+              diagnostic,
+              "      bottom: 28,",
+              "      bottom: 118,",
+              'diagnostic button lift',
+          )
+          diagnostic_path.write_text(diagnostic)
+
+          runtime_path = Path('mobile/services/runtime-diagnostics.ts')
+          runtime = runtime_path.read_text()
+          runtime = replace_once(runtime, 'versionCode: 22,', 'versionCode: 23,', 'runtime version')
+          runtime = replace_once(
+              runtime,
+              "validationScope: 'focus-v8-preview-photo-coordinate-map-matched-three-by-four-current-session-12-no-microphone',",
+              "validationScope: 'v23-raised-bottom-nav-more-tools-focus-routine-manual-mistake-session-summary',",
+              'runtime scope',
+          )
+          runtime_path.write_text(runtime)
+          PY
+
+      - name: Commit Focus v23 product improvements
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mobile/CompleteBetaAppV060.tsx mobile/components/PracticeSessionRunnerV8.tsx mobile/app.json mobile/DiagnosticRootApp.tsx mobile/services/runtime-diagnostics.ts
+          git diff --cached --check
+          git commit -m 'Improve bottom navigation and focus session tools in v23'
+          git push origin HEAD:agent/live-coach-compat-v055
