@@ -49,7 +49,7 @@ import FocusCoachCameraV7, {
   RightHandCalibrationV7,
 } from './FocusCoachCameraV7';
 
-const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v8:calibration-reset:v1';
+const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v8:calibration-reset:v2';
 
 function formatTime(seconds: number) {
   const minute = Math.floor(seconds / 60);
@@ -94,15 +94,16 @@ function CalibrationSurfaceV8({
   onSaved: (facing: CameraType) => void;
   onCancel: () => void;
 }) {
+  const { width, height } = useWindowDimensions();
+  const cameraSize = focusV8CameraSize(width, height);
   return (
     <View style={styles.calibrationRoot}>
-      <RightHandCalibrationV7
-        initialFacing={initialFacing}
-        onCancel={onCancel}
-        onSaved={(facing) => onSaved(facing)}
-      />
-      <View pointerEvents="none" style={styles.calibrationVersionPatch}>
-        <Text style={styles.calibrationVersionText}>FOCUS V8 · v21 촬영 보정</Text>
+      <View style={[styles.calibrationCameraShell, { width: cameraSize.width, height: cameraSize.height }]}>
+        <RightHandCalibrationV7
+          initialFacing={initialFacing}
+          onCancel={onCancel}
+          onSaved={(facing) => onSaved(facing)}
+        />
       </View>
     </View>
   );
@@ -423,7 +424,7 @@ export default function PracticeSessionRunnerV8({
 
         {!calibrationChecked ? (
           <View style={styles.loadingSurface}>
-            <Text style={styles.loadingBuild}>FOCUS V8 · v21</Text>
+            <Text style={styles.loadingBuild}>FOCUS V8 · v22</Text>
             <Text style={styles.loadingText}>촬영 설정 확인 중</Text>
           </View>
         ) : calibrationVisible && preset.cameraFocus === 'right-hand' ? (
@@ -444,7 +445,7 @@ export default function PracticeSessionRunnerV8({
           <View style={styles.practiceRoot}>
             <View style={styles.header}>
               <View style={styles.headerCopy}>
-                <Text style={styles.buildBadge}>FOCUS V8 · v21 · 마이크 OFF</Text>
+                <Text style={styles.buildBadge}>FOCUS V8 · v22 · 마이크 OFF</Text>
                 <Text style={styles.headerTitle}>집중교정</Text>
               </View>
               <Pressable onPress={() => void stopLesson(true)} style={styles.closeButton}>
@@ -575,9 +576,8 @@ const styles = StyleSheet.create({
   closeOnly: { minHeight: 48, borderRadius: 13, backgroundColor: '#238636', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22, marginTop: 16 },
   closeOnlyText: { color: '#ffffff', fontSize: 12, fontWeight: '900' },
 
-  calibrationRoot: { flex: 1, backgroundColor: '#000000' },
-  calibrationVersionPatch: { position: 'absolute', top: 66, alignSelf: 'center', minWidth: 190, height: 24, borderRadius: 8, backgroundColor: 'rgba(13,17,23,0.98)', alignItems: 'center', justifyContent: 'center', zIndex: 90, paddingHorizontal: 10 },
-  calibrationVersionText: { color: '#7ee787', fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },
+  calibrationRoot: { flex: 1, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 10 },
+  calibrationCameraShell: { borderRadius: 16, overflow: 'hidden', backgroundColor: '#000000', borderWidth: 1, borderColor: '#30363d' },
 
   header: { minHeight: 50, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#30363d', backgroundColor: '#161b22' },
   headerCopy: { flex: 1 },

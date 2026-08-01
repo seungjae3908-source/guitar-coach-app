@@ -24,6 +24,11 @@ import {
 } from '../modules/guitar-coach-native';
 import { publishLiveAnalysisFrame } from '../services/analysis-stream';
 import {
+  imagePointToPreview,
+  previewRegionToImage,
+  type PixelSize,
+} from '../services/camera-preview-transform';
+import {
   ConsecutiveHandGate,
   deriveRightHandRegion,
   type NormalizedPoint,
@@ -128,6 +133,33 @@ function toMotionSample(result: HandAnalysisResult, capturedAt: number): MotionS
     pickY: result.pick.detected ? result.pick.centerY : null,
     pickConfidence: result.pick.confidence,
   };
+}
+
+function remapHandResultToPreview(
+  result: HandAnalysisResult,
+  previewSize: Size,
+  imageSize: PixelSize,
+): HandAnalysisResult {
+  if (previewSize.width <= 0 || previewSize.height <= 0) return result;
+  const safeImageSize = {
+    width: Math.max(1, imageSize.width),
+    height: Math.max(1, imageSize.height),
+  };
+  const landmarks = result.landmarks.map((point) => {
+    const mapped = imagePointToPreview(point, previewSize, safeImageSize);
+    return { ...point, x: mapped.x, y: mapped.y };
+  });
+  const pick = result.pick.detected
+    ? (() => {
+        const mapped = imagePointToPreview(
+          { x: result.pick.centerX, y: result.pick.centerY },
+          previewSize,
+          safeImageSize,
+        );
+        return { ...result.pick, centerX: mapped.x, centerY: mapped.y };
+      })()
+    : result.pick;
+  return { ...result, landmarks, pick };
 }
 
 function Segment({ x1, y1, x2, y2, style }: { x1: number; y1: number; x2: number; y2: number; style: object }) {
@@ -366,7 +398,7 @@ export function RightHandCalibrationV7({
       ) : null}
 
       <View pointerEvents="none" style={styles.calibrationHeader}>
-        <Text style={styles.calibrationBuild}>FOCUS V7 · 촬영 보정</Text>
+        <Text style={styles.calibrationBuild}>FOCUS V8 · v22 촬영 보정</Text>
         <Text style={styles.calibrationTitle}>
           {step === 'soundhole' ? '1. 사운드홀 중앙을 터치하세요' : step === 'bridge' ? '2. 브리지 중앙을 터치하세요' : '3. 초록 영역을 확인하세요'}
         </Text>
@@ -521,7 +553,7 @@ export default function FocusCoachCameraV7({
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const interval = cameraFocus === 'full-body' ? 760 : 460;
+    const interval = cameraFocus === 'full-body' ? 760 : 680;
     const schedule = (delay: number) => {
       if (!cancelled) timer = setTimeout(capture, delay);
     };
@@ -540,7 +572,7 @@ export default function FocusCoachCameraV7({
       const startedAt = Date.now();
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: cameraFocus === 'full-body' ? 0.32 : 0.42,
+          quality: cameraFocus === 'full-body' ? 0.40 : 0.68,
           shutterSound: false,
           mirror: facing === 'front',
           skipProcessing: false,
@@ -566,16 +598,33 @@ export default function FocusCoachCameraV7({
         } else {
           const activeRegion = cameraFocus === 'right-hand' ? region : LEFT_HAND_REGION;
           if (!activeRegion) throw new Error('손 분석 영역이 없습니다.');
-          const result = cameraFocus === 'right-hand'
-            ? await HandModule!.analyzeHandInRegionAsync!(
-                photo.uri,
-                pickColor(category, cameraFocus),
-                activeRegion.left,
-                activeRegion.top,
-                activeRegion.right,
-                activeRegion.bottom,
-              )
-            : await HandModule!.analyzeHandAsync(photo.uri, 'none');
+          if (size.width <= 0 || size.height <= 0) throw new Error('카메라 미리보기 크기를 확인하지 못했습니다.');
+          const photoSize: PixelSize = {
+            width: Math.max(1, Number(photo.width) || size.width),
+            height: Math.max(1, Number(photo.height) || size.height),
+          };
+          let rawResult: HandAnalysisResult;
+          if (cameraFocus === 'right-hand') {
+            const photoRegion = previewRegionToImage(activeRegion, size, photoSize, 0.025);
+            rawResult = await HandModule!.analyzeHandInRegionAsync!(
+              photo.uri,
+              pickColor(category, cameraFocus),
+              photoRegion.left,
+              photoRegion.top,
+              photoRegion.right,
+              photoRegion.bottom,
+            );
+          } else {
+            rawResult = await HandModule!.analyzeHandAsync(photo.uri, 'none');
+          }
+          const result = remapHandResultToPreview(
+            rawResult,
+            size,
+            {
+              width: Math.max(1, rawResult.imageWidth || photoSize.width),
+              height: Math.max(1, rawResult.imageHeight || photoSize.height),
+            },
+          );
           const checked = validateHandInRegion(result.landmarks, activeRegion);
           const gate = gateRef.current.add(checked);
           if (!cancelled) {
@@ -618,7 +667,7 @@ export default function FocusCoachCameraV7({
       if (timer) clearTimeout(timer);
       captureBusyRef.current = false;
     };
-  }, [cameraError, cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, region]);
+  }, [cameraError, cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, region, size.height, size.width]);
 
   const switchCamera = () => {
     const next: CameraType = facing === 'front' ? 'back' : 'front';

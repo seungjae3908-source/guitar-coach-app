@@ -17,11 +17,13 @@ export default function DiagnosticRootApp() {
   useEffect(() => {
     void recordRuntimeDiagnostic('app', 'app_mounted', {
       version: '0.6.0',
-      versionCode: 21,
-      focusScreen: 'V8',
+      versionCode: 22,
+      focusScreen: 'V8-coordinate-map',
       fixedThreeByFourCamera: true,
       primaryActionBeforeCamera: true,
       currentSessionEvidenceFrames: 12,
+      previewPhotoCoordinateMapping: true,
+      calibrationMatchesTrackingAspectRatio: true,
       microphoneDisabledInFocus: true,
     });
   }, []);
