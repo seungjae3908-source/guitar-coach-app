@@ -87,8 +87,9 @@ jobs:
           size=$(stat -c%s "$output")
           test "$size" -gt 1000000
           test "$size" -lt 110000000
-          unzip -l "$output" | awk '{print $4}' | grep -q '^lib/arm64-v8a/'
-          if unzip -l "$output" | awk '{print $4}' | grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/'; then
+          unzip -Z1 "$output" > "$final_dir/APK-ENTRIES.txt"
+          grep -q '^lib/arm64-v8a/' "$final_dir/APK-ENTRIES.txt"
+          if grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/' "$final_dir/APK-ENTRIES.txt"; then
             echo 'Unexpected non-ARM64 native libraries were packaged.'
             exit 1
           fi
@@ -138,5 +139,6 @@ jobs:
             mobile/android/app/build/outputs/apk/final/SHA256SUMS.txt
             mobile/android/app/build/outputs/apk/final/SIGNING-VERIFY.txt
             mobile/android/app/build/outputs/apk/final/BUILD-INFO.txt
+            mobile/android/app/build/outputs/apk/final/APK-ENTRIES.txt
           if-no-files-found: error
           retention-days: 30
