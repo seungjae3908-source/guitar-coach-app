@@ -204,13 +204,6 @@ replace_once(
     : 0;
   const points: Array<{""",
 )
-for finger in ("thumb", "index", "middle", "ring", "pinky"):
-    replace_once(
-        quality_path,
-        f"sourceConfidence: hand.handednessScore }},\n    {{ id: '{finger if finger != 'thumb' else 'index'}'" if False else "__never__",
-        "__never__",
-    )
-# Explicit replacements avoid accidental changes to pick confidence.
 for old in [
     "{ id: 'thumb', label: 'P', point: hand.landmarks[4] ?? null, sourceConfidence: hand.handednessScore },",
     "{ id: 'index', label: 'i', point: hand.landmarks[8] ?? null, sourceConfidence: hand.handednessScore },",
