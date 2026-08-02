@@ -127,6 +127,7 @@ class GuitarCoachContinuousCameraView(
   private var lastAutoFrameAdjustmentAt = 0L
   private var lastFocusAt = 0L
   private var noHandFrames = 0
+  private var searchZoomIndex = 0
   private var autoFramingState = "searching"
   private val previousContacts = mutableMapOf<String, PreviousContact>()
   private val recentHits = ArrayDeque<Map<String, Any>>()
@@ -327,6 +328,7 @@ class GuitarCoachContinuousCameraView(
     lastAutoFrameAdjustmentAt = 0
     lastFocusAt = 0
     noHandFrames = 0
+    searchZoomIndex = 0
     autoFramingState = "searching"
     lastGuitarState = LocalGuitarState.searching()
     lastGuitarRefreshFrame = 0
@@ -361,7 +363,7 @@ class GuitarCoachContinuousCameraView(
       val timestamp = max(lastTimestampMs + 1, startedAt)
       lastTimestampMs = timestamp
 
-      val shouldRefreshHand = lastHandResult == null || frameCount % 2L == 1L
+      val shouldRefreshHand = lastHandResult?.hasHand != true || frameCount % 2L == 1L
       if (shouldRefreshHand) {
         lastHandResult = detectHand(bitmap, timestamp)
       }
@@ -375,7 +377,7 @@ class GuitarCoachContinuousCameraView(
       }
 
       if (analyzeStrings) {
-        val shouldRefreshStrings = lastStringState == null || frameCount - lastStringRefreshFrame >= 3L
+        val shouldRefreshStrings = lastStringState == null || frameCount - lastStringRefreshFrame >= 2L
         if (shouldRefreshStrings) {
           val detected = detectStrings(bitmap, hand)
           if (detected != null) {
@@ -384,7 +386,7 @@ class GuitarCoachContinuousCameraView(
             consecutiveStringMisses = 0
           } else {
             consecutiveStringMisses += 1
-            if (consecutiveStringMisses >= 2) {
+            if (consecutiveStringMisses >= 5 && startedAt >= strumLockUntilMs) {
               lastStringState = null
               previousContacts.clear()
             }
@@ -450,21 +452,22 @@ class GuitarCoachContinuousCameraView(
     if (hand?.hasHand != true || hand.landmarks.size < 21) {
       noHandFrames += 1
       autoFramingState = "searching"
-      if (
-        noHandFrames >= 12
-        && now - lastAutoFrameAdjustmentAt >= 850
-        && currentZoomRatio > minZoom * 1.04f
-      ) {
-        requestZoom(
-          (currentZoomRatio * 0.82f).coerceAtLeast(minZoom),
-          now,
-          "searching"
-        )
+      if (noHandFrames >= 8 && now - lastAutoFrameAdjustmentAt >= 650) {
+        val searchTargets = listOf(
+          minZoom,
+          (minZoom * 1.22f).coerceAtMost(maxZoom),
+          (minZoom * 1.48f).coerceAtMost(maxZoom)
+        ).distinctBy { (it * 100).roundToInt() }
+        if (searchTargets.isNotEmpty()) {
+          searchZoomIndex = (searchZoomIndex + 1) % searchTargets.size
+          requestZoom(searchTargets[searchZoomIndex], now, "searching")
+        }
       }
       return
     }
 
     noHandFrames = 0
+    searchZoomIndex = 0
     val wrist = hand.landmarks[0]
     val middleMcp = hand.landmarks[9]
     val palm = hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y).coerceAtLeast(0.001)
@@ -566,9 +569,9 @@ class GuitarCoachContinuousCameraView(
       val options = HandLandmarker.HandLandmarkerOptions.builder()
         .setBaseOptions(BaseOptions.builder().setModelAssetPath(HAND_MODEL).build())
         .setNumHands(1)
-        .setMinHandDetectionConfidence(0.20f)
-        .setMinHandPresenceConfidence(0.20f)
-        .setMinTrackingConfidence(0.24f)
+        .setMinHandDetectionConfidence(0.12f)
+        .setMinHandPresenceConfidence(0.12f)
+        .setMinTrackingConfidence(0.16f)
         .setRunningMode(RunningMode.VIDEO)
         .build()
       HandLandmarker.createFromOptions(applicationContext, options).also { handLandmarker = it }
@@ -667,7 +670,7 @@ class GuitarCoachContinuousCameraView(
           val second = gray(bitmap.getPixel(x2, y2))
           val center = gray(bitmap.getPixel(x, y))
           val edge = abs(first - second) + abs(center - (first + second) / 2.0) * 0.58
-          if (edge >= 4.5) {
+          if (edge >= 3.2) {
             val bin = (normalX * x + normalY * y - minProjection).roundToInt()
             if (bin in profile.indices) profile[bin] += edge
           }
@@ -696,7 +699,7 @@ class GuitarCoachContinuousCameraView(
             strengths[index] = interpolated(smoothed, positions[index])
           }
           val average = strengths.average()
-          if (average > profileMean * 1.08) {
+          if (average > profileMean * 1.04) {
             val spacings = DoubleArray(5) { positions[it + 1] - positions[it] }
             val spacingMean = spacings.average().coerceAtLeast(0.001)
             val spacingDeviation = standardDeviation(spacings)
@@ -706,9 +709,9 @@ class GuitarCoachContinuousCameraView(
             val minimumRegularity = (
               (strengths.minOrNull() ?: 0.0) / average
             ).coerceIn(0.0, 1.0)
-            val coverage = strengths.count { it >= profileMean * 1.04 } / 6.0
+            val coverage = strengths.count { it >= profileMean * 1.015 } / 6.0
             val regularity = spacingRegularity * 0.72 + minimumRegularity * 0.28
-            if (coverage >= 0.66 && regularity >= 0.32) {
+            if (coverage >= 0.50 && regularity >= 0.24) {
               val bandStart = positions.first() - spacingMean * 0.65
               val bandEnd = positions.last() + spacingMean * 0.65
               val focusDistance = when {
@@ -742,7 +745,7 @@ class GuitarCoachContinuousCameraView(
     }
 
     val candidate = best ?: return null
-    if (candidate.confidence < 0.26) return null
+    if (candidate.confidence < 0.18) return null
     val maxStrength = (candidate.strengths.maxOrNull() ?: 1.0).coerceAtLeast(1.0)
     val normalized = candidate.strengths.map { (it / maxStrength).coerceIn(0.0, 1.0) }
     val firstSide = normalized.take(2).average()
@@ -913,6 +916,11 @@ class GuitarCoachContinuousCameraView(
     timestamp: Long
   ): List<LiveContact> {
     val spacing = averageLineSpacing(strings.lines).coerceAtLeast(0.004)
+    val handPresenceConfidence = if (hand.hasHand && hand.landmarks.size >= 21) {
+      max(0.58, hand.score)
+    } else {
+      hand.score
+    }
     val points = ArrayList<Triple<String, String, Pair<Double, Double>>>()
     if (pick.detected && pick.confidence >= 0.24) {
       points.add(Triple("pick", "피크", estimatedPickTip(pick, strings.lines)))
@@ -938,12 +946,12 @@ class GuitarCoachContinuousCameraView(
       } else {
         pointToLineDistance(point.first, point.second, nearest) / spacing
       }
-      val visual = if (nearest != null && distance <= 1.46) nearest.visualIndex else 0
+      val visual = if (nearest != null && distance <= 1.75) nearest.visualIndex else 0
       val number = if (
         nearest != null
-        && distance <= 0.92
-        && strings.confidence >= 0.34
-        && strings.numberingConfidence >= 0.50
+        && distance <= 1.05
+        && strings.confidence >= 0.24
+        && strings.numberingConfidence >= 0.40
       ) {
         nearest.stringNumber
       } else {
@@ -961,7 +969,7 @@ class GuitarCoachContinuousCameraView(
         hypot(point.first - previous.x, point.second - previous.y) / dt
       }
       val confidence = (
-        hand.score * 0.34 +
+        handPresenceConfidence * 0.34 +
           strings.confidence * 0.30 +
           (1.0 - distance / 1.2).coerceIn(0.0, 1.0) * 0.24 +
           min(1.0, speed / 0.8) * 0.12
@@ -991,16 +999,16 @@ class GuitarCoachContinuousCameraView(
         val changedLine = contact.visualIndex > 0 &&
           previous.visualIndex > 0 &&
           contact.visualIndex != previous.visualIndex
-        val approachedLine = previous.distanceRatio > 0.70 && contact.distanceRatio <= 0.48
-        val fastEnough = contact.speed >= 0.10
+        val approachedLine = previous.distanceRatio > 0.86 && contact.distanceRatio <= 0.72
+        val fastEnough = contact.speed >= 0.065
         if (
           fastEnough
           && (changedLine || approachedLine)
           && timestamp - previous.lastHitAt >= 55
         ) {
           val direction = when {
-            contact.y > previous.y + 0.004 -> "down"
-            contact.y < previous.y - 0.004 -> "up"
+            contact.y > previous.y + 0.0025 -> "down"
+            contact.y < previous.y - 0.0025 -> "up"
             else -> "unknown"
           }
           hits.add(

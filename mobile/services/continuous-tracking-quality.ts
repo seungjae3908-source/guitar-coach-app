@@ -147,13 +147,13 @@ function compatibleTracking(left: GuitarStringTrackingResult, right: GuitarStrin
   const leftGeometry = lineGeometry(left);
   const rightGeometry = lineGeometry(right);
   if (leftGeometry.lines.length < 5 || rightGeometry.lines.length < 5) return false;
-  if (Math.abs(left.angleDegrees - right.angleDegrees) > 6.5) return false;
+  if (Math.abs(left.angleDegrees - right.angleDegrees) > 10) return false;
   const ratio = Math.max(leftGeometry.spacingMean, rightGeometry.spacingMean)
     / Math.max(0.0001, Math.min(leftGeometry.spacingMean, rightGeometry.spacingMean));
-  if (ratio > 1.42) return false;
+  if (ratio > 1.70) return false;
   const leftCenter = lineCenter(leftGeometry.lines[Math.floor(leftGeometry.lines.length / 2)]);
   const rightCenter = lineCenter(rightGeometry.lines[Math.floor(rightGeometry.lines.length / 2)]);
-  return distance(leftCenter, rightCenter) <= Math.max(leftGeometry.spacingMean, rightGeometry.spacingMean) * 1.35;
+  return distance(leftCenter, rightCenter) <= Math.max(leftGeometry.spacingMean, rightGeometry.spacingMean) * 2.0;
 }
 
 function roiMatchesCurrentHand(tracking: GuitarStringTrackingResult, hand: HandAnalysisResult) {
@@ -170,8 +170,8 @@ function roiMatchesCurrentHand(tracking: GuitarStringTrackingResult, hand: HandA
     x: median(tips.map((point) => point.x)),
     y: median(tips.map((point) => point.y)),
   };
-  const marginX = Math.max(0.04, (right - left) * 0.15);
-  const marginY = Math.max(0.04, (bottom - top) * 0.22);
+  const marginX = Math.max(0.08, (right - left) * 0.22);
+  const marginY = Math.max(0.08, (bottom - top) * 0.30);
   return center.x >= left - marginX
     && center.x <= right + marginX
     && center.y >= top - marginY
@@ -183,7 +183,7 @@ function smoothHand(
   next: HandAnalysisResult,
   capturedAt: number,
 ) {
-  if (!next.hasHand || next.landmarks.length < 21 || next.handednessScore < 0.20) {
+  if (!next.hasHand || next.landmarks.length < 21) {
     return { result: { ...next, stringTracking: undefined }, stability: 0 };
   }
 
@@ -229,10 +229,11 @@ function smoothHand(
       standardDeviation(wristSamples.map((point) => point.y)),
     )
     : 0.08;
+  const geometryConfidence = clamp(palmSize(next) / 0.055, 0.35, 1);
   const stability = clamp(
     compatible.length / 4 * 0.38
       + (1 - clamp(wristSpread / 0.055, 0, 1)) * 0.34
-      + next.handednessScore * 0.28,
+      + geometryConfidence * 0.28,
     0,
     1,
   );
@@ -280,7 +281,7 @@ function stabilizeStrings(
   if (!tracking?.detected || tracking.lines.length < 5 || tracking.visibleLineCount < 4) {
     return { tracking: undefined, stability: 0, reason: '현재 프레임에서 기타줄 5개 이상을 확인하지 못했습니다.' };
   }
-  if (tracking.confidence < 0.28 || !roiMatchesCurrentHand(tracking, hand)) {
+  if (tracking.confidence < 0.18 || !roiMatchesCurrentHand(tracking, hand)) {
     return { tracking: undefined, stability: 0, reason: '현재 손 위치와 기타줄 분석 영역이 일치하지 않습니다.' };
   }
 
@@ -288,8 +289,8 @@ function stabilizeStrings(
   if (
     geometry.lines.length < 5
     || geometry.spacingMean < 0.003
-    || geometry.spacingVariation > 0.38
-    || geometry.angleVariation > 5.5
+    || geometry.spacingVariation > 0.52
+    || geometry.angleVariation > 10
   ) {
     return { tracking: undefined, stability: 0, reason: '줄 간격 또는 평행도가 기타줄 기준을 통과하지 못했습니다.' };
   }
@@ -346,7 +347,7 @@ function stabilizeStrings(
     0,
     1,
   );
-  if (lines.length < 5 || stability < 0.43) {
+  if (lines.length < 5 || stability < 0.30) {
     return { tracking: undefined, stability, reason: '줄 위치의 시간 안정도가 아직 부족합니다.' };
   }
 
@@ -356,7 +357,7 @@ function stabilizeStrings(
       detected: true,
       confidence,
       angleDegrees: median(compatible.map((sample) => sample.angleDegrees)),
-      visibleLineCount: lines.filter((line) => line.strength >= 0.28).length,
+      visibleLineCount: lines.filter((line) => line.strength >= 0.20).length,
       stringOrder: order,
       numberingConfidence,
       stabilityConfidence: stability,
@@ -400,6 +401,9 @@ function buildContacts(
   hand: HandAnalysisResult,
 ): GuitarStringContact[] {
   const spacing = Math.max(0.004, averageLineSpacing(tracking.lines));
+  const handPresenceConfidence = hand.hasHand && hand.landmarks.length >= 21
+    ? Math.max(0.58, hand.handednessScore)
+    : 0;
   const points: Array<{
     id: StringContactId;
     label: string;
@@ -412,11 +416,11 @@ function buildContacts(
       point: hand.pick.detected ? estimatedPickTip(hand, tracking.lines) : null,
       sourceConfidence: hand.pick.confidence,
     },
-    { id: 'thumb', label: 'P', point: hand.landmarks[4] ?? null, sourceConfidence: hand.handednessScore },
-    { id: 'index', label: 'i', point: hand.landmarks[8] ?? null, sourceConfidence: hand.handednessScore },
-    { id: 'middle', label: 'm', point: hand.landmarks[12] ?? null, sourceConfidence: hand.handednessScore },
-    { id: 'ring', label: 'a', point: hand.landmarks[16] ?? null, sourceConfidence: hand.handednessScore },
-    { id: 'pinky', label: '새끼', point: hand.landmarks[20] ?? null, sourceConfidence: hand.handednessScore },
+    { id: 'thumb', label: 'P', point: hand.landmarks[4] ?? null, sourceConfidence: handPresenceConfidence },
+    { id: 'index', label: 'i', point: hand.landmarks[8] ?? null, sourceConfidence: handPresenceConfidence },
+    { id: 'middle', label: 'm', point: hand.landmarks[12] ?? null, sourceConfidence: handPresenceConfidence },
+    { id: 'ring', label: 'a', point: hand.landmarks[16] ?? null, sourceConfidence: handPresenceConfidence },
+    { id: 'pinky', label: '새끼', point: hand.landmarks[20] ?? null, sourceConfidence: handPresenceConfidence },
   ];
 
   return points.flatMap<GuitarStringContact>((specification) => {
@@ -426,15 +430,15 @@ function buildContacts(
       .sort((left, right) => left.distance - right.distance)[0];
     if (!nearest) return [];
     const distanceRatio = nearest.distance / spacing;
-    const visualIndex: 0 | GuitarStringNumber = distanceRatio <= 1.42 ? nearest.line.visualIndex : 0;
-    const stringNumber: 0 | GuitarStringNumber = distanceRatio <= 0.90
-      && tracking.confidence >= 0.36
-      && (tracking.stabilityConfidence ?? 0) >= 0.40
-      && tracking.numberingConfidence >= 0.54
+    const visualIndex: 0 | GuitarStringNumber = distanceRatio <= 1.72 ? nearest.line.visualIndex : 0;
+    const stringNumber: 0 | GuitarStringNumber = distanceRatio <= 1.08
+      && tracking.confidence >= 0.24
+      && (tracking.stabilityConfidence ?? 0) >= 0.28
+      && tracking.numberingConfidence >= 0.40
       && isStringNumber(nearest.line.stringNumber)
       ? nearest.line.stringNumber
       : 0;
-    const proximity = clamp(1 - distanceRatio / 1.45, 0, 1);
+    const proximity = clamp(1 - distanceRatio / 1.75, 0, 1);
     return [{
       id: specification.id,
       label: specification.label,
@@ -546,8 +550,8 @@ export class ContinuousTrackingQualityGate {
       if (
         !contact
         || contact.visualIndex === 0
-        || contact.distanceRatio > 0.96
-        || contact.confidence < 0.38
+        || contact.distanceRatio > 1.24
+        || contact.confidence < 0.24
       ) {
         rejectedHitCount += 1;
         return [];
@@ -566,7 +570,7 @@ export class ContinuousTrackingQualityGate {
         0,
         1,
       );
-      if (confidence < 0.44) {
+      if (confidence < 0.30) {
         rejectedHitCount += 1;
         return [];
       }

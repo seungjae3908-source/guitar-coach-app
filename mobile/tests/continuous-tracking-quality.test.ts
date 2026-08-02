@@ -92,6 +92,7 @@ function result(input: {
   hasHand?: boolean;
   offsetX?: number;
   offsetY?: number;
+  handednessScore?: number;
 }): QualityContinuousHandResult {
   const hasHand = input.hasHand ?? true;
   const base: HandAnalysisResult = {
@@ -100,7 +101,7 @@ function result(input: {
     imageHeight: 960,
     latencyMs: 24,
     handedness: hasHand ? 'Right' : 'Unknown',
-    handednessScore: hasHand ? 0.93 : 0,
+    handednessScore: hasHand ? (input.handednessScore ?? 0.93) : 0,
     landmarks: hasHand ? landmarks(input.offsetX, input.offsetY) : [],
     pick: {
       detected: true,
@@ -167,4 +168,9 @@ assert(missing.continuous.recentHits.length === 0, '손이 사라지면 과거 �
 const reacquired = gate.process(result({ frame: 6 }), 1_420);
 assert(!reacquired.stringTracking, '손을 다시 잡은 첫 프레임에서 과거 줄 상태를 재사용하면 안 됩니다.');
 
-console.log('continuous-tracking quality gate: 13 checks passed');
+const ambiguousHandGate = new ContinuousTrackingQualityGate();
+const ambiguousHand = ambiguousHandGate.process(result({ frame: 1, handednessScore: 0.05 }), 5_000);
+assert(ambiguousHand.hasHand, '손잡이 방향 점수가 낮아도 21개 랜드마크가 있으면 손을 유지해야 합니다.');
+assert((ambiguousHand.continuous.qualityGate?.handStability ?? 0) > 0, '방향 점수 대신 손 기하로 안정도를 계산해야 합니다.');
+
+console.log('continuous-tracking quality gate: 15 checks passed');

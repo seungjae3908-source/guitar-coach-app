@@ -133,10 +133,13 @@ function toMotionSample(result: ContinuousHandAnalysisResult, capturedAt: number
   const ring = points.get('ringTip');
   if (!wrist || !middleMcp || !thumb || !index || !middle || !ring) return null;
   const palmSize = distance(wrist, middleMcp);
+  const handPresenceConfidence = result.hasHand && result.landmarks.length >= 21
+    ? Math.max(0.65, result.handednessScore)
+    : 0;
   return {
     capturedAt,
-    handConfidence: result.handednessScore,
-    wristConfidence: clamp(result.handednessScore * Math.min(1, palmSize / 0.08), 0, 1),
+    handConfidence: handPresenceConfidence,
+    wristConfidence: clamp(handPresenceConfidence * Math.min(1, palmSize / 0.055), 0, 1),
     palmSize,
     wristX: wrist.x,
     wristY: wrist.y,
@@ -341,7 +344,7 @@ export default function LiveLocalCoachCamera({
     );
   }
 
-  const handReady = Boolean(result?.hasHand && result.landmarks.length >= 21 && result.handednessScore >= 0.25);
+  const handReady = Boolean(result?.hasHand && result.landmarks.length >= 21);
   const guitarReady = Boolean(result?.guitar?.detected);
   const guitarLabel = result?.guitar?.label || '기타';
   const status = error
@@ -389,7 +392,7 @@ export default function LiveLocalCoachCamera({
           frameRef.current += 1;
           onFrameCount?.(frameRef.current);
           const capturedAt = Date.now();
-          const valid = next.hasHand && next.landmarks.length >= 21 && next.handednessScore >= 0.20;
+          const valid = next.hasHand && next.landmarks.length >= 21;
           const newHits = next.continuous?.newHits ?? [];
           strumLockUntilRef.current = extendStrumLockUntil(
             strumLockUntilRef.current,
@@ -445,7 +448,9 @@ export default function LiveLocalCoachCamera({
             running: true,
             cameraReady: ready || true,
             hasHand: next.hasHand,
-            handConfidence: next.handednessScore,
+            handConfidence: next.hasHand && next.landmarks.length >= 21
+              ? Math.max(0.65, next.handednessScore)
+              : 0,
             palmSize: nextPalm,
             guitarDetected: Boolean(next.guitar?.detected),
             guitarType: next.guitar?.type ?? 'unknown',
