@@ -138,7 +138,7 @@ function ProductHome({
       keyboardShouldPersistTaps="handled"
     >
       <View style={[styles.homeHero, mode === 'acoustic' ? styles.homeHeroAcoustic : styles.homeHeroElectric]}>
-        <Text style={styles.homeEyebrow}>GUITAR COACH AI 0.6.0 · v24</Text>
+        <Text style={styles.homeEyebrow}>GUITAR COACH AI 0.6.0 · v25</Text>
         <Text style={styles.homeTitle}>{profile.title}</Text>
         <Text style={styles.homeSubtitle}>{profile.subtitle}</Text>
         <View style={styles.homeActionRow}>
@@ -297,7 +297,7 @@ export default function CompleteBetaAppV060Plus() {
 
       <View style={styles.toolBar}>
         <View style={styles.toolTextWrap}>
-          <Text style={styles.toolEyebrow}>0.6.0 v24 · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
+          <Text style={styles.toolEyebrow}>0.6.0 v25 · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
           <Text style={styles.toolTitle} numberOfLines={2}>{toolTitle(tool)}</Text>
         </View>
         <Pressable

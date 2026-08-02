@@ -334,7 +334,7 @@ export default function PracticeSessionRunnerV8({
         cameraMode: preset.cameraFocus,
         microphoneUsed: false,
         metronomeUsed: isAdvancedMetronomeAvailable,
-        notes: `FOCUS V9 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,
+        notes: `FOCUS LIVE v25 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,
       };
       try {
         await savePracticeSession(record);
@@ -436,7 +436,7 @@ export default function PracticeSessionRunnerV8({
           <View style={styles.practiceRoot}>
             <View style={styles.header}>
               <View style={styles.headerCopy}>
-                <Text style={styles.buildBadge}>FOCUS V9 · v24 · 마이크 OFF</Text>
+                <Text style={styles.buildBadge}>FOCUS LIVE · v25 · 마이크 OFF</Text>
                 <Text style={styles.headerTitle}>집중교정</Text>
               </View>
               <Pressable onPress={() => void stopLesson(true)} style={styles.closeButton}>
