@@ -70,6 +70,7 @@ const POSE_LINKS: Array<[PoseLandmarkPoint['name'], PoseLandmarkPoint['name']]> 
   ['leftShoulder', 'leftHip'], ['rightShoulder', 'rightHip'], ['leftHip', 'rightHip'],
 ];
 const LEFT_HAND_REGION: NormalizedRegion = { left: 0.02, top: 0.14, right: 0.86, bottom: 0.96 };
+const FULL_HAND_REGION: NormalizedRegion = { left: 0.015, top: 0.025, right: 0.985, bottom: 0.985 };
 const ROI_KEY_PREFIX = 'guitar-coach:right-hand-roi:focus-v7';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -471,7 +472,10 @@ export default function FocusCoachCameraV7({
   const [analysisError, setAnalysisError] = useState('');
   const [status, setStatus] = useState('카메라 연결 중');
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
-  const [region, setRegion] = useState<NormalizedRegion | null>(cameraFocus === 'left-hand' ? LEFT_HAND_REGION : null);
+  const [region, setRegion] = useState<NormalizedRegion | null>(
+    cameraFocus === 'left-hand' ? LEFT_HAND_REGION : cameraFocus === 'right-hand' ? FULL_HAND_REGION : null,
+  );
+  const [useFullFrameHandAnalysis, setUseFullFrameHandAnalysis] = useState(cameraFocus === 'right-hand');
   const [handResult, setHandResult] = useState<HandAnalysisResult | null>(null);
   const [poseResult, setPoseResult] = useState<PoseAnalysisResult | null>(null);
   const [locked, setLocked] = useState(false);
@@ -502,22 +506,22 @@ export default function FocusCoachCameraV7({
     resetTracking();
     if (cameraFocus === 'left-hand') {
       setRegion(LEFT_HAND_REGION);
+      setUseFullFrameHandAnalysis(false);
       return;
     }
     if (cameraFocus === 'full-body' || cameraFocus === 'none') {
       setRegion(null);
+      setUseFullFrameHandAnalysis(false);
       return;
     }
-    setRegion(null);
+    setRegion(FULL_HAND_REGION);
+    setUseFullFrameHandAnalysis(true);
+    updateStatus('전체 화면에서 오른손을 찾는 중 · 기타 없이도 인식합니다.');
     void loadFocusV7RightHandRegion(facing).then((stored) => {
-      if (cancelled) return;
-      if (!stored) {
-        updateStatus('기타 위치 자동 인식 또는 수동 보정이 필요합니다.');
-        onNeedCalibration?.(facing);
-        return;
-      }
+      if (cancelled || !stored) return;
       setRegion(stored);
-      updateStatus('오른손 분석 영역 준비 완료');
+      setUseFullFrameHandAnalysis(false);
+      updateStatus('저장된 오른손 분석 영역 준비 완료');
     });
     return () => { cancelled = true; };
   }, [cameraFocus, facing]);
@@ -546,11 +550,6 @@ export default function FocusCoachCameraV7({
       setAnalysisError('손 관절 AI 모듈을 사용할 수 없습니다. 영상은 유지합니다.');
       return;
     }
-    if (cameraFocus === 'right-hand' && (!HandModule?.androidHandRegionAnalysisAvailable || !HandModule.analyzeHandInRegionAsync)) {
-      setAnalysisError('ROI 손 분석 모듈이 없습니다. 전체 화면 분석으로 대체하지 않습니다.');
-      return;
-    }
-
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const interval = cameraFocus === 'full-body' ? 760 : 680;
@@ -604,9 +603,14 @@ export default function FocusCoachCameraV7({
             height: Math.max(1, Number(photo.height) || size.height),
           };
           let rawResult: HandAnalysisResult;
-          if (cameraFocus === 'right-hand') {
+          if (
+            cameraFocus === 'right-hand'
+            && !useFullFrameHandAnalysis
+            && HandModule?.androidHandRegionAnalysisAvailable
+            && HandModule.analyzeHandInRegionAsync
+          ) {
             const photoRegion = previewRegionToImage(activeRegion, size, photoSize, 0.025);
-            rawResult = await HandModule!.analyzeHandInRegionAsync!(
+            rawResult = await HandModule.analyzeHandInRegionAsync(
               photo.uri,
               pickColor(category, cameraFocus),
               photoRegion.left,
@@ -615,7 +619,10 @@ export default function FocusCoachCameraV7({
               photoRegion.bottom,
             );
           } else {
-            rawResult = await HandModule!.analyzeHandAsync(photo.uri, 'none');
+            rawResult = await HandModule!.analyzeHandAsync(
+              photo.uri,
+              cameraFocus === 'right-hand' ? pickColor(category, cameraFocus) : 'none',
+            );
           }
           const result = remapHandResultToPreview(
             rawResult,
@@ -632,7 +639,9 @@ export default function FocusCoachCameraV7({
             setLock(gate.locked);
             if (!result.hasHand) {
               setHandResult(null);
-              updateStatus('지정된 기타 구역에서 손을 찾는 중 · 아직 판정 안 함');
+              updateStatus(useFullFrameHandAnalysis
+                ? '전체 화면에서 손을 찾는 중 · 아직 판정 안 함'
+                : '저장된 분석 영역에서 손을 찾는 중 · 아직 판정 안 함');
             } else if (!checked.valid) {
               setHandResult(null);
               updateStatus('손 전체를 초록 분석 영역 안에 맞추세요 · 아직 판정 안 함');
@@ -667,7 +676,7 @@ export default function FocusCoachCameraV7({
       if (timer) clearTimeout(timer);
       captureBusyRef.current = false;
     };
-  }, [cameraError, cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, region, size.height, size.width]);
+  }, [cameraError, cameraFocus, cameraReady, category, coachingActive, facing, permission?.granted, region, size.height, size.width, useFullFrameHandAnalysis]);
 
   const switchCamera = () => {
     const next: CameraType = facing === 'front' ? 'back' : 'front';
@@ -724,7 +733,9 @@ export default function FocusCoachCameraV7({
             height: (region.bottom - region.top) * size.height,
           },
         ]}>
-          <Text style={styles.trackingRegionLabel}>{cameraFocus === 'right-hand' ? '오른손 AI 입력' : '왼손 분석 영역'}</Text>
+          <Text style={styles.trackingRegionLabel}>{cameraFocus === 'right-hand'
+            ? useFullFrameHandAnalysis ? '전체 화면 손 AI' : '오른손 AI 입력'
+            : '왼손 분석 영역'}</Text>
         </View>
       ) : null}
 

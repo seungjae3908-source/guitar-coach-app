@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { CameraType } from 'expo-camera';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Modal,
   Platform,
   Pressable,
@@ -161,6 +162,7 @@ export default function PracticeSessionRunnerV8({
   const trajectoryRef = useRef<TrajectorySpeedCoach | null>(null);
   const finalTrajectoryRef = useRef<TrajectoryCoachResult | null>(null);
   const subjectLockedRef = useRef(false);
+  const closePromptOpenRef = useRef(false);
 
   useEffect(() => {
     const next = matchingPresets[0];
@@ -334,7 +336,7 @@ export default function PracticeSessionRunnerV8({
         cameraMode: preset.cameraFocus,
         microphoneUsed: false,
         metronomeUsed: isAdvancedMetronomeAvailable,
-        notes: `FOCUS LIVE v25 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,
+        notes: `FOCUS LIVE v26 · 캡처 ${capturedFrames} · 현재 세션 승인 ${acceptedFrames} · 음성 설정 ${voiceCoachEnabled ? '켜짐' : '꺼짐'} · 마이크 미사용`,
       };
       try {
         await savePracticeSession(record);
@@ -347,6 +349,30 @@ export default function PracticeSessionRunnerV8({
     startedAtRef.current = null;
     trajectoryRef.current = null;
     if (closeAfter) onClose();
+  };
+
+  const requestClose = () => {
+    if (closePromptOpenRef.current) return;
+    closePromptOpenRef.current = true;
+    const release = () => { closePromptOpenRef.current = false; };
+    Alert.alert(
+      running ? '레슨을 종료할까요?' : '집중교정을 닫을까요?',
+      running
+        ? '현재 연습 기록을 저장하고 집중교정을 닫습니다.'
+        : '집중교정 화면에서 나가 홈으로 돌아갑니다.',
+      [
+        { text: running ? '계속 연습' : '취소', style: 'cancel', onPress: release },
+        {
+          text: running ? '종료·저장' : '닫기',
+          style: 'destructive',
+          onPress: () => {
+            release();
+            void stopLesson(true);
+          },
+        },
+      ],
+      { cancelable: true, onDismiss: release },
+    );
   };
 
   const handleMotionSample = (sample: MotionSample) => {
@@ -409,13 +435,13 @@ export default function PracticeSessionRunnerV8({
   const waitingMessage = focusV8WaitingMessage(evidence, label);
 
   return (
-    <Modal visible animationType="fade" presentationStyle="fullScreen" onRequestClose={() => void stopLesson(true)}>
+    <Modal visible animationType="fade" presentationStyle="fullScreen" onRequestClose={requestClose}>
       <SafeAreaView style={styles.root}>
         <StatusBar barStyle="light-content" backgroundColor="#0d1117" translucent={false} />
 
         {!calibrationChecked ? (
           <View style={styles.loadingSurface}>
-            <Text style={styles.loadingBuild}>FOCUS LIVE · v25</Text>
+            <Text style={styles.loadingBuild}>FOCUS LIVE · v26</Text>
             <Text style={styles.loadingText}>촬영 설정 확인 중</Text>
           </View>
         ) : calibrationVisible && preset.cameraFocus === 'right-hand' ? (
@@ -436,10 +462,10 @@ export default function PracticeSessionRunnerV8({
           <View style={styles.practiceRoot}>
             <View style={styles.header}>
               <View style={styles.headerCopy}>
-                <Text style={styles.buildBadge}>FOCUS LIVE · v25 · 마이크 OFF</Text>
+                <Text style={styles.buildBadge}>FOCUS LIVE · v26 · 마이크 OFF</Text>
                 <Text style={styles.headerTitle}>집중교정</Text>
               </View>
-              <Pressable onPress={() => void stopLesson(true)} style={styles.closeButton}>
+              <Pressable onPress={requestClose} style={styles.closeButton}>
                 <Text style={styles.closeButtonText}>닫기</Text>
               </Pressable>
             </View>

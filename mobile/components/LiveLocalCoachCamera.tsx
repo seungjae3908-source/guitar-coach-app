@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   LayoutChangeEvent,
   Linking,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -243,7 +244,7 @@ export default function LiveLocalCoachCamera({
     onHandLockChange?.(next);
   };
 
-  if (cameraFocus === 'full-body' || cameraFocus === 'none') {
+  if (cameraFocus === 'full-body' || cameraFocus === 'none' || Platform.OS === 'android') {
     return (
       <FocusCoachCameraV7
         coachingActive={coachingActive}

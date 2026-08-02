@@ -12,7 +12,7 @@ import {
 
 import type { GuitarModeId } from '../config/guitar-mode-profiles';
 import type { PracticePreset } from '../config/personal-practice-presets';
-import { chordAtSectionProgress, getSongChordGuide } from '../config/song-chord-guides';
+import { getSongChordGuide } from '../config/song-chord-guides';
 import {
   getTrainingSong,
   MASTERY_SONG_CATALOG,
@@ -86,6 +86,7 @@ export default function MasterSongStudioPanel({
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1);
   const [syncOffsetSeconds, setSyncOffsetSeconds] = useState(0);
   const [capo, setCapo] = useState(0);
+  const [manualChordIndex, setManualChordIndex] = useState(0);
   const [loopEnabled, setLoopEnabled] = useState(false);
   const [loopSectionId, setLoopSectionId] = useState('');
   const [sectionVoiceEnabled, setSectionVoiceEnabled] = useState(true);
@@ -134,6 +135,7 @@ export default function MasterSongStudioPanel({
     setAppliedYoutubeUrl('');
     setSeekRequest(null);
     setLoopEnabled(false);
+    setManualChordIndex(0);
     setLoopSectionId(song?.sections[0]?.id ?? '');
     lastSpokenSectionRef.current = '';
     if (!song || loadingSongRef.current) return;
@@ -174,11 +176,24 @@ export default function MasterSongStudioPanel({
     () => getSongChordGuide(song?.id ?? '', activeSectionId, mode, capo),
     [activeSectionId, capo, mode, song?.id],
   );
-  const sectionProgress = active && active.end > active.start
-    ? Math.max(0, Math.min(1, (currentTime - active.start) / (active.end - active.start)))
+  const safeChordIndex = chordGuide.chords.length
+    ? Math.max(0, Math.min(chordGuide.chords.length - 1, manualChordIndex))
     : 0;
-  const chordState = chordAtSectionProgress(chordGuide.chords, sectionProgress, chordGuide.beatWeights);
-  const soundingChordState = chordAtSectionProgress(chordGuide.soundingChords, sectionProgress, chordGuide.beatWeights);
+  const chordState = {
+    index: safeChordIndex,
+    current: chordGuide.chords[safeChordIndex] ?? '-',
+    next: chordGuide.chords[(safeChordIndex + 1) % Math.max(1, chordGuide.chords.length)] ?? '-',
+  };
+  const soundingChordState = {
+    index: safeChordIndex,
+    current: chordGuide.soundingChords[safeChordIndex] ?? '-',
+    next: chordGuide.soundingChords[(safeChordIndex + 1) % Math.max(1, chordGuide.soundingChords.length)] ?? '-',
+  };
+
+  useEffect(() => {
+    setManualChordIndex(0);
+    lastSpokenChordRef.current = '';
+  }, [activeSectionId, song?.id]);
   const studioPreset = useMemo<PracticePreset | null>(() => {
     if (!song || !active) return null;
     const category = song.targetCategories.includes('strumming')
@@ -267,7 +282,7 @@ export default function MasterSongStudioPanel({
     if (!isCoachSpeechAvailable) return;
     void prepareCoachSpeechAsync()
       .then(() => speakCoachPhraseAsync(
-        `현재 ${chordState.current} 폼, 실제 울림 ${soundingChordState.current}. 다음 ${chordState.next} 폼입니다.`,
+        `현재 실제 울림 ${soundingChordState.current}, 카포 연주 폼 ${chordState.current}. 다음 울림 ${soundingChordState.next}입니다.`,
         { interrupt: false, speechRate: 1.02 },
       ))
       .catch(() => undefined);
@@ -356,7 +371,7 @@ export default function MasterSongStudioPanel({
     <ScrollView ref={scrollRef} style={styles.root} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Text style={styles.eyebrow}>YOUTUBE SYNC MASTER SONG STUDIO</Text>
       <Text style={styles.title}>음악과 함께 움직이는 정밀 연습 악보</Text>
-      <Text style={styles.subtitle}>YouTube IFrame의 실제 재생 시간을 읽어 현재 구간을 자동 강조·스크롤합니다. 제공되는 내용은 원곡 TAB·가사가 아니라 실력 향상을 위한 상세 연습 지도이며, 영상별 시작 차이는 직접 보정할 수 있습니다.</Text>
+      <Text style={styles.subtitle}>YouTube의 실제 재생 시간으로 연습 구간을 강조합니다. 코드 초 단위 타이밍은 추측하지 않으며, 검증된 구간 진행을 코드 칩이나 이전·다음 버튼으로 직접 맞춥니다.</Text>
 
       <Text style={styles.sectionTitle}>연습곡 선택</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.songRow}>
@@ -380,23 +395,44 @@ export default function MasterSongStudioPanel({
       <View style={styles.chordCoachCard}>
         <View style={styles.chordTopRow}>
 <View style={styles.currentChordWrap}>
-  <Text style={styles.chordLabel}>현재 연주 폼</Text>
-  <Text style={styles.currentChord}>{chordState.current}</Text>
-  <Text style={styles.chordLabel}>실제 울림 {soundingChordState.current}</Text>
+  <Text style={styles.chordLabel}>현재 실제 울림</Text>
+  <Text style={styles.currentChord}>{soundingChordState.current}</Text>
+  <Text style={styles.chordLabel}>카포 {capo} · 연주 폼 {chordState.current}</Text>
 </View>
 <View style={styles.nextChordWrap}>
-  <Text style={styles.chordLabel}>다음 연주 폼</Text>
-  <Text style={styles.nextChord}>{chordState.next}</Text>
-  <Text style={styles.chordLabel}>울림 {soundingChordState.next}</Text>
+  <Text style={styles.chordLabel}>다음 실제 울림</Text>
+  <Text style={styles.nextChord}>{soundingChordState.next}</Text>
+  <Text style={styles.chordLabel}>연주 폼 {chordState.next}</Text>
 </View>
         </View>
         <View style={styles.chordProgressionRow}>
 {chordGuide.chords.map((chord, index) => (
-  <View key={`${activeSectionId}-${chord}-${index}`} style={[styles.chordChip, index === chordState.index && styles.chordChipActive]}>
-    <Text style={[styles.chordChipText, index === chordState.index && styles.chordChipTextActive]}>{chord}{chordGuide.soundingChords[index] !== chord ? ` · ${chordGuide.soundingChords[index]}` : ''}</Text>
-  </View>
+  <Pressable
+    key={`${activeSectionId}-${chord}-${index}`}
+    onPress={() => setManualChordIndex(index)}
+    style={[styles.chordChip, index === chordState.index && styles.chordChipActive]}
+  >
+    <Text style={[styles.chordChipText, index === chordState.index && styles.chordChipTextActive]}>
+      {chordGuide.soundingChords[index] ?? chord}{chordGuide.soundingChords[index] !== chord ? ` · 폼 ${chord}` : ''}
+    </Text>
+  </Pressable>
 ))}
         </View>
+        <View style={styles.syncRow}>
+          <Pressable
+            onPress={() => setManualChordIndex((value) => (value - 1 + chordGuide.chords.length) % Math.max(1, chordGuide.chords.length))}
+            style={styles.syncButton}
+          ><Text style={styles.syncText}>이전 코드</Text></Pressable>
+          <View style={styles.syncValueWrap}>
+            <Text style={styles.syncLabel}>코드 수동 맞춤</Text>
+            <Text style={styles.syncValue}>{chordGuide.chords.length ? `${safeChordIndex + 1}/${chordGuide.chords.length}` : '-'}</Text>
+          </View>
+          <Pressable
+            onPress={() => setManualChordIndex((value) => (value + 1) % Math.max(1, chordGuide.chords.length))}
+            style={styles.syncButton}
+          ><Text style={styles.syncText}>다음 코드</Text></Pressable>
+        </View>
+        <Text style={styles.chordGuideNote}>자동 코드 추측 OFF · 듣고 맞는 코드 칩을 누르면 그 위치를 유지합니다.</Text>
         <View style={styles.syncRow}>
           <Pressable onPress={() => setCapo((value) => Math.max(0, value - 1))} style={styles.syncButton}><Text style={styles.syncText}>카포 -1</Text></Pressable>
           <View style={styles.syncValueWrap}><Text style={styles.syncLabel}>카포</Text><Text style={styles.syncValue}>{capo}</Text></View>

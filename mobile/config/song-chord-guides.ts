@@ -35,7 +35,7 @@ const GUIDES: Record<string, GuidePreset> = {
   },
   'acoustic-photograph': {
     defaultCapo: 2, shapeKey: 'D', soundingKey: 'E', tuning: '표준 튜닝 E A D G B E',
-    sections: { intro: ['D', 'Bm', 'G', 'A'], verse: ['D', 'Bm', 'G', 'A'], chorus: ['D', 'A', 'Bm', 'G'], bridge: ['Bm', 'G', 'D', 'A'], outro: ['D', 'Bm', 'G', 'A'] },
+    sections: { intro: ['D', 'Bm', 'A', 'G'], verse: ['D', 'Bm', 'A', 'G'], chorus: ['D', 'A', 'Bm', 'G'], bridge: ['Bm', 'G', 'D', 'A'], outro: ['D', 'Bm', 'A', 'G'] },
     patterns: { intro: 'P-i-m-i · P-i-m-i', verse: ACOUSTIC_8_BEAT, chorus: '1 & 2 & 3 & 4 & · D D U U D U D U', bridge: 'P-i-P-m · P-i-m-i', outro: '1 2 3 4 · 느린 다운' },
   },
   'acoustic-fast-car': {
@@ -87,7 +87,7 @@ export function getSongChordGuide(songId: string, sectionId: string, mode: Guita
     shapeKey: preset.shapeKey, soundingKey: capo === preset.defaultCapo ? preset.soundingKey : transposeChord(preset.shapeKey, capo),
     strumPattern: preset.patterns[section] ?? preset.patterns.verse ?? (mode === 'acoustic' ? ACOUSTIC_8_BEAT : DOWN_EIGHTHS),
     tuning: preset.tuning,
-    note: '연주 폼 코드와 실제 울림 코드를 분리한 구간 연습 가이드입니다. 원곡 전체 채보가 아니므로 영상 구간 보정과 귀 확인을 함께 사용하세요.',
+    note: '실제 울림 코드와 카포 연주 폼을 분리한 구간 가이드입니다. 검증된 초 단위 코드 타임라인이 없으므로 앱이 현재 코드를 추측하지 않고 사용자가 코드 칩으로 직접 맞춥니다.',
   };
 }
 

@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Alert,
+  BackHandler,
   Modal,
   Platform,
   Pressable,
@@ -264,6 +266,7 @@ export default function CompleteBetaAppV060Plus() {
   const [tool, setTool] = useState<GlobalTool>('app');
   const [voiceCoachEnabled, setVoiceCoachEnabled] = useState(true);
   const [moreVisible, setMoreVisible] = useState(false);
+  const exitPromptOpenRef = useRef(false);
   const { mode, loading, clearMode } = useGuitarModePreference();
 
   const needsMode = tool === 'academy'
@@ -284,6 +287,34 @@ export default function CompleteBetaAppV060Plus() {
     setMoreVisible(false);
   };
 
+  useEffect(() => {
+    if (tool === 'session') return undefined;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (moreVisible) {
+        setMoreVisible(false);
+        return true;
+      }
+      if (tool !== 'app') {
+        setTool('app');
+        return true;
+      }
+      if (exitPromptOpenRef.current) return true;
+      exitPromptOpenRef.current = true;
+      const release = () => { exitPromptOpenRef.current = false; };
+      Alert.alert(
+        '앱을 종료할까요?',
+        '기타 코치 AI를 종료합니다.',
+        [
+          { text: '취소', style: 'cancel', onPress: release },
+          { text: '앱 종료', style: 'destructive', onPress: () => { release(); BackHandler.exitApp(); } },
+        ],
+        { cancelable: true, onDismiss: release },
+      );
+      return true;
+    });
+    return () => subscription.remove();
+  }, [moreVisible, tool]);
+
   const moreToolActive = !['app', 'session', 'song', 'tuner'].includes(tool);
 
   return (
@@ -297,7 +328,7 @@ export default function CompleteBetaAppV060Plus() {
 
       <View style={styles.toolBar}>
         <View style={styles.toolTextWrap}>
-          <Text style={styles.toolEyebrow}>0.6.0 v25 · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
+          <Text style={styles.toolEyebrow}>0.6.0 v26 · {mode === 'acoustic' ? '통기타' : mode === 'electric' ? '일렉기타' : '모드 미선택'}</Text>
           <Text style={styles.toolTitle} numberOfLines={2}>{toolTitle(tool)}</Text>
         </View>
         <Pressable
