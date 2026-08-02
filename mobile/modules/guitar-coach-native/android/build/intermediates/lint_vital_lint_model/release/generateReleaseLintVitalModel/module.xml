@@ -3,7 +3,7 @@
     dir="/home/runner/work/guitar-coach-app/guitar-coach-app/mobile/modules/guitar-coach-native/android"
     name=":guitar-coach-native"
     type="LIBRARY"
-    maven="expo.modules.guitarcoachnative:guitar-coach-native:0.4.0"
+    maven="expo.modules.guitarcoachnative:guitar-coach-native:0.3.0"
     agpVersion="8.11.0"
     buildFolder="build"
     bootClassPath="/usr/local/lib/android/sdk/platforms/android-36/android.jar:/usr/local/lib/android/sdk/build-tools/35.0.0/core-lambda-stubs.jar"
