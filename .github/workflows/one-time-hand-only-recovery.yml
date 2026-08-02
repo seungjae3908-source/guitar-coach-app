@@ -1,0 +1,335 @@
+name: One-time hand-only recovery
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  repair-build:
+    if: github.event.pull_request.head.ref == 'agent/live-coach-compat-v055'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Apply hand-first camera patch
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, expected=1):
+              file = Path(path)
+              text = file.read_text()
+              actual = text.count(old)
+              if actual != expected:
+                  raise SystemExit(f"{path}: expected {expected} exact match(es), found {actual}")
+              file.write_text(text.replace(old, new, expected))
+
+          hand_index = 'mobile/modules/guitar-coach-hand/index.ts'
+          replace_exact(
+              hand_index,
+              "import { effectiveHandDetailSize, hasUsableHandDetail, type HandPrecisionPayload } from '../../services/hand-precision-region';\n",
+              "import { effectiveHandDetailSize, hasUsableHandDetail, type HandPrecisionPayload } from '../../services/hand-precision-region';\nimport { shouldRefreshStringVision } from '../../services/hand-string-analysis-policy';\n",
+          )
+
+          replace_exact(
+              hand_index,
+              """function shouldPublishForCoach(result: HandAnalysisResult, pickColor: PickColor) {
+            const context = getLivePracticeContext();
+            if (!context?.active) return true;
+            const rightHandCategory = context.category === 'arpeggio'
+              || context.category === 'fingerstyle'
+              || context.category === 'strumming'
+              || context.category === 'downPicking'
+              || context.category === 'alternatePicking'
+              || context.category === 'palmMute';
+            const leftHandCategory = context.category === 'chords'
+              || context.category === 'fingering'
+              || context.category === 'powerChords'
+              || context.category === 'scales'
+              || context.category === 'leadTechnique';
+
+            if (pickColor === 'auto') return rightHandCategory;
+            if (pickColor === 'none') return leftHandCategory && hasUsableHandDetail(result);
+            return rightHandCategory;
+          }
+          """,
+              """function shouldPublishForCoach(result: HandAnalysisResult, _pickColor: PickColor) {
+            const context = getLivePracticeContext();
+            if (!context?.active) return true;
+            if (!result.hasHand) return true;
+
+            const leftHandCategory = context.category === 'chords'
+              || context.category === 'fingering'
+              || context.category === 'powerChords'
+              || context.category === 'scales'
+              || context.category === 'leadTechnique';
+
+            if (leftHandCategory) return hasUsableHandDetail(result);
+            return result.landmarks.length >= 21 && result.handednessScore >= 0.24;
+          }
+          """,
+          )
+
+          replace_exact(
+              hand_index,
+              """  const shouldRefresh = options.refreshStringVision !== false
+            || !cachedStringTracking
+            || now - cachedStringTracking.capturedAt > reuseMs;
+          """,
+              """  const shouldRefresh = shouldRefreshStringVision({
+            requested: options.refreshStringVision,
+            cachedAt: cachedStringTracking?.capturedAt,
+            now,
+            reuseMs,
+          });
+          """,
+          )
+
+          camera = 'mobile/components/SessionCoachCamera.tsx'
+          replace_exact(
+              camera,
+              """        const refreshStringVision = handFrameIndexRef.current === 1
+                  || handFrameIndexRef.current % analysisProfile.stringVisionEveryFrames === 0;
+          """,
+              """        const refreshStringVision =
+                  handFrameIndexRef.current % analysisProfile.stringVisionEveryFrames === 0;
+          """,
+          )
+          replace_exact(
+              camera,
+              """          quality: activeMode === 'full'
+                    ? 0.30
+                    : facing === 'front'
+                      ? Math.max(0.60, analysisProfile.photoQuality)
+                      : analysisProfile.photoQuality,
+          """,
+              """          quality: activeMode === 'full'
+                    ? facing === 'front' ? 0.58 : 0.48
+                    : facing === 'front'
+                      ? Math.max(0.64, analysisProfile.photoQuality)
+                      : Math.max(0.52, analysisProfile.photoQuality),
+          """,
+          )
+          replace_exact(
+              camera,
+              """      : size < 0.13
+                    ? '손이 작습니다 · 카메라 가까이'
+                    : size > 0.68
+                      ? '손가락 끝이 잘립니다 · 조금 멀리'
+                      : `손 추적 ${Math.round(handResult.handednessScore * 100)}%${precisionApplied ? ' · ROI 2차 정밀' : ''}`;
+          """,
+              """      : size < 0.105
+                    ? '손이 작습니다 · 카메라 가까이'
+                    : size > 0.68
+                      ? '손가락 끝이 잘립니다 · 조금 멀리'
+                      : `손 추적 ${Math.round(handResult.handednessScore * 100)}%${precisionApplied ? ' · ROI 정밀' : ''}${handResult.stringTracking?.detected ? ' · 기타 줄 연결' : ' · 손 단독 인식'}`;
+          """,
+          )
+          replace_exact(
+              camera,
+              """        {activeMode !== 'full' && handResult?.hasHand ? (
+                  <Text style={styles.statusText}>
+                    {handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms
+                  </Text>
+                ) : null}
+          """,
+              """        {handResult?.hasHand ? (
+                  <Text style={styles.statusText}>
+                    {handStatus} · {handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms
+                  </Text>
+                ) : null}
+          """,
+          )
+
+          kotlin = 'mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachHandModule.kt'
+          replace_exact(
+              kotlin,
+              """        val safeRegion = requestedRegion?.normalized()
+                  val first = detectPass(decoded, safeRegion, pickColor)
+                  var selected = first
+          """,
+              """        val safeRegion = requestedRegion?.normalized()
+                  val initial = detectPass(decoded, safeRegion, pickColor)
+                  val reacquired = if (automaticPrecision && safeRegion == null && !initial.hasHand) {
+                    reacquireHand(decoded, pickColor)
+                  } else null
+                  val first = reacquired ?: initial
+                  var selected = first
+          """,
+          )
+          replace_exact(
+              kotlin,
+              """        } else {
+                  val initialDecision = decidePrecisionRegion(first)
+                  precisionPayload(
+                    applied = false,
+                    passes = 1,
+                    reason = initialDecision.reason,
+                    sourcePalmSize = initialDecision.sourcePalmSize,
+                    sourceEdgeMargin = initialDecision.sourceEdgeMargin,
+                    region = initialDecision.region
+                  )
+                }
+          """,
+              """        } else if (reacquired != null) {
+                  precisionPayload(
+                    applied = true,
+                    passes = 2,
+                    reason = "multi-region-reacquired",
+                    sourcePalmSize = palmSize(first.landmarks),
+                    sourceEdgeMargin = edgeMargin(first.landmarks),
+                    region = first.region
+                  )
+                } else {
+                  val initialDecision = decidePrecisionRegion(first)
+                  precisionPayload(
+                    applied = false,
+                    passes = 1,
+                    reason = initialDecision.reason,
+                    sourcePalmSize = initialDecision.sourcePalmSize,
+                    sourceEdgeMargin = initialDecision.sourceEdgeMargin,
+                    region = initialDecision.region
+                  )
+                }
+          """,
+          )
+          replace_exact(kotlin, '                passes = 2,\n                reason = "reacquired-and-refined",', '                passes = if (reacquired != null) 3 else 2,\n                reason = "reacquired-and-refined",')
+          replace_exact(kotlin, '                passes = 2,\n                reason = decision.reason,', '                passes = if (reacquired != null) 3 else 2,\n                reason = decision.reason,')
+
+          reacquire = """  private fun reacquireHand(
+            originalBitmap: Bitmap,
+            pickColor: String
+          ): DetectionPass? {
+            val regions = listOf(
+              NormalizedRegion(0.08, 0.08, 0.92, 0.92),
+              NormalizedRegion(0.00, 0.04, 0.66, 0.96),
+              NormalizedRegion(0.34, 0.04, 1.00, 0.96),
+              NormalizedRegion(0.10, 0.28, 0.90, 1.00)
+            )
+            var best: DetectionPass? = null
+            var bestScore = 0.0
+
+            for (region in regions) {
+              val candidate = detectPass(originalBitmap, region.normalized(), pickColor)
+              if (!candidate.hasHand || candidate.landmarks.size < 21 || candidate.handednessScore < 0.24) continue
+              val detail = (palmSize(candidate.landmarks) / 0.14).coerceIn(0.0, 1.0)
+              val score = candidate.handednessScore * 0.78 + detail * 0.22
+              if (score > bestScore) {
+                best = candidate
+                bestScore = score
+              }
+              if (candidate.handednessScore >= 0.72 && detail >= 0.58) break
+            }
+            return best
+          }
+
+          """
+          replace_exact(kotlin, '  private fun decidePrecisionRegion(pass: DetectionPass): PrecisionDecision {\n', reacquire + '  private fun decidePrecisionRegion(pass: DetectionPass): PrecisionDecision {\n')
+          replace_exact(kotlin, '.setMinHandDetectionConfidence(0.38f)', '.setMinHandDetectionConfidence(0.30f)')
+          replace_exact(kotlin, '.setMinHandPresenceConfidence(0.38f)', '.setMinHandPresenceConfidence(0.30f)')
+          replace_exact(kotlin, '.setMinTrackingConfidence(0.42f)', '.setMinTrackingConfidence(0.35f)')
+
+          chord_engine = 'mobile/services/fretboard-chord-engine.ts'
+          replace_exact(
+              chord_engine,
+              '  const candidateAllowed = Boolean(best && best.total >= 0.62 && best.matched >= 2 && margin >= 0.06);\n',
+              '  const minimumMatched = best ? Math.max(2, best.expectedCount - 1) : 2;\n  const candidateAllowed = Boolean(best && best.total >= 0.68 && best.matched >= minimumMatched && margin >= 0.10);\n',
+          )
+
+          print('Patch applied successfully.')
+          PY
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run typecheck and quality tests
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Commit verified source changes
+        shell: bash
+        run: |
+          git config user.name "OpenAI Engineering"
+          git config user.email "engineering@openai.invalid"
+          git add \
+            mobile/modules/guitar-coach-hand/index.ts \
+            mobile/components/SessionCoachCamera.tsx \
+            mobile/modules/guitar-coach-native/android/src/main/java/expo/modules/guitarcoachnative/GuitarCoachHandModule.kt \
+            mobile/services/fretboard-chord-engine.ts
+          git diff --cached --check
+          git commit -m "Fix hand-only recognition and strict chord confidence"
+          git push origin HEAD:agent/live-coach-compat-v055
+
+      - name: Generate Android native project
+        working-directory: mobile
+        env:
+          CI: 1
+          NODE_ENV: production
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build and verify ARM64 release APK
+        working-directory: mobile/android
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+          build_tools=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+          tools="$ANDROID_HOME/build-tools/$build_tools"
+          release_dir='app/build/outputs/apk/release'
+          mkdir -p app/build/outputs/apk/final
+          output='app/build/outputs/apk/final/guitar-coach-hand-only-recovery.apk'
+          signed=$(find "$release_dir" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -n 1 || true)
+          unsigned=$(find "$release_dir" -maxdepth 1 -type f -name '*unsigned.apk' | head -n 1 || true)
+          if [ -n "$signed" ]; then
+            cp "$signed" "$output"
+          elif [ -n "$unsigned" ]; then
+            "$tools/zipalign" -f 4 "$unsigned" /tmp/guitar-coach-hand-only-recovery-aligned.apk
+            "$tools/apksigner" sign --ks app/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$output" /tmp/guitar-coach-hand-only-recovery-aligned.apk
+          else
+            echo 'Release APK was not generated.'
+            exit 1
+          fi
+          "$tools/apksigner" verify --verbose --print-certs "$output"
+          test -s "$output"
+          size=$(stat -c%s "$output")
+          test "$size" -gt 1000000
+          test "$size" -lt 80000000
+          sha256sum "$output" | tee app/build/outputs/apk/final/SHA256SUMS.txt
+          echo "Final APK size: $size bytes"
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: guitar-coach-hand-only-recovery-arm64-apk
+          path: |
+            mobile/android/app/build/outputs/apk/final/guitar-coach-hand-only-recovery.apk
+            mobile/android/app/build/outputs/apk/final/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
