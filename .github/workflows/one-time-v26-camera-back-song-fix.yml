@@ -1,0 +1,116 @@
+name: One-time v26 camera back song fix
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+
+jobs:
+  repair-build:
+    if: github.event.pull_request.head.ref == 'agent/live-coach-compat-v055'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Apply v26 repair
+        run: python3 .github/scripts/apply-v26-camera-back-song-fix.py
+
+      - name: Remove one-time automation files
+        run: |
+          rm -f .github/scripts/apply-v26-camera-back-song-fix.py
+          rm -f .github/workflows/one-time-v26-camera-back-song-fix.yml
+          rm -f .github/v26-camera-back-song-trigger.txt
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Run typecheck and quality suite
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Commit verified source repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile/.quality-dist
+          git config user.name "OpenAI Engineering"
+          git config user.email "engineering@openai.invalid"
+          git add -A
+          git diff --cached --check
+          git commit -m "Fix camera preview back confirmation and song chords"
+          git push origin HEAD:agent/live-coach-compat-v055
+
+      - name: Generate Android project
+        working-directory: mobile
+        env:
+          CI: 1
+          NODE_ENV: production
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build and verify ARM64 APK
+        working-directory: mobile/android
+        shell: bash
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+          build_tools=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+          tools="$ANDROID_HOME/build-tools/$build_tools"
+          release_dir='app/build/outputs/apk/release'
+          mkdir -p app/build/outputs/apk/final
+          output='app/build/outputs/apk/final/guitar-coach-camera-back-song-v26.apk'
+          signed=$(find "$release_dir" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -n 1 || true)
+          unsigned=$(find "$release_dir" -maxdepth 1 -type f -name '*unsigned.apk' | head -n 1 || true)
+          if [ -n "$signed" ]; then
+            cp "$signed" "$output"
+          elif [ -n "$unsigned" ]; then
+            "$tools/zipalign" -f 4 "$unsigned" /tmp/guitar-coach-v26-aligned.apk
+            "$tools/apksigner" sign --ks app/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$output" /tmp/guitar-coach-v26-aligned.apk
+          else
+            echo 'Release APK was not generated.'
+            exit 1
+          fi
+          "$tools/apksigner" verify --verbose --print-certs "$output"
+          test -s "$output"
+          size=$(stat -c%s "$output")
+          test "$size" -gt 1000000
+          test "$size" -lt 110000000
+          sha256sum "$output" | tee app/build/outputs/apk/final/SHA256SUMS.txt
+          echo "Final APK size: $size bytes"
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: guitar-coach-camera-back-song-v26-arm64-apk
+          path: |
+            mobile/android/app/build/outputs/apk/final/guitar-coach-camera-back-song-v26.apk
+            mobile/android/app/build/outputs/apk/final/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
