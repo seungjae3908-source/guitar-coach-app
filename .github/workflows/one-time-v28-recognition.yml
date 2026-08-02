@@ -1,9 +1,11 @@
 name: One-time v28 recognition build
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/live-coach-compat-v055
+      - main
+    types:
+      - synchronize
     paths:
       - '.github/v28_patch.py'
       - '.github/workflows/one-time-v28-recognition.yml'
@@ -17,6 +19,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event.pull_request.head.ref == 'agent/live-coach-compat-v055'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
