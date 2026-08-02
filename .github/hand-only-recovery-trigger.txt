@@ -1,0 +1,1 @@
+Trigger the hand-only recovery workflow after the synchronize event was enabled.
