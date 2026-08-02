@@ -1,0 +1,142 @@
+name: One-time v27 camera voice build
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-time-v27-camera-voice
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.head.ref == 'agent/live-coach-compat-v055'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout v27 test branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+          fetch-depth: 0
+
+      - name: Apply v27 CameraX tracking and voice patch
+        run: python .github/v27_patch.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Typecheck and run executable tests
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        env:
+          CI: 1
+          NODE_ENV: production
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Compile Kotlin and build signed ARM64 APK
+        working-directory: mobile/android
+        shell: bash
+        env:
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :app:compileReleaseKotlin :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+          build_tools=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+          tools="$ANDROID_HOME/build-tools/$build_tools"
+          release_dir='app/build/outputs/apk/release'
+          final_dir='app/build/outputs/apk/final'
+          mkdir -p "$final_dir"
+          output="$final_dir/guitar-coach-camera-back-song-v27-arm64.apk"
+          signed=$(find "$release_dir" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -n 1 || true)
+          unsigned=$(find "$release_dir" -maxdepth 1 -type f -name '*unsigned.apk' | head -n 1 || true)
+          if [ -n "$signed" ]; then
+            cp "$signed" "$output"
+          elif [ -n "$unsigned" ]; then
+            "$tools/zipalign" -f 4 "$unsigned" /tmp/guitar-coach-v27-aligned.apk
+            "$tools/apksigner" sign --ks app/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$output" /tmp/guitar-coach-v27-aligned.apk
+          else
+            echo 'Release APK was not generated.'
+            exit 1
+          fi
+          "$tools/apksigner" verify --verbose --print-certs "$output" | tee "$final_dir/SIGNING-VERIFY.txt"
+          test -s "$output"
+          size=$(stat -c%s "$output")
+          test "$size" -gt 1000000
+          test "$size" -lt 110000000
+          unzip -l "$output" | awk '{print $4}' | grep -q '^lib/arm64-v8a/'
+          if unzip -l "$output" | awk '{print $4}' | grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/'; then
+            echo 'Unexpected non-ARM64 native libraries were packaged.'
+            exit 1
+          fi
+          sha256sum "$output" | tee "$final_dir/SHA256SUMS.txt"
+          printf 'ABI=arm64-v8a\nSIZE=%s\nVERSION_CODE=27\n' "$size" | tee "$final_dir/BUILD-INFO.txt"
+
+      - name: Record verified v27 source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > mobile/V27_CAMERA_VOICE_REPORT.md <<'EOF'
+          # v27 CameraX / Strum / Voice verification
+
+          - Branch: `agent/live-coach-compat-v055`
+          - PR: `#16` (Draft, unmerged)
+          - Android CameraX continuous-frame watchdog and rebind recovery added
+          - `PreviewView` explicitly measured and laid out inside the Expo native view
+          - Android fallback bypass removed; native continuous analysis and string analysis enabled
+          - Hand, string, contact, and hit thresholds relaxed without removing geometry checks
+          - Strum lock retained for 850 ms and extended by subsequent hits
+          - Accepted analysis frames and native strum hits drive the voice coach
+          - Startup voice and an in-camera voice test button added
+          - `npm run typecheck` passed, including executable quality tests
+          - Release Kotlin compilation passed
+          - ARM64-only release APK built, signed, and verified with `apksigner`
+          EOF
+          rm -f \
+            .github/v27_patch.py \
+            .github/workflows/one-time-v27-camera-voice.yml \
+            .github/workflows/one-time-adaptive-tts-metronome.yml \
+            .github/workflows/one-time-verify-adaptive-tts.yml \
+            .github/adaptive-tts-trigger.txt \
+            .github/verify-adaptive-tts-trigger.txt
+          git config user.name "guitar-coach-v27-bot"
+          git config user.email "guitar-coach-v27-bot@users.noreply.github.com"
+          git add mobile .github
+          git commit -m "Fix v27 continuous camera strum and voice coaching"
+          git pull --rebase origin agent/live-coach-compat-v055
+          git push origin HEAD:agent/live-coach-compat-v055
+
+      - name: Upload verified v27 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: guitar-coach-camera-back-song-v27-arm64-apk
+          path: |
+            mobile/android/app/build/outputs/apk/final/guitar-coach-camera-back-song-v27-arm64.apk
+            mobile/android/app/build/outputs/apk/final/SHA256SUMS.txt
+            mobile/android/app/build/outputs/apk/final/SIGNING-VERIFY.txt
+            mobile/android/app/build/outputs/apk/final/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 30
