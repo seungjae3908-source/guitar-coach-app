@@ -94,9 +94,10 @@ const cAudio = {
     observation('index', 2, 1),
   ];
   const result = recognizeChord(incomplete, calibration, cAudio);
-  assert(result.chordName === 'C', 'C 음군과 두 개의 C 프렛이 일치하면 가장 가까운 후보를 C로 표시해야 합니다.');
+  assert(result.chordName == null, '필수 프렛이 빠진 손모양은 정확한 C 코드명으로 표시하면 안 됩니다.');
   assert(result.status === 'candidate', '필수 프렛이 누락되면 소리가 맞아도 코드를 확정하면 안 됩니다.');
   assert(result.score == null, '필수 프렛이 누락된 코드는 점수가 없어야 합니다.');
+  assert(result.evidence.some((item) => item.includes('가장 가까운 코드 후보 C')), '가장 가까운 후보는 근거 문구에서만 안내해야 합니다.');
   assert(result.corrections.some((item) => item.includes('5번 줄 3프렛')), '누락된 C 코드 위치를 구체적으로 알려야 합니다.');
 }
 
