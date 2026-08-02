@@ -59,8 +59,8 @@ function correctionForExtra(key: string) {
 /**
  * Base recognition plus a strict final-position gate.
  * Audio evidence may identify the chord family, but it cannot excuse a missing
- * or extra fretted position. In that case the result remains a candidate and
- * no score is published.
+ * or extra fretted position. In that case the nearest candidate remains only
+ * in the evidence text and no exact chord label or score is published.
  */
 export function recognizeChord(
   observations: FrettingFingerObservation[],
@@ -89,16 +89,19 @@ export function recognizeChord(
   return {
     ...result,
     status: 'candidate',
+    chordName: null,
+    aliases: [],
     score: null,
     confidencePercent: Math.min(89, result.confidencePercent),
     evidence: [
+      `가장 가까운 코드 후보 ${result.chordName} · 필수 프렛이 완성되지 않아 코드명 확정 보류`,
       ...result.evidence,
       `필수 프렛 ${matched}/${expectedKeys.size}개 확인 · 누락 ${missing.length}개 · 추가 ${extras.length}개`,
-      '소리가 비슷해도 손가락 위치가 완성되기 전에는 점수를 확정하지 않음',
+      '소리가 비슷해도 손가락 위치가 완성되기 전에는 정확한 코드명으로 표시하지 않음',
     ],
     corrections: [...new Set(strictCorrections)].slice(0, 6),
     positives: matched > 0
-      ? [`${matched}개 필수 프렛 위치는 코드 운지와 맞습니다.`]
+      ? [`${matched}개 필수 프렛 위치는 가장 가까운 후보와 맞습니다.`]
       : [],
   };
 }
