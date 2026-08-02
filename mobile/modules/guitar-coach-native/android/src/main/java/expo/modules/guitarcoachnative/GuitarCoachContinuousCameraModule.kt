@@ -87,10 +87,13 @@ class GuitarCoachContinuousCameraView(
   val onAnalysis by EventDispatcher()
   val onError by EventDispatcher()
 
+  private var previewMode = PreviewView.ImplementationMode.COMPATIBLE
   private val previewView = PreviewView(context).also {
     it.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
     it.scaleType = PreviewView.ScaleType.FILL_CENTER
-    it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+    it.implementationMode = previewMode
+    it.setBackgroundColor(Color.TRANSPARENT)
+    it.alpha = 1.0f
     addView(it)
   }
 
@@ -132,22 +135,40 @@ class GuitarCoachContinuousCameraView(
   private val previousContacts = mutableMapOf<String, PreviousContact>()
   private val recentHits = ArrayDeque<Map<String, Any>>()
   private val mainHandler = Handler(Looper.getMainLooper())
-  private var lastFrameReceivedAt = 0L
+  @Volatile private var lastFrameReceivedAt = 0L
+  @Volatile private var previewStreamState = "idle"
+  @Volatile private var frameBrightness = 0.0
+  @Volatile private var consecutiveDarkFrames = 0
+  @Volatile private var healthyFrameCount = 0
+  @Volatile private var recoveryCount = 0
+  @Volatile private var lastRecoveryReason = ""
+  private var cameraBoundAt = 0L
+  private var lastRecoveryAt = 0L
   private var cameraRestarting = false
   private var strumLockUntilMs = 0L
   private val frameWatchdog = object : Runnable {
     override fun run() {
       if (destroyed || !running || !isAttachedToWindow) return
       val now = SystemClock.elapsedRealtime()
-      if (
-        cameraProvider != null
+      val noFrame = cameraProvider != null
         && lastFrameReceivedAt > 0
         && now - lastFrameReceivedAt > 1_600
-        && !cameraRestarting
-      ) {
-        restartCamera()
+      val previewIdle = cameraProvider != null
+        && cameraBoundAt > 0
+        && now - cameraBoundAt > 2_200
+        && previewStreamState != "streaming"
+      val darkFeed = cameraProvider != null
+        && consecutiveDarkFrames >= 12
+        && now - lastRecoveryAt > 2_200
+      if (!cameraRestarting && (noFrame || previewIdle || darkFeed)) {
+        val reason = when {
+          noFrame -> "no-analysis-frame"
+          darkFeed -> "dark-analysis-frame"
+          else -> "preview-not-streaming"
+        }
+        restartCamera(reason, previewIdle || darkFeed)
       }
-      mainHandler.postDelayed(this, 750)
+      mainHandler.postDelayed(this, 650)
     }
   }
 
@@ -217,14 +238,25 @@ class GuitarCoachContinuousCameraView(
     super.onDetachedFromWindow()
   }
 
-  private fun restartCamera() {
+  private fun restartCamera(reason: String, switchPreviewMode: Boolean = false) {
     if (destroyed || !running || cameraRestarting || !isAttachedToWindow) return
     cameraRestarting = true
+    recoveryCount += 1
+    lastRecoveryReason = reason
+    lastRecoveryAt = SystemClock.elapsedRealtime()
+    if (switchPreviewMode) {
+      previewMode = if (previewMode == PreviewView.ImplementationMode.COMPATIBLE) {
+        PreviewView.ImplementationMode.PERFORMANCE
+      } else {
+        PreviewView.ImplementationMode.COMPATIBLE
+      }
+      previewView.implementationMode = previewMode
+    }
     stopCamera()
     mainHandler.postDelayed({
       cameraRestarting = false
       if (!destroyed && running && isAttachedToWindow) startCamera()
-    }, 180)
+    }, 260)
   }
 
   private fun startCamera() {
@@ -244,12 +276,25 @@ class GuitarCoachContinuousCameraView(
       if (!running || destroyed || !isAttachedToWindow) return@addListener
       try {
         val provider = future.get()
-        val preview = Preview.Builder().build().also {
-          it.setSurfaceProvider(previewView.surfaceProvider)
+        previewView.implementationMode = previewMode
+        previewView.alpha = 1.0f
+        previewView.setBackgroundColor(Color.TRANSPARENT)
+        previewView.previewStreamState.removeObservers(lifecycleOwner)
+        previewView.previewStreamState.observe(lifecycleOwner) { state ->
+          previewStreamState = if (state == PreviewView.StreamState.STREAMING) {
+            "streaming"
+          } else {
+            "idle"
+          }
         }
+        val preview = Preview.Builder()
+          .setTargetResolution(Size(1280, 720))
+          .build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+          }
         val analysis = ImageAnalysis.Builder()
-          .setTargetResolution(Size(960, 720))
-          .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+          .setTargetResolution(Size(640, 480))
+          .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
           .setOutputImageRotationEnabled(true)
           .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
           .build()
@@ -265,18 +310,26 @@ class GuitarCoachContinuousCameraView(
         cameraProvider = provider
         boundCamera = camera
         cameraRestarting = false
-        lastFrameReceivedAt = SystemClock.elapsedRealtime()
+        cameraBoundAt = SystemClock.elapsedRealtime()
+        lastFrameReceivedAt = cameraBoundAt
         currentZoomRatio = camera.cameraInfo.zoomState.value?.zoomRatio ?: 1.0f
         previewUseCase = preview
         analysisUseCase = analysis
         resetTracking()
+        previewView.post {
+          preview.setSurfaceProvider(previewView.surfaceProvider)
+          previewView.requestLayout()
+          previewView.invalidate()
+        }
         onCameraReady(
           mapOf(
             "continuous" to true,
             "targetPreviewFps" to 30,
             "autoFraming" to true,
             "facing" to facing,
-            "guitarClassifier" to true
+            "guitarClassifier" to true,
+            "previewMode" to previewMode.name.lowercase(),
+            "analysisFormat" to "yuv_420_888"
           )
         )
       } catch (error: Throwable) {
@@ -289,6 +342,10 @@ class GuitarCoachContinuousCameraView(
 
   private fun stopCamera() {
     analysisUseCase?.clearAnalyzer()
+    val lifecycleOwner = appContext.activityProvider?.currentActivity as? LifecycleOwner
+    if (lifecycleOwner != null) {
+      runCatching { previewView.previewStreamState.removeObservers(lifecycleOwner) }
+    }
     cameraProvider?.let { provider ->
       runCatching { provider.unbindAll() }
     }
@@ -297,6 +354,8 @@ class GuitarCoachContinuousCameraView(
     previewUseCase = null
     analysisUseCase = null
     lastFrameReceivedAt = 0
+    cameraBoundAt = 0
+    previewStreamState = "idle"
     resetTracking()
   }
 
@@ -320,6 +379,9 @@ class GuitarCoachContinuousCameraView(
     fpsWindowFrames = 0
     cameraFps = 0.0
     analysisFps = 0.0
+    frameBrightness = 0.0
+    consecutiveDarkFrames = 0
+    healthyFrameCount = 0
     lastAnalysisEventAt = 0
     lastHandResult = null
     lastStringState = null
@@ -360,6 +422,14 @@ class GuitarCoachContinuousCameraView(
     var bitmap: Bitmap? = null
     try {
       bitmap = image.toBitmap()
+      frameBrightness = estimateBrightness(bitmap)
+      if (frameBrightness < 5.5) {
+        consecutiveDarkFrames += 1
+        healthyFrameCount = 0
+      } else {
+        consecutiveDarkFrames = 0
+        healthyFrameCount = min(120, healthyFrameCount + 1)
+      }
       val timestamp = max(lastTimestampMs + 1, startedAt)
       lastTimestampMs = timestamp
 
@@ -1078,6 +1148,17 @@ class GuitarCoachContinuousCameraView(
         "autoFramingState" to autoFramingState,
         "strumLockActive" to (SystemClock.elapsedRealtime() < strumLockUntilMs),
         "strumLockRemainingMs" to max(0L, strumLockUntilMs - SystemClock.elapsedRealtime()),
+        "cameraFeed" to mapOf(
+          "previewStreamState" to previewStreamState,
+          "previewMode" to previewMode.name.lowercase(),
+          "analysisFormat" to "yuv_420_888",
+          "brightness" to frameBrightness,
+          "darkFrameCount" to consecutiveDarkFrames,
+          "healthyFrameCount" to healthyFrameCount,
+          "feedHealthy" to (frameBrightness >= 5.5 && healthyFrameCount >= 2),
+          "recoveryCount" to recoveryCount,
+          "lastRecoveryReason" to lastRecoveryReason
+        ),
         "newHits" to hits,
         "recentHits" to recentHits.toList()
       )
@@ -1240,6 +1321,24 @@ class GuitarCoachContinuousCameraView(
     "black" -> value <= 0.22f
     "auto" -> saturation >= 0.08f && value >= 0.28f && hue in 55f..335f
     else -> false
+  }
+
+  private fun estimateBrightness(bitmap: Bitmap): Double {
+    val stepX = max(1, bitmap.width / 24)
+    val stepY = max(1, bitmap.height / 24)
+    var sum = 0.0
+    var count = 0
+    var y = stepY / 2
+    while (y < bitmap.height) {
+      var x = stepX / 2
+      while (x < bitmap.width) {
+        sum += gray(bitmap.getPixel(x, y))
+        count += 1
+        x += stepX
+      }
+      y += stepY
+    }
+    return if (count > 0) sum / count else 0.0
   }
 
   private fun gray(color: Int): Double =

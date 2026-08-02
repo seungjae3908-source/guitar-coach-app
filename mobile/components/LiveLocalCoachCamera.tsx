@@ -26,6 +26,7 @@ import {
   extendStrumLockUntil,
   isStrumLockActive,
 } from '../services/camera-analysis-recovery';
+import { getCameraFeedHealth } from '../services/camera-feed-health';
 import { LiveRecognitionVoicePolicy } from '../services/live-recognition-voice-policy';
 import type { MotionSample } from '../services/trajectory-speed-engine';
 import FocusCoachCameraV7 from './FocusCoachCameraV7';
@@ -203,12 +204,16 @@ export default function LiveLocalCoachCamera({
   const [ready, setReady] = useState(false);
   const [result, setResult] = useState<ContinuousHandAnalysisResult | null>(null);
   const [error, setError] = useState('');
+  const [voiceDiagnostic, setVoiceDiagnostic] = useState(
+    voiceEnabled ? '음성 엔진 준비 중' : '음성 꺼짐',
+  );
   const frameRef = useRef(0);
   const validFramesRef = useRef(0);
   const lockedRef = useRef(false);
   const lastAcceptedAtRef = useRef(0);
   const strumLockUntilRef = useRef(0);
   const lastStrumSpokenAtRef = useRef(0);
+  const lastRecoverySpokenRef = useRef(0);
   const startupSpokenRef = useRef(false);
   const voicePolicyRef = useRef(new LiveRecognitionVoicePolicy());
   const speechReadyRef = useRef(false);
@@ -228,14 +233,20 @@ export default function LiveLocalCoachCamera({
     if (!voiceEnabled || !isCoachSpeechAvailable) {
       speechReadyRef.current = false;
       startupSpokenRef.current = false;
+      setVoiceDiagnostic(voiceEnabled ? '음성 모듈 없음' : '음성 꺼짐');
       void stopCoachSpeechAsync();
       return;
     }
     let cancelled = false;
+    setVoiceDiagnostic('음성 엔진 준비 중');
     void prepareCoachSpeechAsync()
-      .then(async () => {
+      .then(async (preparation) => {
         if (cancelled) return;
         speechReadyRef.current = true;
+        const volumeLabel = preparation.musicVolume === 0
+          ? ' · 미디어 음량 0'
+          : '';
+        setVoiceDiagnostic(`음성 준비 완료${volumeLabel}`);
         if (startupSpokenRef.current || speechBusyRef.current) return;
         startupSpokenRef.current = true;
         speechBusyRef.current = true;
@@ -244,12 +255,20 @@ export default function LiveLocalCoachCamera({
             '음성 코치가 시작되었습니다. 손과 기타를 화면 안에 맞춰 주세요.',
             { interrupt: true, speechRate: 1.02 },
           );
+          if (!cancelled) setVoiceDiagnostic('시작 음성 재생 완료');
+        } catch (speechError) {
+          if (!cancelled) {
+            setVoiceDiagnostic(`음성 오류 · ${speechError instanceof Error ? speechError.message : '재생 실패'}`);
+          }
         } finally {
           speechBusyRef.current = false;
         }
       })
-      .catch(() => {
+      .catch((speechError) => {
         speechReadyRef.current = false;
+        if (!cancelled) {
+          setVoiceDiagnostic(`음성 준비 오류 · ${speechError instanceof Error ? speechError.message : '초기화 실패'}`);
+        }
       });
     return () => {
       cancelled = true;
@@ -263,8 +282,12 @@ export default function LiveLocalCoachCamera({
   const announce = (phrase: string | null) => {
     if (!phrase || !voiceEnabled || !speechReadyRef.current || speechBusyRef.current) return;
     speechBusyRef.current = true;
+    setVoiceDiagnostic('음성 재생 중');
     void speakCoachPhraseAsync(phrase, { interrupt: false, speechRate: 1.02 })
-      .catch(() => undefined)
+      .then(() => setVoiceDiagnostic('음성 재생 완료'))
+      .catch((speechError) => {
+        setVoiceDiagnostic(`음성 오류 · ${speechError instanceof Error ? speechError.message : '재생 실패'}`);
+      })
       .finally(() => {
         speechBusyRef.current = false;
       });
@@ -273,6 +296,7 @@ export default function LiveLocalCoachCamera({
   const testVoice = async () => {
     if (!voiceEnabled || !isCoachSpeechAvailable || speechBusyRef.current) return;
     speechBusyRef.current = true;
+    setVoiceDiagnostic('테스트 음성 재생 중');
     try {
       await prepareCoachSpeechAsync();
       speechReadyRef.current = true;
@@ -280,6 +304,9 @@ export default function LiveLocalCoachCamera({
         '음성 테스트입니다. 오른손과 기타 줄을 화면 안에 맞춰 주세요.',
         { interrupt: true, speechRate: 1.02 },
       );
+      setVoiceDiagnostic('테스트 음성 재생 완료');
+    } catch (speechError) {
+      setVoiceDiagnostic(`음성 테스트 오류 · ${speechError instanceof Error ? speechError.message : '재생 실패'}`);
     } finally {
       speechBusyRef.current = false;
     }
@@ -344,11 +371,18 @@ export default function LiveLocalCoachCamera({
     );
   }
 
-  const handReady = Boolean(result?.hasHand && result.landmarks.length >= 21);
-  const guitarReady = Boolean(result?.guitar?.detected);
+  const cameraFeedHealth = getCameraFeedHealth(result?.continuous?.cameraFeed);
+  const handReady = Boolean(
+    cameraFeedHealth.healthy && result?.hasHand && result.landmarks.length >= 21,
+  );
+  const guitarReady = Boolean(cameraFeedHealth.healthy && result?.guitar?.detected);
   const guitarLabel = result?.guitar?.label || '기타';
   const status = error
     ? '분석 오류'
+    : result && !cameraFeedHealth.healthy
+      ? cameraFeedHealth.recovering
+        ? '검은 카메라 영상 자동 복구 중'
+        : '카메라 실제 영상 확인 중'
     : handReady && guitarReady
       ? '손 · 기타 준비 완료'
       : handReady
@@ -392,7 +426,8 @@ export default function LiveLocalCoachCamera({
           frameRef.current += 1;
           onFrameCount?.(frameRef.current);
           const capturedAt = Date.now();
-          const valid = next.hasHand && next.landmarks.length >= 21;
+          const nextFeedHealth = getCameraFeedHealth(next.continuous?.cameraFeed);
+          const valid = nextFeedHealth.healthy && next.hasHand && next.landmarks.length >= 21;
           const newHits = next.continuous?.newHits ?? [];
           strumLockUntilRef.current = extendStrumLockUntil(
             strumLockUntilRef.current,
@@ -429,13 +464,24 @@ export default function LiveLocalCoachCamera({
             );
           }
 
+          const recoveryCount = next.continuous?.cameraFeed?.recoveryCount ?? 0;
+          if (
+            !nextFeedHealth.healthy
+            && recoveryCount > lastRecoverySpokenRef.current
+          ) {
+            lastRecoverySpokenRef.current = recoveryCount;
+            announce('카메라 영상이 들어오지 않아 자동으로 다시 연결합니다.');
+          }
+
           const nextPalm = (() => {
             const wrist = next.landmarks[0];
             const middleMcp = next.landmarks[9];
             return wrist && middleMcp ? distance(wrist, middleMcp) : 0;
           })();
-          const nextStatus = strumLockHeld && !valid
-            ? '스트럼 추적 유지 중 · 다음 프레임 확인'
+          const nextStatus = !nextFeedHealth.healthy
+            ? nextFeedHealth.label
+            : strumLockHeld && !valid
+              ? '스트럼 추적 유지 중 · 다음 프레임 확인'
             : nextLocked
               ? next.guitar?.detected
                 ? `손과 ${next.guitar.label || '기타'} 인식 완료`
@@ -444,18 +490,20 @@ export default function LiveLocalCoachCamera({
               ? `${next.guitar.label || '기타'} 인식 완료 · 손 찾는 중`
               : '손과 기타를 독립적으로 찾는 중';
           onStatus?.(nextStatus);
-          announce(voicePolicyRef.current.next({
-            running: true,
-            cameraReady: ready || true,
-            hasHand: next.hasHand,
-            handConfidence: next.hasHand && next.landmarks.length >= 21
-              ? Math.max(0.65, next.handednessScore)
-              : 0,
-            palmSize: nextPalm,
-            guitarDetected: Boolean(next.guitar?.detected),
-            guitarType: next.guitar?.type ?? 'unknown',
-            guitarConfidence: next.guitar?.confidence ?? 0,
-          }));
+          if (nextFeedHealth.healthy) {
+            announce(voicePolicyRef.current.next({
+              running: true,
+              cameraReady: true,
+              hasHand: next.hasHand,
+              handConfidence: next.hasHand && next.landmarks.length >= 21
+                ? Math.max(0.65, next.handednessScore)
+                : 0,
+              palmSize: nextPalm,
+              guitarDetected: Boolean(next.guitar?.detected),
+              guitarType: next.guitar?.type ?? 'unknown',
+              guitarConfidence: next.guitar?.confidence ?? 0,
+            }));
+          }
         }}
         onError={(event) => {
           const message = event.nativeEvent.message || '연속 카메라 분석 오류';
@@ -493,8 +541,9 @@ export default function LiveLocalCoachCamera({
       </View>
 
       <View pointerEvents="none" style={styles.voiceStatus}>
-        <Text style={styles.voiceStatusText}>{voiceEnabled ? '🔊 음성 안내' : '음성 꺼짐'}</Text>
+        <Text style={styles.voiceStatusText}>{voiceDiagnostic}</Text>
         <Text style={styles.mainStatus}>{status}</Text>
+        <Text style={styles.cameraDiagnostic}>{cameraFeedHealth.label}</Text>
       </View>
 
       <Pressable
@@ -561,6 +610,7 @@ const styles = StyleSheet.create({
   voiceStatus: { position: 'absolute', left: 12, right: 12, bottom: 78, borderRadius: 16, backgroundColor: 'rgba(13,17,23,0.90)', borderWidth: 2, borderColor: '#30363d', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, zIndex: 40 },
   voiceStatusText: { color: '#79c0ff', fontSize: 12, fontWeight: '900' },
   mainStatus: { color: '#ffffff', fontSize: 15, fontWeight: '900', marginTop: 3, textAlign: 'center' },
+  cameraDiagnostic: { color: '#b1bac4', fontSize: 10, fontWeight: '800', marginTop: 4, textAlign: 'center' },
   switchButton: { position: 'absolute', right: 12, bottom: 14, minWidth: 86, minHeight: 50, borderRadius: 15, backgroundColor: 'rgba(13,17,23,0.94)', borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
   switchText: { color: '#ffffff', fontSize: 13, fontWeight: '900' },
   voiceTestButton: { position: 'absolute', left: '50%', marginLeft: -52, bottom: 14, width: 104, minHeight: 50, borderRadius: 15, backgroundColor: 'rgba(22,101,52,0.94)', borderWidth: 2, borderColor: '#7ee787', alignItems: 'center', justifyContent: 'center', zIndex: 50 },

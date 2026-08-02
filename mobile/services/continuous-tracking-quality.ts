@@ -39,6 +39,19 @@ export type QualityContinuousStats = {
   stringRefreshAgeFrames: number;
   autoZoomRatio?: number;
   autoFramingState?: AutoFramingState;
+  strumLockActive?: boolean;
+  strumLockRemainingMs?: number;
+  cameraFeed?: {
+    previewStreamState?: string;
+    previewMode?: string;
+    analysisFormat?: string;
+    brightness?: number;
+    darkFrameCount?: number;
+    healthyFrameCount?: number;
+    feedHealthy?: boolean;
+    recoveryCount?: number;
+    lastRecoveryReason?: string;
+  };
   newHits: QualityStringHit[];
   recentHits: QualityStringHit[];
   qualityGate?: {

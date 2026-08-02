@@ -4,6 +4,8 @@ export type CoachSpeechPreparation = {
   ready: boolean;
   language: string;
   message?: string;
+  musicVolume?: number;
+  maxMusicVolume?: number;
 };
 
 export type CoachSpeechResult = {
@@ -20,6 +22,9 @@ export type CoachSpeechStatus = {
   speaking: boolean;
   lastPhrase: string;
   lastSpokenAtMs: number;
+  musicVolume?: number;
+  maxMusicVolume?: number;
+  audioFocusGranted?: boolean;
 };
 
 type GuitarCoachSpeechModule = {
