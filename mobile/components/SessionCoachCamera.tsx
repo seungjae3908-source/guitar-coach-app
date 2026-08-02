@@ -353,10 +353,10 @@ export default function SessionCoachCamera({
       try {
         const photo = await cameraRef.current.takePictureAsync({
           quality: activeMode === 'full'
-            ? 0.30
+            ? facing === 'front' ? 0.58 : 0.48
             : facing === 'front'
-              ? Math.max(0.60, analysisProfile.photoQuality)
-              : analysisProfile.photoQuality,
+              ? Math.max(0.64, analysisProfile.photoQuality)
+              : Math.max(0.52, analysisProfile.photoQuality),
           shutterSound: false,
           mirror: facing === 'front',
           skipProcessing: false,
@@ -365,8 +365,8 @@ export default function SessionCoachCamera({
         if (!capturedUri || cancelled) throw new Error('카메라 프레임을 가져오지 못했습니다.');
 
         handFrameIndexRef.current += 1;
-        const refreshStringVision = handFrameIndexRef.current === 1
-          || handFrameIndexRef.current % analysisProfile.stringVisionEveryFrames === 0;
+        const refreshStringVision =
+          handFrameIndexRef.current % analysisProfile.stringVisionEveryFrames === 0;
 
         if (activeMode === 'full') {
           if (fullPassRef.current === 'pose' || !isDetailedHandCoachAvailable) {
@@ -483,11 +483,11 @@ export default function SessionCoachCamera({
     ? '레슨을 시작하면 관절 분석이 실행됩니다'
     : !handResult?.hasHand
       ? '손 관절 찾는 중'
-      : size < 0.13
+      : size < 0.105
         ? '손이 작습니다 · 카메라 가까이'
         : size > 0.68
           ? '손가락 끝이 잘립니다 · 조금 멀리'
-          : `손 추적 ${Math.round(handResult.handednessScore * 100)}%${precisionApplied ? ' · ROI 2차 정밀' : ''}`;
+          : `손 추적 ${Math.round(handResult.handednessScore * 100)}%${precisionApplied ? ' · ROI 정밀' : ''}${handResult.stringTracking?.detected ? ' · 기타 줄 연결' : ' · 손 단독 인식'}`;
 
   return (
     <View style={styles.root}>
@@ -586,9 +586,9 @@ export default function SessionCoachCamera({
             {cameraReady ? running ? '분석 중' : '영상 준비' : '연결 중'}
           </Text>
         </View>
-        {activeMode !== 'full' && handResult?.hasHand ? (
+        {handResult?.hasHand ? (
           <Text style={styles.statusText}>
-            {handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms
+            {handStatus} · {handResult.handedness} · 관절 {handResult.landmarks.length}개 · 처리 {Math.round(handResult.latencyMs)}ms
           </Text>
         ) : null}
         {activeMode !== 'full' ? <Text style={wristConfidence >= 0.42 ? styles.wristStatusGood : styles.wristStatusBad}>{wristStatus}</Text> : null}

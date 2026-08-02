@@ -304,7 +304,8 @@ export function recognizeChord(
   const confidence = best
     ? clamp(best.total * 0.58 + positionConfidence * 0.26 + clamp(margin / 0.22, 0, 1) * 0.16, 0, 1)
     : 0;
-  const candidateAllowed = Boolean(best && best.total >= 0.62 && best.matched >= 2 && margin >= 0.06);
+  const minimumMatched = best ? Math.max(2, best.expectedCount - 1) : 2;
+  const candidateAllowed = Boolean(best && best.total >= 0.68 && best.matched >= minimumMatched && margin >= 0.10);
   const confirmed = candidateAllowed && audioVerified && confidence >= 0.70;
 
   if (!candidateAllowed || !best) {

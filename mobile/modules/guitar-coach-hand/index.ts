@@ -3,6 +3,7 @@ import { requireOptionalNativeModule } from 'expo';
 import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../services/analysis-stream';
 import { getLivePracticeContext } from '../../services/practice-session-context';
 import { effectiveHandDetailSize, hasUsableHandDetail, type HandPrecisionPayload } from '../../services/hand-precision-region';
+import { shouldRefreshStringVision } from '../../services/hand-string-analysis-policy';
 
 export type HandLandmarkName =
   | 'wrist'
@@ -176,24 +177,19 @@ function palmSize(result: HandAnalysisResult) {
   return effectiveHandDetailSize({ landmarks: result.landmarks, precision: result.precision });
 }
 
-function shouldPublishForCoach(result: HandAnalysisResult, pickColor: PickColor) {
+function shouldPublishForCoach(result: HandAnalysisResult, _pickColor: PickColor) {
   const context = getLivePracticeContext();
   if (!context?.active) return true;
-  const rightHandCategory = context.category === 'arpeggio'
-    || context.category === 'fingerstyle'
-    || context.category === 'strumming'
-    || context.category === 'downPicking'
-    || context.category === 'alternatePicking'
-    || context.category === 'palmMute';
+  if (!result.hasHand) return true;
+
   const leftHandCategory = context.category === 'chords'
     || context.category === 'fingering'
     || context.category === 'powerChords'
     || context.category === 'scales'
     || context.category === 'leadTechnique';
 
-  if (pickColor === 'auto') return rightHandCategory;
-  if (pickColor === 'none') return leftHandCategory && hasUsableHandDetail(result);
-  return rightHandCategory;
+  if (leftHandCategory) return hasUsableHandDetail(result);
+  return result.landmarks.length >= 21 && result.handednessScore >= 0.24;
 }
 
 function buildStringRegion(hand: HandAnalysisResult): StringVisionRegion {
@@ -478,9 +474,12 @@ export async function analyzeHandWithStringsAsync(
 
   const now = Date.now();
   const reuseMs = options.reuseStringVisionMs ?? 1_250;
-  const shouldRefresh = options.refreshStringVision !== false
-    || !cachedStringTracking
-    || now - cachedStringTracking.capturedAt > reuseMs;
+  const shouldRefresh = shouldRefreshStringVision({
+    requested: options.refreshStringVision,
+    cachedAt: cachedStringTracking?.capturedAt,
+    now,
+    reuseMs,
+  });
   let tracking = cachedStringTracking?.tracking ?? null;
 
   if (shouldRefresh) {

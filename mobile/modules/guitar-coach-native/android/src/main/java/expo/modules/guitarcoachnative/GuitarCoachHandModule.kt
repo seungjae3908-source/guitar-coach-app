@@ -113,7 +113,11 @@ class GuitarCoachHandModule : Module() {
         val decoded = decodeBitmap(uri)
         originalBitmap = decoded
         val safeRegion = requestedRegion?.normalized()
-        val first = detectPass(decoded, safeRegion, pickColor)
+        val initial = detectPass(decoded, safeRegion, pickColor)
+        val reacquired = if (automaticPrecision && safeRegion == null && !initial.hasHand) {
+          reacquireHand(decoded, pickColor)
+        } else null
+        val first = reacquired ?: initial
         var selected = first
         var precision = if (safeRegion != null) {
           precisionPayload(
@@ -123,6 +127,15 @@ class GuitarCoachHandModule : Module() {
             sourcePalmSize = palmSize(first.landmarks),
             sourceEdgeMargin = edgeMargin(first.landmarks),
             region = safeRegion
+          )
+        } else if (reacquired != null) {
+          precisionPayload(
+            applied = true,
+            passes = 2,
+            reason = "multi-region-reacquired",
+            sourcePalmSize = palmSize(first.landmarks),
+            sourceEdgeMargin = edgeMargin(first.landmarks),
+            region = first.region
           )
         } else {
           val initialDecision = decidePrecisionRegion(first)
@@ -147,7 +160,7 @@ class GuitarCoachHandModule : Module() {
               selected = refined
               precision = precisionPayload(
                 applied = true,
-                passes = 2,
+                passes = if (reacquired != null) 3 else 2,
                 reason = "reacquired-and-refined",
                 sourcePalmSize = decision.sourcePalmSize,
                 sourceEdgeMargin = decision.sourceEdgeMargin,
@@ -156,7 +169,7 @@ class GuitarCoachHandModule : Module() {
             } else {
               precision = precisionPayload(
                 applied = false,
-                passes = 2,
+                passes = if (reacquired != null) 3 else 2,
                 reason = decision.reason,
                 sourcePalmSize = decision.sourcePalmSize,
                 sourceEdgeMargin = decision.sourceEdgeMargin,
@@ -241,6 +254,33 @@ class GuitarCoachHandModule : Module() {
         analysisBitmap.recycle()
       }
     }
+  }
+
+  private fun reacquireHand(
+    originalBitmap: Bitmap,
+    pickColor: String
+  ): DetectionPass? {
+    val regions = listOf(
+      NormalizedRegion(0.08, 0.08, 0.92, 0.92),
+      NormalizedRegion(0.00, 0.04, 0.66, 0.96),
+      NormalizedRegion(0.34, 0.04, 1.00, 0.96),
+      NormalizedRegion(0.10, 0.28, 0.90, 1.00)
+    )
+    var best: DetectionPass? = null
+    var bestScore = 0.0
+
+    for (region in regions) {
+      val candidate = detectPass(originalBitmap, region.normalized(), pickColor)
+      if (!candidate.hasHand || candidate.landmarks.size < 21 || candidate.handednessScore < 0.24) continue
+      val detail = (palmSize(candidate.landmarks) / 0.14).coerceIn(0.0, 1.0)
+      val score = candidate.handednessScore * 0.78 + detail * 0.22
+      if (score > bestScore) {
+        best = candidate
+        bestScore = score
+      }
+      if (candidate.handednessScore >= 0.72 && detail >= 0.58) break
+    }
+    return best
   }
 
   private fun decidePrecisionRegion(pass: DetectionPass): PrecisionDecision {
@@ -409,9 +449,9 @@ class GuitarCoachHandModule : Module() {
       val options = HandLandmarker.HandLandmarkerOptions.builder()
         .setBaseOptions(baseOptions)
         .setNumHands(1)
-        .setMinHandDetectionConfidence(0.38f)
-        .setMinHandPresenceConfidence(0.38f)
-        .setMinTrackingConfidence(0.42f)
+        .setMinHandDetectionConfidence(0.30f)
+        .setMinHandPresenceConfidence(0.30f)
+        .setMinTrackingConfidence(0.35f)
         .setRunningMode(RunningMode.IMAGE)
         .build()
 
