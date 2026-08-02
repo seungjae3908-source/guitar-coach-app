@@ -35,3 +35,20 @@ export function cameraRecoveryDecision(
 export function initialAnalysisDelayMs(cameraReadyAt: number, now = Date.now()) {
   return Math.max(0, 900 - Math.max(0, now - cameraReadyAt));
 }
+
+
+export const STRUM_LOCK_HOLD_MS = 850;
+
+export function extendStrumLockUntil(
+  currentUntil: number,
+  capturedAt: number,
+  hasStrumHit: boolean,
+  holdMs = STRUM_LOCK_HOLD_MS,
+) {
+  if (!hasStrumHit) return currentUntil;
+  return Math.max(currentUntil, capturedAt + Math.max(0, holdMs));
+}
+
+export function isStrumLockActive(lockUntil: number, capturedAt: number) {
+  return capturedAt < lockUntil;
+}

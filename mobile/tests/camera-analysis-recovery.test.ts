@@ -2,7 +2,10 @@ import assert = require('node:assert/strict');
 
 import {
   cameraRecoveryDecision,
+  extendStrumLockUntil,
   initialAnalysisDelayMs,
+  isStrumLockActive,
+  STRUM_LOCK_HOLD_MS,
 } from '../services/camera-analysis-recovery';
 import {
   ConsecutiveHandGate,
@@ -24,6 +27,12 @@ assert.equal(mount.blocksPreview, true, '실제 카메라 마운트 실패만 �
 
 assert.equal(initialAnalysisDelayMs(1_000, 1_250), 650, '카메라 준비 직후 분석을 서두르면 안 됩니다.');
 assert.equal(initialAnalysisDelayMs(1_000, 2_000), 0, '안정 시간이 지난 뒤에는 바로 분석할 수 있어야 합니다.');
+
+const lockUntil = extendStrumLockUntil(0, 10_000, true);
+assert.equal(lockUntil, 10_000 + STRUM_LOCK_HOLD_MS, '스트럼 검출 뒤 잠금은 정확히 850ms 유지되어야 합니다.');
+assert.equal(isStrumLockActive(lockUntil, 10_849), true, '850ms가 끝나기 전에는 스트럼 추적 잠금을 유지해야 합니다.');
+assert.equal(isStrumLockActive(lockUntil, 10_850), false, '850ms가 끝나면 잠금을 해제할 수 있어야 합니다.');
+assert.equal(extendStrumLockUntil(lockUntil, 10_400, true), 11_250, '잠금 중 새 스트럼이 오면 850ms를 다시 연장해야 합니다.');
 
 const region = deriveRightHandRegion(
   { x: 0.43, y: 0.70 },
@@ -55,4 +64,4 @@ for (let index = 1; index <= 4; index += 1) {
 assert.equal(gate.add(validHand).locked, true, '같은 오른손이 5프레임 연속 검출된 뒤에만 피드백을 열어야 합니다.');
 assert.equal(gate.add({ ...validHand, valid: false, reason: 'outside-roi' }).locked, false, 'ROI 이탈 즉시 피드백 잠금을 해제해야 합니다.');
 
-console.log('Camera analysis recovery and calibrated ROI tests passed: 18');
+console.log('Camera analysis recovery, 850ms strum lock, and calibrated ROI tests passed: 22');

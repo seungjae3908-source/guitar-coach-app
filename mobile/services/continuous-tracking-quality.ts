@@ -183,7 +183,7 @@ function smoothHand(
   next: HandAnalysisResult,
   capturedAt: number,
 ) {
-  if (!next.hasHand || next.landmarks.length < 21 || next.handednessScore < 0.32) {
+  if (!next.hasHand || next.landmarks.length < 21 || next.handednessScore < 0.20) {
     return { result: { ...next, stringTracking: undefined }, stability: 0 };
   }
 
@@ -280,7 +280,7 @@ function stabilizeStrings(
   if (!tracking?.detected || tracking.lines.length < 5 || tracking.visibleLineCount < 4) {
     return { tracking: undefined, stability: 0, reason: '현재 프레임에서 기타줄 5개 이상을 확인하지 못했습니다.' };
   }
-  if (tracking.confidence < 0.38 || !roiMatchesCurrentHand(tracking, hand)) {
+  if (tracking.confidence < 0.28 || !roiMatchesCurrentHand(tracking, hand)) {
     return { tracking: undefined, stability: 0, reason: '현재 손 위치와 기타줄 분석 영역이 일치하지 않습니다.' };
   }
 
@@ -426,15 +426,15 @@ function buildContacts(
       .sort((left, right) => left.distance - right.distance)[0];
     if (!nearest) return [];
     const distanceRatio = nearest.distance / spacing;
-    const visualIndex: 0 | GuitarStringNumber = distanceRatio <= 1.12 ? nearest.line.visualIndex : 0;
-    const stringNumber: 0 | GuitarStringNumber = distanceRatio <= 0.72
-      && tracking.confidence >= 0.50
-      && (tracking.stabilityConfidence ?? 0) >= 0.52
-      && tracking.numberingConfidence >= 0.66
+    const visualIndex: 0 | GuitarStringNumber = distanceRatio <= 1.42 ? nearest.line.visualIndex : 0;
+    const stringNumber: 0 | GuitarStringNumber = distanceRatio <= 0.90
+      && tracking.confidence >= 0.36
+      && (tracking.stabilityConfidence ?? 0) >= 0.40
+      && tracking.numberingConfidence >= 0.54
       && isStringNumber(nearest.line.stringNumber)
       ? nearest.line.stringNumber
       : 0;
-    const proximity = clamp(1 - distanceRatio / 1.15, 0, 1);
+    const proximity = clamp(1 - distanceRatio / 1.45, 0, 1);
     return [{
       id: specification.id,
       label: specification.label,
@@ -546,8 +546,8 @@ export class ContinuousTrackingQualityGate {
       if (
         !contact
         || contact.visualIndex === 0
-        || contact.distanceRatio > 0.74
-        || contact.confidence < 0.50
+        || contact.distanceRatio > 0.96
+        || contact.confidence < 0.38
       ) {
         rejectedHitCount += 1;
         return [];
@@ -566,7 +566,7 @@ export class ContinuousTrackingQualityGate {
         0,
         1,
       );
-      if (confidence < 0.54) {
+      if (confidence < 0.44) {
         rejectedHitCount += 1;
         return [];
       }

@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Size
+import android.view.View.MeasureSpec
 import android.view.ViewGroup.LayoutParams
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -127,11 +130,49 @@ class GuitarCoachContinuousCameraView(
   private var autoFramingState = "searching"
   private val previousContacts = mutableMapOf<String, PreviousContact>()
   private val recentHits = ArrayDeque<Map<String, Any>>()
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var lastFrameReceivedAt = 0L
+  private var cameraRestarting = false
+  private var strumLockUntilMs = 0L
+  private val frameWatchdog = object : Runnable {
+    override fun run() {
+      if (destroyed || !running || !isAttachedToWindow) return
+      val now = SystemClock.elapsedRealtime()
+      if (
+        cameraProvider != null
+        && lastFrameReceivedAt > 0
+        && now - lastFrameReceivedAt > 1_600
+        && !cameraRestarting
+      ) {
+        restartCamera()
+      }
+      mainHandler.postDelayed(this, 750)
+    }
+  }
+
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    previewView.measure(
+      MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY),
+      MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.EXACTLY)
+    )
+  }
+
+  override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+    super.onLayout(changed, left, top, right, bottom)
+    previewView.layout(0, 0, right - left, bottom - top)
+  }
 
   fun setRunning(value: Boolean) {
     if (running == value || destroyed) return
     running = value
-    if (value) post { startCamera() } else post { stopCamera() }
+    mainHandler.removeCallbacks(frameWatchdog)
+    if (value) {
+      mainHandler.post(frameWatchdog)
+      post { startCamera() }
+    } else {
+      post { stopCamera() }
+    }
   }
 
   fun setPickColor(value: String) {
@@ -162,12 +203,27 @@ class GuitarCoachContinuousCameraView(
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
-    if (running && !destroyed) post { startCamera() }
+    mainHandler.removeCallbacks(frameWatchdog)
+    if (running && !destroyed) {
+      mainHandler.post(frameWatchdog)
+      post { startCamera() }
+    }
   }
 
   override fun onDetachedFromWindow() {
+    mainHandler.removeCallbacks(frameWatchdog)
     stopCamera()
     super.onDetachedFromWindow()
+  }
+
+  private fun restartCamera() {
+    if (destroyed || !running || cameraRestarting || !isAttachedToWindow) return
+    cameraRestarting = true
+    stopCamera()
+    mainHandler.postDelayed({
+      cameraRestarting = false
+      if (!destroyed && running && isAttachedToWindow) startCamera()
+    }, 180)
   }
 
   private fun startCamera() {
@@ -207,6 +263,8 @@ class GuitarCoachContinuousCameraView(
         )
         cameraProvider = provider
         boundCamera = camera
+        cameraRestarting = false
+        lastFrameReceivedAt = SystemClock.elapsedRealtime()
         currentZoomRatio = camera.cameraInfo.zoomState.value?.zoomRatio ?: 1.0f
         previewUseCase = preview
         analysisUseCase = analysis
@@ -221,6 +279,7 @@ class GuitarCoachContinuousCameraView(
           )
         )
       } catch (error: Throwable) {
+        cameraRestarting = false
         stopCamera()
         onError(mapOf("message" to (error.message ?: "연속 카메라를 시작하지 못했습니다.")))
       }
@@ -229,16 +288,14 @@ class GuitarCoachContinuousCameraView(
 
   private fun stopCamera() {
     analysisUseCase?.clearAnalyzer()
-    val provider = cameraProvider
-    val preview = previewUseCase
-    val analysis = analysisUseCase
-    if (provider != null && preview != null && analysis != null) {
-      runCatching { provider.unbind(preview, analysis) }
+    cameraProvider?.let { provider ->
+      runCatching { provider.unbindAll() }
     }
     cameraProvider = null
     boundCamera = null
     previewUseCase = null
     analysisUseCase = null
+    lastFrameReceivedAt = 0
     resetTracking()
   }
 
@@ -246,6 +303,7 @@ class GuitarCoachContinuousCameraView(
     if (destroyed) return
     destroyed = true
     running = false
+    mainHandler.removeCallbacksAndMessages(null)
     stopCamera()
     handLandmarker?.close()
     handLandmarker = null
@@ -275,6 +333,7 @@ class GuitarCoachContinuousCameraView(
     spatialResetRequested.set(false)
     previousContacts.clear()
     recentHits.clear()
+    strumLockUntilMs = 0
   }
 
   private fun resetSpatialTracking() {
@@ -292,6 +351,7 @@ class GuitarCoachContinuousCameraView(
       return
     }
     val startedAt = SystemClock.elapsedRealtime()
+    lastFrameReceivedAt = startedAt
     if (spatialResetRequested.compareAndSet(true, false)) resetSpatialTracking()
     frameCount += 1
     updateCameraFps(startedAt)
@@ -307,7 +367,7 @@ class GuitarCoachContinuousCameraView(
       }
       val hand = lastHandResult
       updateAutoFraming(hand, startedAt)
-      if (hand?.hasHand != true) previousContacts.clear()
+      if (hand?.hasHand != true && startedAt >= strumLockUntilMs) previousContacts.clear()
 
       if (lastGuitarRefreshFrame == 0L || frameCount - lastGuitarRefreshFrame >= 8L) {
         lastGuitarState = guitarClassifier.classify(bitmap)
@@ -343,6 +403,9 @@ class GuitarCoachContinuousCameraView(
         emptyList()
       }
       val hits = detectHits(contacts, timestamp)
+      if (hits.isNotEmpty()) {
+        strumLockUntilMs = max(strumLockUntilMs, timestamp + 850)
+      }
       hits.forEach { hit ->
         recentHits.addLast(hit)
         while (recentHits.size > 12) recentHits.removeFirst()
@@ -413,18 +476,18 @@ class GuitarCoachContinuousCameraView(
     if (now - lastFocusAt >= 1_250) requestFocus(centerX, centerY, now)
 
     val desired = when {
-      palm < 0.115 -> currentZoomRatio * min(1.38, (0.235 / palm).pow(0.42)).toFloat()
-      palm < 0.165 -> currentZoomRatio * 1.18f
-      palm < 0.205 -> currentZoomRatio * 1.08f
-      palm > 0.54 -> currentZoomRatio * 0.76f
-      palm > 0.43 -> currentZoomRatio * 0.88f
+      palm < 0.080 -> currentZoomRatio * min(1.22, (0.170 / palm).pow(0.34)).toFloat()
+      palm < 0.110 -> currentZoomRatio * 1.10f
+      palm < 0.140 -> currentZoomRatio * 1.04f
+      palm > 0.58 -> currentZoomRatio * 0.78f
+      palm > 0.48 -> currentZoomRatio * 0.90f
       else -> currentZoomRatio
     }.coerceIn(minZoom, maxZoom)
 
     autoFramingState = when {
-      palm < 0.205 && currentZoomRatio >= maxZoom * 0.98f -> "max-zoom-too-small"
-      palm < 0.205 -> "zooming-in"
-      palm > 0.43 -> "zooming-out"
+      palm < 0.140 && currentZoomRatio >= maxZoom * 0.98f -> "max-zoom-too-small"
+      palm < 0.140 -> "zooming-in"
+      palm > 0.48 -> "zooming-out"
       else -> "locked"
     }
 
@@ -503,9 +566,9 @@ class GuitarCoachContinuousCameraView(
       val options = HandLandmarker.HandLandmarkerOptions.builder()
         .setBaseOptions(BaseOptions.builder().setModelAssetPath(HAND_MODEL).build())
         .setNumHands(1)
-        .setMinHandDetectionConfidence(0.30f)
-        .setMinHandPresenceConfidence(0.30f)
-        .setMinTrackingConfidence(0.34f)
+        .setMinHandDetectionConfidence(0.20f)
+        .setMinHandPresenceConfidence(0.20f)
+        .setMinTrackingConfidence(0.24f)
         .setRunningMode(RunningMode.VIDEO)
         .build()
       HandLandmarker.createFromOptions(applicationContext, options).also { handLandmarker = it }
@@ -679,7 +742,7 @@ class GuitarCoachContinuousCameraView(
     }
 
     val candidate = best ?: return null
-    if (candidate.confidence < 0.34) return null
+    if (candidate.confidence < 0.26) return null
     val maxStrength = (candidate.strengths.maxOrNull() ?: 1.0).coerceAtLeast(1.0)
     val normalized = candidate.strengths.map { (it / maxStrength).coerceIn(0.0, 1.0) }
     val firstSide = normalized.take(2).average()
@@ -851,7 +914,7 @@ class GuitarCoachContinuousCameraView(
   ): List<LiveContact> {
     val spacing = averageLineSpacing(strings.lines).coerceAtLeast(0.004)
     val points = ArrayList<Triple<String, String, Pair<Double, Double>>>()
-    if (pick.detected && pick.confidence >= 0.32) {
+    if (pick.detected && pick.confidence >= 0.24) {
       points.add(Triple("pick", "피크", estimatedPickTip(pick, strings.lines)))
     }
     listOf(
@@ -875,12 +938,12 @@ class GuitarCoachContinuousCameraView(
       } else {
         pointToLineDistance(point.first, point.second, nearest) / spacing
       }
-      val visual = if (nearest != null && distance <= 1.16) nearest.visualIndex else 0
+      val visual = if (nearest != null && distance <= 1.46) nearest.visualIndex else 0
       val number = if (
         nearest != null
-        && distance <= 0.76
-        && strings.confidence >= 0.48
-        && strings.numberingConfidence >= 0.62
+        && distance <= 0.92
+        && strings.confidence >= 0.34
+        && strings.numberingConfidence >= 0.50
       ) {
         nearest.stringNumber
       } else {
@@ -928,8 +991,8 @@ class GuitarCoachContinuousCameraView(
         val changedLine = contact.visualIndex > 0 &&
           previous.visualIndex > 0 &&
           contact.visualIndex != previous.visualIndex
-        val approachedLine = previous.distanceRatio > 0.48 && contact.distanceRatio <= 0.32
-        val fastEnough = contact.speed >= 0.16
+        val approachedLine = previous.distanceRatio > 0.70 && contact.distanceRatio <= 0.48
+        val fastEnough = contact.speed >= 0.10
         if (
           fastEnough
           && (changedLine || approachedLine)
@@ -1005,6 +1068,8 @@ class GuitarCoachContinuousCameraView(
         "stringRefreshAgeFrames" to max(0, frameCount - lastStringRefreshFrame),
         "autoZoomRatio" to currentZoomRatio.toDouble(),
         "autoFramingState" to autoFramingState,
+        "strumLockActive" to (SystemClock.elapsedRealtime() < strumLockUntilMs),
+        "strumLockRemainingMs" to max(0L, strumLockUntilMs - SystemClock.elapsedRealtime()),
         "newHits" to hits,
         "recentHits" to recentHits.toList()
       )

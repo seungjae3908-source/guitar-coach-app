@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   LayoutChangeEvent,
   Linking,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -23,6 +22,10 @@ import {
   speakCoachPhraseAsync,
   stopCoachSpeechAsync,
 } from '../modules/guitar-coach-speech';
+import {
+  extendStrumLockUntil,
+  isStrumLockActive,
+} from '../services/camera-analysis-recovery';
 import { LiveRecognitionVoicePolicy } from '../services/live-recognition-voice-policy';
 import type { MotionSample } from '../services/trajectory-speed-engine';
 import FocusCoachCameraV7 from './FocusCoachCameraV7';
@@ -156,6 +159,16 @@ function pickColor(category: PracticeCategoryId) {
   return category === 'arpeggio' || category === 'fingerstyle' ? 'none' : 'auto';
 }
 
+const STRING_ANALYSIS_CATEGORIES = new Set<PracticeCategoryId>([
+  'strumming',
+  'alternatePicking',
+  'downPicking',
+  'palmMute',
+  'arpeggio',
+  'fingerstyle',
+  'songPractice',
+]);
+
 export default function LiveLocalCoachCamera({
   coachingActive,
   category,
@@ -191,6 +204,9 @@ export default function LiveLocalCoachCamera({
   const validFramesRef = useRef(0);
   const lockedRef = useRef(false);
   const lastAcceptedAtRef = useRef(0);
+  const strumLockUntilRef = useRef(0);
+  const lastStrumSpokenAtRef = useRef(0);
+  const startupSpokenRef = useRef(false);
   const voicePolicyRef = useRef(new LiveRecognitionVoicePolicy());
   const speechReadyRef = useRef(false);
   const speechBusyRef = useRef(false);
@@ -208,13 +224,26 @@ export default function LiveLocalCoachCamera({
   useEffect(() => {
     if (!voiceEnabled || !isCoachSpeechAvailable) {
       speechReadyRef.current = false;
+      startupSpokenRef.current = false;
       void stopCoachSpeechAsync();
       return;
     }
     let cancelled = false;
     void prepareCoachSpeechAsync()
-      .then(() => {
-        if (!cancelled) speechReadyRef.current = true;
+      .then(async () => {
+        if (cancelled) return;
+        speechReadyRef.current = true;
+        if (startupSpokenRef.current || speechBusyRef.current) return;
+        startupSpokenRef.current = true;
+        speechBusyRef.current = true;
+        try {
+          await speakCoachPhraseAsync(
+            '음성 코치가 시작되었습니다. 손과 기타를 화면 안에 맞춰 주세요.',
+            { interrupt: true, speechRate: 1.02 },
+          );
+        } finally {
+          speechBusyRef.current = false;
+        }
       })
       .catch(() => {
         speechReadyRef.current = false;
@@ -238,13 +267,28 @@ export default function LiveLocalCoachCamera({
       });
   };
 
+  const testVoice = async () => {
+    if (!voiceEnabled || !isCoachSpeechAvailable || speechBusyRef.current) return;
+    speechBusyRef.current = true;
+    try {
+      await prepareCoachSpeechAsync();
+      speechReadyRef.current = true;
+      await speakCoachPhraseAsync(
+        '음성 테스트입니다. 오른손과 기타 줄을 화면 안에 맞춰 주세요.',
+        { interrupt: true, speechRate: 1.02 },
+      );
+    } finally {
+      speechBusyRef.current = false;
+    }
+  };
+
   const updateLock = (next: boolean) => {
     if (lockedRef.current === next) return;
     lockedRef.current = next;
     onHandLockChange?.(next);
   };
 
-  if (cameraFocus === 'full-body' || cameraFocus === 'none' || Platform.OS === 'android') {
+  if (cameraFocus === 'full-body' || cameraFocus === 'none') {
     return (
       <FocusCoachCameraV7
         coachingActive={coachingActive}
@@ -320,9 +364,9 @@ export default function LiveLocalCoachCamera({
     >
       <ContinuousRightHandCamera
         style={StyleSheet.absoluteFill}
-        running
+        running={true}
         facing={facing}
-        analyzeStrings={false}
+        analyzeStrings={STRING_ANALYSIS_CATEGORIES.has(category)}
         pickColor={pickColor(category)}
         onCameraReady={() => {
           setReady(true);
@@ -344,13 +388,24 @@ export default function LiveLocalCoachCamera({
           setResult(next);
           frameRef.current += 1;
           onFrameCount?.(frameRef.current);
-          const valid = next.hasHand && next.landmarks.length >= 21 && next.handednessScore >= 0.25;
-          validFramesRef.current = valid ? Math.min(5, validFramesRef.current + 1) : 0;
-          const nextLocked = validFramesRef.current >= 3;
+          const capturedAt = Date.now();
+          const valid = next.hasHand && next.landmarks.length >= 21 && next.handednessScore >= 0.20;
+          const newHits = next.continuous?.newHits ?? [];
+          strumLockUntilRef.current = extendStrumLockUntil(
+            strumLockUntilRef.current,
+            capturedAt,
+            STRING_ANALYSIS_CATEGORIES.has(category) && newHits.length > 0,
+          );
+          const strumLockHeld = isStrumLockActive(strumLockUntilRef.current, capturedAt);
+          validFramesRef.current = valid
+            ? Math.min(5, validFramesRef.current + 1)
+            : strumLockHeld
+              ? Math.max(3, validFramesRef.current)
+              : 0;
+          const nextLocked = validFramesRef.current >= 3 || strumLockHeld;
           updateLock(nextLocked);
 
           if (nextLocked) {
-            const capturedAt = Date.now();
             const sample = toMotionSample(next, capturedAt);
             if (sample) onMotionSample?.(sample);
             if (coachingActive && capturedAt - lastAcceptedAtRef.current >= 120) {
@@ -359,16 +414,30 @@ export default function LiveLocalCoachCamera({
             }
           }
 
+          const latestHit = newHits.at(-1);
+          if (latestHit && capturedAt - lastStrumSpokenAtRef.current >= 1_800) {
+            lastStrumSpokenAtRef.current = capturedAt;
+            announce(
+              latestHit.direction === 'down'
+                ? '다운 스트럼을 추적했습니다.'
+                : latestHit.direction === 'up'
+                  ? '업 스트럼을 추적했습니다.'
+                  : '스트럼 움직임을 추적했습니다.',
+            );
+          }
+
           const nextPalm = (() => {
             const wrist = next.landmarks[0];
             const middleMcp = next.landmarks[9];
             return wrist && middleMcp ? distance(wrist, middleMcp) : 0;
           })();
-          const nextStatus = nextLocked
-            ? next.guitar?.detected
-              ? `손과 ${next.guitar.label || '기타'} 인식 완료`
-              : '손 단독 인식 완료 · 기타는 별도 확인 중'
-            : next.guitar?.detected
+          const nextStatus = strumLockHeld && !valid
+            ? '스트럼 추적 유지 중 · 다음 프레임 확인'
+            : nextLocked
+              ? next.guitar?.detected
+                ? `손과 ${next.guitar.label || '기타'} 인식 완료`
+                : '손 단독 인식 완료 · 기타는 별도 확인 중'
+              : next.guitar?.detected
               ? `${next.guitar.label || '기타'} 인식 완료 · 손 찾는 중`
               : '손과 기타를 독립적으로 찾는 중';
           onStatus?.(nextStatus);
@@ -387,6 +456,8 @@ export default function LiveLocalCoachCamera({
           const message = event.nativeEvent.message || '연속 카메라 분석 오류';
           setError(message);
           onStatus?.(`카메라 분석 오류 · ${message}`);
+          strumLockUntilRef.current = 0;
+          validFramesRef.current = 0;
           updateLock(false);
           announce(voicePolicyRef.current.next({
             running: true,
@@ -428,6 +499,7 @@ export default function LiveLocalCoachCamera({
           setReady(false);
           setError('');
           validFramesRef.current = 0;
+          strumLockUntilRef.current = 0;
           updateLock(false);
           voicePolicyRef.current.reset();
         }}
@@ -435,6 +507,12 @@ export default function LiveLocalCoachCamera({
       >
         <Text style={styles.switchText}>전후면</Text>
       </Pressable>
+
+      {voiceEnabled ? (
+        <Pressable onPress={() => void testVoice()} style={styles.voiceTestButton}>
+          <Text style={styles.voiceTestText}>음성 테스트</Text>
+        </Pressable>
+      ) : null}
 
       {onNeedCalibration ? (
         <Pressable onPress={() => onNeedCalibration(facing)} style={styles.manualButton}>
@@ -480,6 +558,8 @@ const styles = StyleSheet.create({
   mainStatus: { color: '#ffffff', fontSize: 15, fontWeight: '900', marginTop: 3, textAlign: 'center' },
   switchButton: { position: 'absolute', right: 12, bottom: 14, minWidth: 86, minHeight: 50, borderRadius: 15, backgroundColor: 'rgba(13,17,23,0.94)', borderWidth: 2, borderColor: '#ffffff', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
   switchText: { color: '#ffffff', fontSize: 13, fontWeight: '900' },
+  voiceTestButton: { position: 'absolute', left: '50%', marginLeft: -52, bottom: 14, width: 104, minHeight: 50, borderRadius: 15, backgroundColor: 'rgba(22,101,52,0.94)', borderWidth: 2, borderColor: '#7ee787', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
+  voiceTestText: { color: '#ffffff', fontSize: 12, fontWeight: '900' },
   manualButton: { position: 'absolute', left: 12, bottom: 14, minWidth: 96, minHeight: 50, borderRadius: 15, backgroundColor: 'rgba(13,17,23,0.94)', borderWidth: 2, borderColor: '#6e7681', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
   manualText: { color: '#ffffff', fontSize: 12, fontWeight: '900' },
   errorBox: { position: 'absolute', left: '25%', right: '25%', top: '45%', minHeight: 52, borderRadius: 15, backgroundColor: 'rgba(177,35,36,0.94)', alignItems: 'center', justifyContent: 'center', zIndex: 60 },

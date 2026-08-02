@@ -246,13 +246,13 @@ function handCandidate(
       id: 'hand-missing',
       status: 'cannot-judge',
       title: '손 동작 판정 불가',
-      instruction: '손목과 다섯 손가락 끝이 모두 보이도록 손을 가이드 안에 크게 맞추세요.',
+      instruction: '손목과 다섯 손가락 끝이 보이도록 손을 화면 안에 맞추세요.',
       evidence: `검출된 손 관절이 ${result.landmarks.length}개로 21개 기준에 부족합니다.`,
-      nextGoal: '손 하나만 화면의 절반 이상 보이게 한 뒤 3회 연주하세요.',
+      nextGoal: '손 하나가 화면 안에 들어오게 한 뒤 3회 연주하세요.',
       confidencePercent: Math.round(result.handednessScore * 100),
       priority: 6,
       measurements: [{ label: '검출 관절', value: `${result.landmarks.length}/21` }],
-      phrase: '손 동작을 판정할 수 없습니다. 손목과 다섯 손가락 끝이 모두 보이게 가까이 맞춰 주세요.',
+      phrase: '손 동작을 판정할 수 없습니다. 손목과 다섯 손가락 끝이 화면 안에 보이게 맞춰 주세요.',
     };
   }
 
@@ -307,18 +307,18 @@ function handCandidate(
     { label: '손 검출', value: confidenceLabel(result.handednessScore) },
   ];
 
-  if (palmSize < 0.13) {
+  if (palmSize < 0.075) {
     return {
       id: 'hand-too-small',
       status: 'cannot-judge',
       title: '손이 너무 작게 보입니다',
-      instruction: '손목과 손가락 끝이 잘리지 않는 범위에서 휴대폰을 더 가까이 두세요.',
+      instruction: '손목과 손가락 끝이 보이도록 조명과 카메라 각도를 먼저 맞추세요.',
       evidence: `화면 대비 손바닥 길이가 ${palmSize.toFixed(2)}로 상세 분석 기준보다 작습니다.`,
-      nextGoal: '손바닥 길이가 화면의 약 18~55%가 되게 맞추세요.',
+      nextGoal: '손바닥 길이가 화면의 약 8~55%가 되게 맞추세요.',
       confidencePercent: Math.round(result.handednessScore * 100),
       priority: 6,
       measurements,
-      phrase: '손가락이 너무 작게 보입니다. 손목과 손가락 끝이 크게 보이도록 카메라를 가까이 두세요.',
+      phrase: '손이 흐리게 보입니다. 손목과 손가락 끝이 보이도록 조명과 각도를 맞춰 주세요.',
     };
   }
   if (palmSize > 0.68) {
