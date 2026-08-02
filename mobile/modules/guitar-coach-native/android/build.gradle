@@ -19,6 +19,8 @@ def handModelFile = file("$visionModelDir/hand_landmarker.task")
 def handModelUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task'
 def guitarObjectModelFile = file("$visionModelDir/efficientdet_lite0.tflite")
 def guitarObjectModelUrl = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite'
+def guitarClassifierModelFile = file("$visionModelDir/efficientnet_lite0.tflite")
+def guitarClassifierModelUrl = 'https://storage.googleapis.com/mediapipe-models/image_classifier/efficientnet_lite0/float32/1/efficientnet_lite0.tflite'
 
 tasks.register('downloadHandLandmarkerModel') {
   outputs.file(handModelFile)
@@ -46,10 +48,24 @@ tasks.register('downloadGuitarObjectModel') {
   }
 }
 
+tasks.register('downloadGuitarClassifierModel') {
+  outputs.file(guitarClassifierModelFile)
+  doLast {
+    visionModelDir.mkdirs()
+    if (!guitarClassifierModelFile.exists() || guitarClassifierModelFile.length() < 3_000_000L) {
+      logger.lifecycle('Downloading official MediaPipe EfficientNet-Lite0 image classifier model...')
+      new URL(guitarClassifierModelUrl).withInputStream { input ->
+        guitarClassifierModelFile.withOutputStream { output -> output << input }
+      }
+    }
+  }
+}
+
 afterEvaluate {
   tasks.named('preBuild').configure {
     dependsOn(tasks.named('downloadHandLandmarkerModel'))
     dependsOn(tasks.named('downloadGuitarObjectModel'))
+    dependsOn(tasks.named('downloadGuitarClassifierModel'))
   }
 }
 

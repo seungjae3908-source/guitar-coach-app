@@ -48,6 +48,7 @@ import FocusCoachCameraV7, {
   clearFocusV7RightHandRegion,
   loadFocusV7RightHandRegion,
 } from './FocusCoachCameraV7';
+import LiveLocalCoachCamera from './LiveLocalCoachCamera';
 
 const V8_CALIBRATION_RESET_KEY = 'guitar-coach:focus-v9:auto-guitar-reset:v3';
 
@@ -193,17 +194,11 @@ export default function PracticeSessionRunnerV8({
         }
         return;
       }
-      try {
-        await prepareFocusV8CalibrationStorage();
-        const stored = await loadFocusV7RightHandRegion(cameraFacing);
-        if (cancelled) return;
-        setCalibrationReady(Boolean(stored));
-        setCalibrationVisible(!stored);
-        setCalibrationChecked(true);
-      } catch {
-        if (cancelled) return;
-        setCalibrationReady(false);
-        setCalibrationVisible(true);
+      // The CameraX live path recognizes the hand without requiring a guitar ROI.
+      // Manual calibration remains available as an optional fallback button.
+      if (!cancelled) {
+        setCalibrationReady(true);
+        setCalibrationVisible(false);
         setCalibrationChecked(true);
       }
     };
@@ -281,10 +276,6 @@ export default function PracticeSessionRunnerV8({
 
   const startLesson = async () => {
     if (!preset || running) return;
-    if (preset.cameraFocus === 'right-hand' && !calibrationReady) {
-      setCalibrationVisible(true);
-      return;
-    }
     setError('');
     setSavedMessage('');
     setAcceptedFrames(0);
@@ -424,7 +415,7 @@ export default function PracticeSessionRunnerV8({
 
         {!calibrationChecked ? (
           <View style={styles.loadingSurface}>
-            <Text style={styles.loadingBuild}>FOCUS V9 · v24</Text>
+            <Text style={styles.loadingBuild}>FOCUS LIVE · v25</Text>
             <Text style={styles.loadingText}>촬영 설정 확인 중</Text>
           </View>
         ) : calibrationVisible && preset.cameraFocus === 'right-hand' ? (
@@ -487,11 +478,12 @@ export default function PracticeSessionRunnerV8({
 
             <View style={styles.cameraStage}>
               <View style={[styles.cameraShell, { width: cameraSize.width, height: cameraSize.height }]}>
-                <FocusCoachCameraV7
+                <LiveLocalCoachCamera
                   coachingActive={running}
                   category={preset.category}
                   cameraFocus={preset.cameraFocus}
                   initialFacing={cameraFacing}
+                  voiceEnabled={voiceCoachEnabled}
                   onNeedCalibration={(facing) => void requestCalibration(facing)}
                   onMotionSample={handleMotionSample}
                   onAcceptedFrame={() => {

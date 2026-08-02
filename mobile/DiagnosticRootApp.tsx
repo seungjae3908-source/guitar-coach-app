@@ -17,11 +17,14 @@ export default function DiagnosticRootApp() {
   useEffect(() => {
     void recordRuntimeDiagnostic('app', 'app_mounted', {
       version: '0.6.0',
-      versionCode: 24,
+      versionCode: 25,
       productShell: 'raised-five-tab-navigation',
       connectedMoreTools: 8,
-      focusScreen: 'V9-automatic-guitar-localization',
-      automaticGuitarLocalization: true,
+      focusScreen: 'CameraX-live-local-recognition',
+      automaticGuitarLocalization: false,
+      continuousLocalHandRecognition: true,
+      localGuitarImageClassifier: true,
+      voiceFirstRecognition: true,
       guitarEvidence: 'six-string-bundle-plus-playing-hand',
       automaticEvidenceFrames: 3,
       manualCalibrationFallback: true,

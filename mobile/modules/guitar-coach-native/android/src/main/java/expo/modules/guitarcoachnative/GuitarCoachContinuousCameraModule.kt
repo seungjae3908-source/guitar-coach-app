@@ -61,6 +61,14 @@ class GuitarCoachContinuousCameraModule : Module() {
         view.setPickColor(pickColor)
       }
 
+      Prop("facing", "back") { view: GuitarCoachContinuousCameraView, facing: String ->
+        view.setFacing(facing)
+      }
+
+      Prop("analyzeStrings", false) { view: GuitarCoachContinuousCameraView, enabled: Boolean ->
+        view.setAnalyzeStrings(enabled)
+      }
+
       OnViewDestroys { view: GuitarCoachContinuousCameraView ->
         view.destroy()
       }
@@ -92,9 +100,14 @@ class GuitarCoachContinuousCameraView(
   private var previewUseCase: Preview? = null
   private var analysisUseCase: ImageAnalysis? = null
   private var handLandmarker: HandLandmarker? = null
+  private val guitarClassifier = LocalGuitarClassifier(context.applicationContext)
   private var running = false
   private var destroyed = false
   private var pickColor = "auto"
+  private var facing = "back"
+  private var analyzeStrings = false
+  private var lastGuitarState = LocalGuitarState.searching()
+  private var lastGuitarRefreshFrame = 0L
   private var frameCount = 0L
   private var analyzedFrameCount = 0L
   private var lastTimestampMs = 0L
@@ -123,6 +136,28 @@ class GuitarCoachContinuousCameraView(
 
   fun setPickColor(value: String) {
     pickColor = value.lowercase()
+  }
+
+  fun setFacing(value: String) {
+    val normalized = if (value.lowercase() == "front") "front" else "back"
+    if (normalized == facing) return
+    facing = normalized
+    if (running && !destroyed) {
+      post {
+        stopCamera()
+        startCamera()
+      }
+    }
+  }
+
+  fun setAnalyzeStrings(value: Boolean) {
+    analyzeStrings = value
+    if (!value) {
+      lastStringState = null
+      consecutiveStringMisses = 0
+      previousContacts.clear()
+      recentHits.clear()
+    }
   }
 
   override fun onAttachedToWindow() {
@@ -166,7 +201,7 @@ class GuitarCoachContinuousCameraView(
         provider.unbindAll()
         val camera = provider.bindToLifecycle(
           lifecycleOwner,
-          CameraSelector.DEFAULT_BACK_CAMERA,
+          if (facing == "front") CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA,
           preview,
           analysis
         )
@@ -180,7 +215,9 @@ class GuitarCoachContinuousCameraView(
           mapOf(
             "continuous" to true,
             "targetPreviewFps" to 30,
-            "autoFraming" to true
+            "autoFraming" to true,
+            "facing" to facing,
+            "guitarClassifier" to true
           )
         )
       } catch (error: Throwable) {
@@ -212,6 +249,7 @@ class GuitarCoachContinuousCameraView(
     stopCamera()
     handLandmarker?.close()
     handLandmarker = null
+    guitarClassifier.close()
     analysisExecutor.shutdownNow()
   }
 
@@ -232,6 +270,8 @@ class GuitarCoachContinuousCameraView(
     lastFocusAt = 0
     noHandFrames = 0
     autoFramingState = "searching"
+    lastGuitarState = LocalGuitarState.searching()
+    lastGuitarRefreshFrame = 0
     spatialResetRequested.set(false)
     previousContacts.clear()
     recentHits.clear()
@@ -269,20 +309,30 @@ class GuitarCoachContinuousCameraView(
       updateAutoFraming(hand, startedAt)
       if (hand?.hasHand != true) previousContacts.clear()
 
-      val shouldRefreshStrings = lastStringState == null || frameCount - lastStringRefreshFrame >= 3L
-      if (shouldRefreshStrings) {
-        val detected = detectStrings(bitmap, hand)
-        if (detected != null) {
-          lastStringState = stabilizeStrings(lastStringState, detected)
-          lastStringRefreshFrame = frameCount
-          consecutiveStringMisses = 0
-        } else {
-          consecutiveStringMisses += 1
-          if (consecutiveStringMisses >= 2) {
-            lastStringState = null
-            previousContacts.clear()
+      if (lastGuitarRefreshFrame == 0L || frameCount - lastGuitarRefreshFrame >= 8L) {
+        lastGuitarState = guitarClassifier.classify(bitmap)
+        lastGuitarRefreshFrame = frameCount
+      }
+
+      if (analyzeStrings) {
+        val shouldRefreshStrings = lastStringState == null || frameCount - lastStringRefreshFrame >= 3L
+        if (shouldRefreshStrings) {
+          val detected = detectStrings(bitmap, hand)
+          if (detected != null) {
+            lastStringState = stabilizeStrings(lastStringState, detected)
+            lastStringRefreshFrame = frameCount
+            consecutiveStringMisses = 0
+          } else {
+            consecutiveStringMisses += 1
+            if (consecutiveStringMisses >= 2) {
+              lastStringState = null
+              previousContacts.clear()
+            }
           }
         }
+      } else {
+        lastStringState = null
+        consecutiveStringMisses = 0
       }
 
       val pick = if (hand?.hasHand == true) analyzePick(bitmap, hand) else emptyPick()
@@ -453,9 +503,9 @@ class GuitarCoachContinuousCameraView(
       val options = HandLandmarker.HandLandmarkerOptions.builder()
         .setBaseOptions(BaseOptions.builder().setModelAssetPath(HAND_MODEL).build())
         .setNumHands(1)
-        .setMinHandDetectionConfidence(0.42f)
-        .setMinHandPresenceConfidence(0.42f)
-        .setMinTrackingConfidence(0.38f)
+        .setMinHandDetectionConfidence(0.30f)
+        .setMinHandPresenceConfidence(0.30f)
+        .setMinTrackingConfidence(0.34f)
         .setRunningMode(RunningMode.VIDEO)
         .build()
       HandLandmarker.createFromOptions(applicationContext, options).also { handLandmarker = it }
@@ -945,6 +995,7 @@ class GuitarCoachContinuousCameraView(
         )
       },
       "pick" to pick.toMap(),
+      "guitar" to lastGuitarState.toMap(),
       "continuous" to mapOf(
         "enabled" to true,
         "previewFps" to cameraFps,

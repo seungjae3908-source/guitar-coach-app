@@ -12,7 +12,21 @@ import { getLatestLiveAnalysisFrames, publishLiveAnalysisFrame } from '../../ser
 
 export type ContinuousStringHit = QualityStringHit;
 export type ContinuousRightHandStats = QualityContinuousStats;
-export type ContinuousHandAnalysisResult = QualityContinuousHandResult;
+export type LocalGuitarDetection = {
+  detected: boolean;
+  type: 'acoustic' | 'electric' | 'bass' | 'guitar' | 'unknown' | string;
+  label: string;
+  confidence: number;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  modelReady: boolean;
+  reason: string;
+};
+export type ContinuousHandAnalysisResult = QualityContinuousHandResult & {
+  guitar: LocalGuitarDetection;
+};
 
 type ContinuousCameraModule = {
   androidContinuousRightHandAvailable: boolean;
@@ -23,7 +37,9 @@ type NativeEvent<T> = NativeSyntheticEvent<T>;
 type NativeContinuousCameraProps = ViewProps & {
   running: boolean;
   pickColor?: string;
-  onCameraReady?: (event: NativeEvent<{ continuous: boolean; targetPreviewFps: number }>) => void;
+  facing?: 'front' | 'back';
+  analyzeStrings?: boolean;
+  onCameraReady?: (event: NativeEvent<{ continuous: boolean; targetPreviewFps: number; facing?: string; guitarClassifier?: boolean }>) => void;
   onAnalysis?: (event: NativeEvent<ContinuousHandAnalysisResult>) => void;
   onError?: (event: NativeEvent<{ message: string }>) => void;
 };
@@ -106,6 +122,8 @@ function fuseAudio(result: ContinuousHandAnalysisResult): ContinuousHandAnalysis
 export default function ContinuousRightHandCamera({
   running,
   pickColor = 'auto',
+  facing = 'back',
+  analyzeStrings = false,
   onAnalysis,
   ...props
 }: NativeContinuousCameraProps) {
@@ -129,10 +147,12 @@ export default function ContinuousRightHandCamera({
       // the live practice context becomes active, so no score is fabricated.
       running={true}
       pickColor={verifiedPickColor}
+      facing={facing}
+      analyzeStrings={analyzeStrings}
       onAnalysis={(event) => {
         const normalized = normalizeResult(event.nativeEvent);
-        const qualityChecked = qualityGateRef.current.process(normalized, Date.now());
-        const result = fuseAudio(qualityChecked);
+        const qualityChecked = qualityGateRef.current.process(normalized, Date.now()) as ContinuousHandAnalysisResult;
+        const result = fuseAudio({ ...qualityChecked, guitar: normalized.guitar }) as ContinuousHandAnalysisResult;
         publishLiveAnalysisFrame({ kind: 'hand', capturedAt: Date.now(), result });
         onAnalysis?.({ ...event, nativeEvent: result });
       }}

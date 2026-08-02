@@ -460,7 +460,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#30363d',
     paddingHorizontal: 8,
     paddingTop: 7,
-    paddingBottom: Platform.OS === 'android' ? 30 : 10,
+    paddingBottom: Platform.OS === 'android' ? 48 : 10,
   },
   bottomNav: { flexDirection: 'row', gap: 5 },
   bottomNavButton: { flex: 1, minHeight: 52, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#161b22', borderWidth: 1, borderColor: '#21262d' },
