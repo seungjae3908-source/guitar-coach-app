@@ -79,8 +79,17 @@ export function selectRecoveredStrumHand({
     : null;
   if (identityMatch) return markRecovered(identityMatch, 'identity');
 
+  // A cached hand is used only when the detector returned no visible hand at all.
+  // If a hand is visible but is now on the fret side or outside the strum zone,
+  // stale coordinates must never override the current frame.
   const age = Number(now) - Number(lastSeenAt || 0);
-  if (cachedWasVerifiedStrum && hasPickPoint(cached) && age >= 0 && age <= holdMs) {
+  if (
+    candidates.length === 0 &&
+    cachedWasVerifiedStrum &&
+    hasPickPoint(cached) &&
+    age >= 0 &&
+    age <= holdMs
+  ) {
     return markRecovered(cached, 'sticky-cache', true);
   }
 
