@@ -131,7 +131,7 @@ center = replaceRegexOptional(
   'stable pick-point weighting',
 );
 
-center = replaceRegexOnce(
+center = replaceRegexOptional(
   center,
   /lastStrokeEventAtRef\.current\s*=\s*0;\s*\n(\s*)lastStrumHandAtRef\.current\s*=\s*0;/,
   (_match, indent) =>
