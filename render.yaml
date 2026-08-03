@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: guitar-coach-debug-api
+    runtime: node
+    branch: agent/live-coach-compat-v055
+    rootDir: debug-server
+    buildCommand: npm run verify
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOWED_ORIGIN
+        value: https://seungjae3908-source.github.io
+      - key: ADMIN_SHARED_SECRET
+        generateValue: true
+      - key: DEVICE_SHARED_SECRET
+        generateValue: true
