@@ -30,6 +30,10 @@ function replaceRegexOptional(source, pattern, replacement, label) {
   return source.replace(pattern, replacement);
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function patchStrokeGate(source) {
   const warningAt = source.indexOf('점검 중 반대 방향');
   if (warningAt < 0) throw new Error('Stroke-consensus marker missing: opposite-direction log');
@@ -50,30 +54,47 @@ function patchStrokeGate(source) {
   const gateStart = source.indexOf('if', bodyStart);
   if (gateStart < 0 || gateStart > warningAt) throw new Error('Stroke-consensus guard start missing');
 
-  const targetPattern = /const\s+([A-Za-z_$][\w$]*)\s*=\s*currentTestRef\.current;/;
-  const targetMatch = source.slice(gateStart, warningAt).match(targetPattern);
-  if (!targetMatch || targetMatch.index == null) throw new Error('Stroke-consensus target test line missing');
-  const targetName = targetMatch[1];
-  const gateEnd = gateStart + targetMatch.index + targetMatch[0].length;
+  const handlerBeforeWarning = source.slice(gateStart, warningAt);
+  const comparisonPattern = new RegExp(
+    `if\\s*\\(\\s*${escapeRegExp(directionName)}\\s*!==\\s*([A-Za-z_$][\\w$]*)\\s*\\)\\s*\\{`,
+  );
+  const comparisonMatch = handlerBeforeWarning.match(comparisonPattern);
+  if (!comparisonMatch) throw new Error('Stroke-consensus target comparison missing');
+  const targetName = comparisonMatch[1];
 
+  const assignmentPattern = new RegExp(`const\\s+${escapeRegExp(targetName)}\\s*=\\s*[^;\\n]+;`);
+  const assignmentMatch = handlerBeforeWarning.match(assignmentPattern);
+  if (!assignmentMatch || assignmentMatch.index == null) {
+    throw new Error('Stroke-consensus target assignment missing');
+  }
+
+  const assignmentStart = gateStart + assignmentMatch.index;
+  const assignmentEnd = assignmentStart + assignmentMatch[0].length;
   const lineStart = source.lastIndexOf('\n', gateStart) + 1;
   const indent = source.slice(lineStart, gateStart);
   const inner = `${indent}  `;
-  const replacement = [
+
+  const initialReplacement = [
     `if (!['down', 'up'].includes(${directionName})) return;`,
-    `${indent}const ${targetName} = currentTestRef.current;`,
+    `${indent}visionRef.current.lastDirection = ${directionName};`,
+  ].join('\n');
+  source = source.slice(0, gateStart) + initialReplacement + source.slice(assignmentStart);
+
+  const shiftedAssignmentEnd =
+    gateStart + initialReplacement.length + (assignmentEnd - assignmentStart);
+  const decisionBlock = [
+    '',
     `${indent}const strokeDecision = strokeConsensusRef.current.sample({`,
     `${inner}direction: ${directionName},`,
     `${inner}source: ${sourceName},`,
     `${inner}target: ${targetName},`,
     `${inner}timestamp: ${timestampName},`,
     `${indent}});`,
-    `${indent}visionRef.current.lastDirection = ${directionName};`,
     `${indent}if (!strokeDecision.count) return;`,
     `${indent}lastStrokeEventAtRef.current = ${timestampName};`,
   ].join('\n');
 
-  return source.slice(0, gateStart) + replacement + source.slice(gateEnd);
+  return source.slice(0, shiftedAssignmentEnd) + decisionBlock + source.slice(shiftedAssignmentEnd);
 }
 
 const centerPath = resolve(process.cwd(), 'src/AdaptiveDebugCenter.jsx');
