@@ -1,9 +1,9 @@
 name: Build front camera preview APK
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/live-coach-compat-v055
+      - main
     paths:
       - mobile/**
       - .github/workflows/front-camera-preview-apk.yml
@@ -18,8 +18,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      - name: Checkout development branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -86,7 +88,7 @@ jobs:
       - name: Upload test APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: guitar-coach-front-camera-${{ github.sha }}
+          name: guitar-coach-front-camera-${{ github.event.pull_request.head.sha || github.sha }}
           path: mobile/android/app/build/outputs/apk/guitar-coach-front-camera.apk
           if-no-files-found: error
           retention-days: 30
@@ -94,14 +96,15 @@ jobs:
       - name: Publish direct-download prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          short_sha="${GITHUB_SHA::7}"
+          short_sha="${SOURCE_SHA::7}"
           tag="front-camera-${short_sha}"
           apk='mobile/android/app/build/outputs/apk/guitar-coach-front-camera.apk'
           gh release create "$tag" "$apk" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
+            --target "$SOURCE_SHA" \
             --title "Front camera test ${short_sha}" \
             --notes "Galaxy S26 and Galaxy Tab S10 FE front-camera test APK. Test package only; stable 0.5.4 is unchanged." \
             --prerelease
