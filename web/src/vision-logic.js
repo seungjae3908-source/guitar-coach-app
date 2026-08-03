@@ -79,7 +79,7 @@ function evaluateStringAngle(gray, width, height, angle) {
   const normalY = directionX;
   const range = projectionRange(normalX, normalY);
   const tangentRange = projectionRange(directionX, directionY);
-  const binCount = 260;
+  const binCount = 320;
   const tangentBinCount = 64;
   const histogram = new Float64Array(binCount);
   const occupancyLow = new Uint32Array(binCount);
@@ -115,10 +115,10 @@ function evaluateStringAngle(gray, width, height, angle) {
   const smooth = Array.from(histogram, (_, index) => {
     let total = 0;
     let weight = 0;
-    for (let offset = -2; offset <= 2; offset += 1) {
+    for (let offset = -1; offset <= 1; offset += 1) {
       const target = index + offset;
       if (target < 0 || target >= binCount) continue;
-      const localWeight = offset === 0 ? 3 : Math.abs(offset) === 1 ? 2 : 1;
+      const localWeight = offset === 0 ? 2 : 1;
       total += histogram[target] * localWeight;
       weight += localWeight;
     }
@@ -129,12 +129,12 @@ function evaluateStringAngle(gray, width, height, angle) {
   const threshold = baseline + Math.max(18, mad * 2.2);
   const candidates = [];
 
-  for (let index = 2; index < binCount - 2; index += 1) {
+  for (let index = 1; index < binCount - 1; index += 1) {
     if (smooth[index] < threshold || smooth[index] < smooth[index - 1] || smooth[index] < smooth[index + 1]) continue;
     const projection = range.min + index / scale;
     let low = 0;
     let high = 0;
-    for (let offset = -2; offset <= 2; offset += 1) {
+    for (let offset = -1; offset <= 1; offset += 1) {
       low |= occupancyLow[index + offset] || 0;
       high |= occupancyHigh[index + offset] || 0;
     }
@@ -146,7 +146,7 @@ function evaluateStringAngle(gray, width, height, angle) {
   const separated = [];
   for (const candidate of candidates) {
     if (separated.every((entry) => Math.abs(entry.index - candidate.index) >= 3)) separated.push(candidate);
-    if (separated.length >= 18) break;
+    if (separated.length >= 24) break;
   }
   separated.sort((left, right) => left.projection - right.projection);
 
