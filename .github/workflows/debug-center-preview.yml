@@ -7,6 +7,7 @@ on:
     paths:
       - 'web/**'
       - 'debug-server/**'
+      - 'render.yaml'
       - '.github/workflows/debug-center-preview.yml'
   pull_request:
     branches:
@@ -16,6 +17,7 @@ on:
     paths:
       - 'web/**'
       - 'debug-server/**'
+      - 'render.yaml'
       - '.github/workflows/debug-center-preview.yml'
   workflow_dispatch:
 
@@ -46,6 +48,27 @@ jobs:
       - name: Verify relay server
         working-directory: debug-server
         run: npm run verify
+
+      - name: Verify production deployment blueprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s render.yaml
+          grep -q 'rootDir: debug-server' render.yaml
+          grep -q 'healthCheckPath: /health' render.yaml
+          grep -q 'ADMIN_SHARED_SECRET' render.yaml
+          grep -q 'DEVICE_SHARED_SECRET' render.yaml
+          grep -q 'https://seungjae3908-source.github.io' render.yaml
+
+      - name: Verify diagnostic center is the public entry point
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "return <DebugCenter />" web/src/AppSafe.jsx
+          if grep -q "params.get('debug')" web/src/AppSafe.jsx; then
+            echo 'Diagnostic center still requires a hidden query parameter.'
+            exit 1
+          fi
 
       - name: Install web dependencies
         working-directory: web
