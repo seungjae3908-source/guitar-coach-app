@@ -47,6 +47,12 @@ function invalidPose(timestamp, reason, detectedPose = null) {
   };
 }
 
+function maximumObservedStringSpread(pose) {
+  const soundholeRadius = Number(pose?.soundhole?.radius || 0);
+  if (soundholeRadius > 0) return clamp(soundholeRadius * 2.4, 0.075, 0.18);
+  return pose?.mode === 'neck-partial' ? 0.16 : 0.14;
+}
+
 export function evaluateGuitarPresence({ pose, observedStrings } = {}) {
   const band = observedStrings?.band || null;
   const stringCount = Number(observedStrings?.count || observedStrings?.lines?.length || 0);
@@ -57,6 +63,7 @@ export function evaluateGuitarPresence({ pose, observedStrings } = {}) {
   const stringsReady = Boolean(
     band &&
     stringCount >= minimumStrings &&
+    stringCount <= 7 &&
     stringConfidence >= 0.28 &&
     supportLength >= 0.2,
   );
@@ -74,20 +81,37 @@ export function evaluateGuitarPresence({ pose, observedStrings } = {}) {
   const anchor = poseAnchor(pose);
   const bandDistance = distanceToBand(anchor, band);
   const observedWidth = Math.abs(Number(band.bottom) - Number(band.top));
-  const poseWidth = Math.abs(Number(pose.stringBand.bottom) - Number(pose.stringBand.top));
   const soundholeRadius = Number(pose.soundhole?.radius || 0);
-  const maximumBandDistance = Math.max(
-    0.09,
-    observedWidth * 2.4,
-    poseWidth * 1.8,
-    soundholeRadius * 1.1,
-  );
+  const maximumSpread = maximumObservedStringSpread(pose);
+  const maximumBandDistance = soundholeRadius > 0
+    ? Math.max(0.055, soundholeRadius * 1.05)
+    : Math.max(0.07, Math.min(0.12, observedWidth * 1.2));
 
-  if (angleDifference > 22) {
-    return { valid: false, reason: '기타 방향과 실제 줄 불일치', angleDifference, bandDistance };
+  if (observedWidth < 0.012) {
+    return { valid: false, reason: '기타 줄 폭이 너무 좁아 판정 불가', angleDifference, bandDistance, observedWidth };
+  }
+  if (observedWidth > maximumSpread) {
+    return {
+      valid: false,
+      reason: '기타 줄 간격 과대 · 몸통 무늬 오인식',
+      angleDifference,
+      bandDistance,
+      observedWidth,
+      maximumSpread,
+    };
+  }
+  if (angleDifference > 18) {
+    return { valid: false, reason: '기타 방향과 실제 줄 불일치', angleDifference, bandDistance, observedWidth };
   }
   if (bandDistance > maximumBandDistance) {
-    return { valid: false, reason: '사운드홀·넥과 실제 줄 위치 불일치', angleDifference, bandDistance };
+    return {
+      valid: false,
+      reason: '사운드홀·넥과 실제 줄 위치 불일치',
+      angleDifference,
+      bandDistance,
+      observedWidth,
+      maximumBandDistance,
+    };
   }
 
   return {
@@ -95,6 +119,7 @@ export function evaluateGuitarPresence({ pose, observedStrings } = {}) {
     reason: '실제 기타 줄 확인',
     angleDifference,
     bandDistance,
+    observedWidth,
     confidence: clamp(pose.confidence * 0.58 + stringConfidence * 0.42),
   };
 }
@@ -104,7 +129,7 @@ export function validateGuitarPresence({
   observedStrings,
   previous = null,
   timestamp = 0,
-  holdMs = 900,
+  holdMs = 650,
 } = {}) {
   const now = Number(timestamp) || 0;
   const evaluation = evaluateGuitarPresence({ pose, observedStrings });
