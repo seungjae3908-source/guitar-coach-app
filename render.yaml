@@ -32,9 +32,9 @@ services:
     repo: https://github.com/seungjae3908-source/guitar-coach-app
     branch: agent/live-coach-compat-v055
     rootDir: web
-    buildCommand: npm install && npm run build -- --base=/
+    buildCommand: npm install && npm run render-build
     staticPublishPath: dist
-    autoDeployTrigger: "off"
+    autoDeployTrigger: "commit"
     envVars:
       - key: NODE_VERSION
         value: 22.23.1
