@@ -84,6 +84,40 @@ test('segment tracker catches a compact low-fps center crossing', () => {
   assert.equal(tracker.sample({ point: point(0.02), band, timestamp: 120 }), 'down');
 });
 
+test('segment tracker keeps screen-down direction when the guitar axis reverses', () => {
+  const tracker = new SegmentDirectionalTracker({ cooldownMs: 0 });
+  const forwardBand = {
+    top: 0.28,
+    bottom: 0.32,
+    normalX: 0,
+    normalY: 1,
+  };
+  const reversedBand = {
+    top: -0.32,
+    bottom: -0.28,
+    normalX: 0,
+    normalY: -1,
+  };
+
+  assert.equal(tracker.sample({ point: point(0.29), band: forwardBand, timestamp: 0 }), null);
+  assert.equal(tracker.sample({ point: point(0.31), band: reversedBand, timestamp: 100 }), 'down');
+  assert.equal(tracker.sample({ point: point(0.29), band: forwardBand, timestamp: 220 }), 'up');
+});
+
+test('segment tracker reports the same directions with an already reversed normal', () => {
+  const tracker = new SegmentDirectionalTracker({ cooldownMs: 0 });
+  const reversedBand = {
+    top: -0.12,
+    bottom: 0.12,
+    normalX: 0,
+    normalY: -1,
+  };
+
+  assert.equal(tracker.sample({ point: point(-0.02), band: reversedBand, timestamp: 0 }), null);
+  assert.equal(tracker.sample({ point: point(0.02), band: reversedBand, timestamp: 100 }), 'down');
+  assert.equal(tracker.sample({ point: point(-0.02), band: reversedBand, timestamp: 220 }), 'up');
+});
+
 test('segment tracker infers a low-fps crossing when the first sample lands inside the band', () => {
   const tracker = new SegmentDirectionalTracker({ cooldownMs: 0, partialTravel: 0.01 });
   assert.equal(tracker.sample({ point: point(0), band, timestamp: 0 }), null);
