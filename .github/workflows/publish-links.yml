@@ -1,22 +1,25 @@
-name: Publish web preview and compact Android APK
+name: Publish web preview
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/PUBLIC_LINK_STATUS.json'
-      - '.github/workflows/verify-public-links.yml'
+    paths:
+      - 'web/**'
+      - '.github/workflows/publish-links.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/publish-links.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
 concurrency:
-  group: link-publish-${{ github.ref }}
+  group: web-preview-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,102 +34,30 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install mobile dependencies
-        working-directory: mobile
-        run: npm install
-
-      - name: Generate Android native project
-        working-directory: mobile
-        run: npx expo prebuild --platform android --clean --no-install
-        env:
-          CI: '1'
-
-      - name: Build compact ARM64 release APK
-        working-directory: mobile/android
-        run: |
-          set -euo pipefail
-          chmod +x gradlew
-          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
-
-          build_tools=$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
-          tools="$ANDROID_HOME/build-tools/$build_tools"
-          release_dir='app/build/outputs/apk/release'
-          mkdir -p app/build/outputs/apk/compact
-          output='app/build/outputs/apk/compact/guitar-coach-ai.apk'
-
-          signed=$(find "$release_dir" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -n 1 || true)
-          unsigned=$(find "$release_dir" -maxdepth 1 -type f -name '*unsigned.apk' | head -n 1 || true)
-
-          if [ -n "$signed" ]; then
-            cp "$signed" "$output"
-          elif [ -n "$unsigned" ]; then
-            "$tools/zipalign" -f 4 "$unsigned" /tmp/guitar-coach-ai-aligned.apk
-            "$tools/apksigner" sign \
-              --ks app/debug.keystore \
-              --ks-key-alias androiddebugkey \
-              --ks-pass pass:android \
-              --key-pass pass:android \
-              --out "$output" \
-              /tmp/guitar-coach-ai-aligned.apk
-          else
-            echo 'Release APK was not generated.'
-            find app/build/outputs/apk -maxdepth 4 -type f -print || true
-            exit 1
-          fi
-
-          "$tools/apksigner" verify --verbose "$output"
-          size=$(stat -c%s "$output")
-          echo "Compact APK size: $size bytes"
-          test "$size" -gt 1000000
-          test "$size" -lt 80000000
-
       - name: Install web dependencies
         working-directory: web
         run: npm install
+
+      - name: Test evidence-gated web vision logic
+        working-directory: web
+        run: npm test
 
       - name: Build web preview
         working-directory: web
         run: npm run build
 
-      - name: Add compact APK to web bundle
-        run: |
-          mkdir -p web/dist/downloads
-          cp mobile/android/app/build/outputs/apk/compact/guitar-coach-ai.apk web/dist/downloads/guitar-coach-ai.apk
-          test -s web/dist/downloads/guitar-coach-ai.apk
-          ls -lh web/dist/downloads/guitar-coach-ai.apk
-
-      - name: Upload compact APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: guitar-coach-ai-arm64-apk
-          path: web/dist/downloads/guitar-coach-ai.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish stable compact APK release
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify web-only output
+        shell: bash
         run: |
           set -euo pipefail
-          apk='web/dist/downloads/guitar-coach-ai.apk'
-          tag='preview-latest'
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$apk#guitar-coach-ai.apk" --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$tag" "$apk#guitar-coach-ai.apk" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title '기타 코치 AI 휴대폰 테스트판' \
-              --notes 'ARM64 안드로이드 휴대폰용 경량 테스트 APK입니다. 카메라·마이크·영상 분석 기능은 아직 연결되지 않았습니다.' \
-              --prerelease
+          test -s web/dist/index.html
+          if find web/dist -type f -name '*.apk' -print -quit | grep -q .; then
+            echo 'APK found in web output. Web-only publishing is required.'
+            exit 1
           fi
+          grep -R -q '전면카메라 연결' web/dist/assets
+          grep -R -q '전면 고정' web/dist/assets
+          grep -R -q '카메라 시작 · 전면 웹 고정' web/dist/assets
 
       - name: Ensure GitHub Pages site exists
         if: github.event_name != 'pull_request'
