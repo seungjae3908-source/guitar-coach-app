@@ -94,7 +94,7 @@ export class SegmentDirectionalTracker {
   reset() {
     this.start = null;
     this.lastProjection = null;
-    this.lastAt = 0;
+    this.lastAt = null;
     this.lastEventAt = Number.NEGATIVE_INFINITY;
   }
 
@@ -102,7 +102,7 @@ export class SegmentDirectionalTracker {
     if (!ready || !point || !band) {
       this.start = null;
       this.lastProjection = null;
-      this.lastAt = 0;
+      this.lastAt = null;
       return null;
     }
 
@@ -112,7 +112,7 @@ export class SegmentDirectionalTracker {
     const bottom = Math.max(band.top, band.bottom) + this.bandMargin;
     const previous = this.lastProjection;
     const previousAt = this.lastAt;
-    const gap = previousAt ? now - previousAt : Number.POSITIVE_INFINITY;
+    const gap = previousAt != null ? now - previousAt : Number.POSITIVE_INFINITY;
 
     if (gap > this.maximumSampleGapMs) this.start = null;
     if (this.start && now - this.start.at > this.maximumCrossingMs) this.start = null;
