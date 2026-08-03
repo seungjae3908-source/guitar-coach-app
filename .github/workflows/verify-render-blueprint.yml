@@ -109,13 +109,15 @@ jobs:
           grep -q 'src="/assets/' dist/index.html
           grep -R -q '기타 코치 실시간 진단센터' dist/assets
           grep -R -q '양손 관절 인식' dist/assets
-          grep -R -q '손 추적' dist/assets
+          grep -R -q '스트럼 손' dist/assets
           grep -R -q '원격 로그 코드' dist/assets
           grep -R -q '실시간 연결됨' dist/assets
           grep -R -q '다운 바로 점검' dist/assets
           grep -R -q '업 바로 점검' dist/assets
-          grep -R -q '기타·줄 바로 점검' dist/assets
+          grep -R -q '실제 줄 구간' dist/assets
           grep -R -q '방향 감지 준비 완료' dist/assets
+          grep -R -q '전면카메라 연결' dist/assets
+          grep -R -q '전면 고정' dist/assets
           if find dist -type f -name '*.apk' -print -quit | grep -q .; then
             echo 'APK found in Render web output.'
             exit 1
