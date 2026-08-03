@@ -25,7 +25,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: guitar-coach-debug-center-pages
+  group: guitar-coach-debug-center-pages-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,9 +43,9 @@ jobs:
         with:
           node-version: 22
 
-      - name: Verify relay server syntax
+      - name: Verify relay server
         working-directory: debug-server
-        run: npm run check
+        run: npm run verify
 
       - name: Install web dependencies
         working-directory: web
@@ -69,6 +69,8 @@ jobs:
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload verified site
         uses: actions/upload-pages-artifact@v3
