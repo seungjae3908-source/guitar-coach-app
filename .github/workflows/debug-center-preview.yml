@@ -40,6 +40,16 @@ jobs:
         with:
           ref: agent/live-coach-compat-v055
 
+      - name: Report legacy APK workflow path
+        shell: bash
+        run: |
+          set -euo pipefail
+          matches=$(grep -R -l 'Build compact ARM64 release APK' .github/workflows || true)
+          echo 'LEGACY_APK_WORKFLOW_PATHS_BEGIN'
+          printf '%s\n' "$matches"
+          echo 'LEGACY_APK_WORKFLOW_PATHS_END'
+          test -n "$matches"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
