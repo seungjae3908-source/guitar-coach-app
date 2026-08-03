@@ -20,6 +20,48 @@ function replaceRegexOnce(source, pattern, replacement, label) {
   return source.replace(pattern, replacement);
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function patchAutomaticCount(source) {
+  const warningAt = source.indexOf('점검 중 반대 방향');
+  if (warningAt < 0) throw new Error('Adaptive-live-strum counter marker missing');
+  const prefix = source.slice(0, warningAt);
+  const headers = [...prefix.matchAll(
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*\{/g,
+  )];
+  const header = [...headers]
+    .reverse()
+    .find((candidate) => source.slice(candidate.index, warningAt).includes('lastStrokeEventAtRef.current'));
+  if (!header) throw new Error('Adaptive-live-strum counter handler missing');
+
+  const [, , directionName] = header;
+  const handlerBeforeWarning = source.slice(header.index, warningAt);
+  const comparisonPattern = new RegExp(
+    `if\\s*\\(\\s*${escapeRegExp(directionName)}\\s*!==\\s*([A-Za-z_$][\\w$]*)\\s*\\)\\s*\\{`,
+  );
+  const comparison = handlerBeforeWarning.match(comparisonPattern);
+  if (!comparison) throw new Error('Adaptive-live-strum target comparison missing');
+  const targetName = comparison[1];
+  const assignmentPattern = new RegExp(`const\\s+${escapeRegExp(targetName)}\\s*=\\s*([^;\\n]+);`);
+  const assignment = handlerBeforeWarning.match(assignmentPattern);
+  if (!assignment || assignment.index == null) throw new Error('Adaptive-live-strum target assignment missing');
+
+  const assignmentStart = header.index + assignment.index;
+  const assignmentEnd = assignmentStart + assignment[0].length;
+  const lineStart = source.lastIndexOf('\n', assignmentStart) + 1;
+  const indent = source.slice(lineStart, assignmentStart);
+  const requestedExpression = assignment[1].trim();
+  const replacement = [
+    `const requestedTarget = ${requestedExpression};`,
+    `${indent}const ${targetName} = requestedTarget === 'down' || requestedTarget === 'up'`,
+    `${indent}  ? requestedTarget`,
+    `${indent}  : ${directionName};`,
+  ].join('\n');
+  return source.slice(0, assignmentStart) + replacement + source.slice(assignmentEnd);
+}
+
 const centerPath = resolve(process.cwd(), 'src/AdaptiveDebugCenter.jsx');
 let center = readFileSync(centerPath, 'utf8');
 if (center.includes("from './adaptive-strum-live.js'")) {
@@ -110,13 +152,7 @@ center = replaceRegexOnce(
   'connect live engine to generated automatic-recognition screen',
 );
 
-center = replaceOnce(
-  center,
-  '    const target = currentIdRef.current;',
-  `    const requestedTarget = currentIdRef.current;
-    const target = requestedTarget === 'down' || requestedTarget === 'up' ? requestedTarget : direction;`,
-  'count detected strokes during automatic mode',
-);
+center = patchAutomaticCount(center);
 
 center = replaceOnce(
   center,
