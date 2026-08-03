@@ -1,0 +1,91 @@
+name: Verify Render Blueprint
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - render.yaml
+      - debug-server/**
+      - web/**
+      - .github/workflows/verify-render-blueprint.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - render.yaml
+      - debug-server/**
+      - web/**
+      - .github/workflows/verify-render-blueprint.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-render-blueprint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout development branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+
+      - name: Verify repository layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f render.yaml
+          test -f debug-server/package.json
+          test -f debug-server/server.mjs
+          test -f debug-server/server.test.mjs
+          test -f web/package.json
+          test -f web/vite.config.js
+          test -f web/src/DebugCenter.jsx
+          grep -q 'rootDir: debug-server' render.yaml
+          grep -q 'rootDir: web' render.yaml
+          grep -q 'healthCheckPath: /health' render.yaml
+          grep -q 'staticPublishPath: dist' render.yaml
+          grep -q 'branch: agent/live-coach-compat-v055' render.yaml
+          if grep -q 'branch: main' render.yaml; then
+            echo 'render.yaml must not deploy main.'
+            exit 1
+          fi
+
+      - name: Install Render CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/render-oss/cli/main/bin/install.sh | sh
+          echo "$HOME/.render/bin" >> "$GITHUB_PATH"
+
+      - name: Validate Blueprint schema
+        run: render blueprints validate render.yaml
+
+      - name: Verify Web Service build and start commands
+        working-directory: debug-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install
+          npm run verify
+          timeout 10s bash -c 'PORT=18787 NODE_ENV=production ADMIN_SHARED_SECRET=test-admin DEVICE_SHARED_SECRET=test-device ALLOWED_ORIGIN=https://seungjae3908-guitar-coach-debug-web.onrender.com npm start > /tmp/render-debug-api.log 2>&1 & pid=$!; trap "kill $pid 2>/dev/null || true" EXIT; for i in {1..20}; do curl -fsS http://127.0.0.1:18787/health && exit 0; sleep 0.25; done; cat /tmp/render-debug-api.log; exit 1'
+
+      - name: Verify Static Site build command
+        working-directory: web
+        shell: bash
+        env:
+          VITE_DIAGNOSTIC_API_URL: https://seungjae3908-guitar-coach-debug-api.onrender.com
+        run: |
+          set -euo pipefail
+          npm install
+          npm run build -- --base=/
+          test -s dist/index.html
+          grep -q 'src="/assets/' dist/index.html
+          grep -R -q '기타 코치 실시간 진단센터' dist/assets
+          grep -R -q 'https://seungjae3908-guitar-coach-debug-api.onrender.com' dist/assets
