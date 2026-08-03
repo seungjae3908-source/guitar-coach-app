@@ -118,7 +118,9 @@ function evaluateStringAngle(gray, width, height, angle) {
   for (let index = 2; index < binCount - 2; index += 1) {
     if (smooth[index] < threshold || smooth[index] < smooth[index - 1] || smooth[index] < smooth[index + 1]) continue;
     const projection = range.min + index / scale;
-    candidates.push({ index, projection, score: smooth[index], support: supports[index] });
+    let localSupport = 0;
+    for (let offset = -2; offset <= 2; offset += 1) localSupport += supports[index + offset] || 0;
+    candidates.push({ index, projection, score: smooth[index], support: localSupport });
   }
 
   candidates.sort((left, right) => right.score - left.score);
@@ -151,7 +153,9 @@ function evaluateStringAngle(gray, width, height, angle) {
       const spacingScore = clamp(1 - variation / Math.max(0.006, averageGap));
       const countScore = clamp((sequence.length - 2) / 4);
       const peakScore = clamp(sequence.reduce((sum, entry) => sum + entry.score / Math.max(threshold, 1), 0) / sequence.length / 2);
-      const sequenceScore = countScore * 0.58 + spacingScore * 0.27 + peakScore * 0.15;
+      const averageSupport = sequence.reduce((sum, entry) => sum + entry.support, 0) / sequence.length;
+      const supportScore = clamp(averageSupport / Math.max(20, Math.min(width, height) * 0.55));
+      const sequenceScore = countScore * 0.34 + spacingScore * 0.2 + peakScore * 0.12 + supportScore * 0.34;
       if (sequenceScore > bestSequenceScore) {
         bestSequenceScore = sequenceScore;
         bestSequence = sequence;
@@ -195,7 +199,7 @@ export function detectStringBand(imageData, width, height) {
   for (const angle of angles) {
     const candidate = evaluateStringAngle(gray, width, height, angle);
     if (!candidate) continue;
-    const score = candidate.confidence + Math.min(candidate.count, 6) * 0.035;
+    const score = candidate.confidence + Math.min(candidate.count, 6) * 0.025;
     if (!best || score > best.score) best = { ...candidate, score };
   }
   if (!best) return { count: 0, confidence: 0, rows: [], lines: [], angle: 0, band: null };
