@@ -101,8 +101,8 @@ center = replaceRegexOnce(
 
 center = replaceRegexOnce(
   center,
-  /motionResult\.event\s*&&\s*timestamp\s*-\s*lastStrokeEventAtRef\.current\s*>\s*105/,
-  'motionResult.event && motionResult.confidence >= 0.11 && isStrumHandRecent(timestamp, lastStrumHandAtRef.current, STRUM_EVENT_HOLD_MS) && timestamp - lastStrokeEventAtRef.current > 180',
+  /([A-Za-z_$][\w$]*)\.event\s*&&\s*timestamp\s*-\s*lastStrokeEventAtRef\.current\s*>\s*105/,
+  (_match, motionName) => `${motionName}.event && ${motionName}.confidence >= 0.11 && isStrumHandRecent(timestamp, lastStrumHandAtRef.current, STRUM_EVENT_HOLD_MS) && timestamp - lastStrokeEventAtRef.current > 180`,
   'strict motion event gate',
 );
 
