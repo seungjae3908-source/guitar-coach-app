@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -39,21 +39,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: agent/live-coach-compat-v055
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Install adaptive vision sources once
-        if: github.event_name == 'push' && github.event.head_commit.message == 'chore(adaptive): trigger existing installer'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sed -n '/^          set -euo pipefail$/,$p' .github/workflows/bootstrap-adaptive-vision.yml | sed 's/^          //' > /tmp/install-adaptive.sh
-          test -s /tmp/install-adaptive.sh
-          bash /tmp/install-adaptive.sh
 
       - name: Verify relay server
         working-directory: debug-server
