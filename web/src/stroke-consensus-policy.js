@@ -14,6 +14,17 @@ function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function canonicalBandSample(point, band) {
+  const normalX = Number(band.normalX) || 0;
+  const normalY = Number(band.normalY) || 0;
+  const directionSign = normalY < 0 ? -1 : 1;
+  return {
+    projection: directionSign * (normalX * point.x + normalY * point.y),
+    firstBoundary: directionSign * Number(band.top),
+    secondBoundary: directionSign * Number(band.bottom),
+  };
+}
+
 export class TargetStrokeConsensus {
   constructor({
     minimumTargetGapMs = STROKE_MIN_TARGET_GAP_MS,
@@ -123,9 +134,10 @@ export class SegmentDirectionalTracker {
     }
 
     const now = Number(timestamp) || 0;
-    const projection = band.normalX * point.x + band.normalY * point.y;
-    const top = Math.min(band.top, band.bottom) - this.bandMargin;
-    const bottom = Math.max(band.top, band.bottom) + this.bandMargin;
+    const oriented = canonicalBandSample(point, band);
+    const projection = oriented.projection;
+    const top = Math.min(oriented.firstBoundary, oriented.secondBoundary) - this.bandMargin;
+    const bottom = Math.max(oriented.firstBoundary, oriented.secondBoundary) + this.bandMargin;
     const center = (top + bottom) / 2;
     const bandWidth = Math.max(0.001, bottom - top);
     const centerDeadZone = clamp(
