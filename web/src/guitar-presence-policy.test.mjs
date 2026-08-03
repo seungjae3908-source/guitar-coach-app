@@ -65,6 +65,36 @@ test('rejects a guitar-shaped false positive without observed strings', () => {
   assert.equal(result.reason, '실제 기타 줄 미확인');
 });
 
+test('rejects body and shirt edges spread across most of the frame', () => {
+  const oversizedBand = {
+    ...matchingBand,
+    top: 0.37,
+    bottom: 0.99,
+    center: 0.68,
+  };
+  const result = evaluateGuitarPresence({
+    pose,
+    observedStrings: observed({ band: oversizedBand }),
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, '기타 줄 간격 과대 · 몸통 무늬 오인식');
+});
+
+test('rejects a compact line cluster that does not cross the soundhole or neck axis', () => {
+  const displacedBand = {
+    ...matchingBand,
+    top: 0.58,
+    bottom: 0.66,
+    center: 0.62,
+  };
+  const result = evaluateGuitarPresence({
+    pose,
+    observedStrings: observed({ band: displacedBand }),
+  });
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, '사운드홀·넥과 실제 줄 위치 불일치');
+});
+
 test('rejects parallel texture whose direction disagrees with the guitar pose', () => {
   const mismatchedBand = {
     ...matchingBand,
@@ -115,7 +145,7 @@ test('holds the last validated guitar briefly through hand occlusion', () => {
     observedStrings: { count: 0, confidence: 0, lines: [], band: null },
     previous,
     timestamp: 1500,
-    holdMs: 900,
+    holdMs: 650,
   });
   assert.equal(held.guitarValidated, true);
   assert.equal(held.mode, 'tracking');
@@ -127,8 +157,8 @@ test('expires the retained guitar after the bounded hold window', () => {
     pose: { ...pose, mode: 'tracking' },
     observedStrings: { count: 0, confidence: 0, lines: [], band: null },
     previous,
-    timestamp: 2100,
-    holdMs: 900,
+    timestamp: 1700,
+    holdMs: 650,
   });
   assert.equal(expired.guitarValidated, false);
   assert.equal(expired.mode, 'none');
