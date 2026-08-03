@@ -8,6 +8,15 @@ on:
       - 'web/**'
       - 'debug-server/**'
       - '.github/workflows/debug-center-preview.yml'
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+    paths:
+      - 'web/**'
+      - 'debug-server/**'
+      - '.github/workflows/debug-center-preview.yml'
   workflow_dispatch:
 
 permissions:
@@ -67,6 +76,7 @@ jobs:
           path: web/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
