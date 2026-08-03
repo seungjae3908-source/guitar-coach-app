@@ -96,9 +96,9 @@ const motionPolicyPath = resolve(process.cwd(), 'src/motion-sampling-policy.js')
 let motionPolicy = readFileSync(motionPolicyPath, 'utf8');
 motionPolicy = replaceRegexOptional(
   motionPolicy,
-  /(HAND_SAMPLE_INTERVAL_MS\s*=\s*)(?:180|1_80)\b/,
-  '$196',
-  'hand inference cadence at 7-9 FPS',
+  /(HAND_SAMPLE_INTERVAL_MS\s*=\s*)(?:180|96)\b/,
+  '$156',
+  'compact-strum hand inference cadence',
 );
 writeFileSync(motionPolicyPath, motionPolicy);
 
@@ -107,11 +107,11 @@ let motionPolicyTest = readFileSync(motionPolicyTestPath, 'utf8');
 motionPolicyTest = replaceOnce(
   motionPolicyTest,
   '  assert.ok(HAND_SAMPLE_INTERVAL_MS >= 150);',
-  '  assert.ok(HAND_SAMPLE_INTERVAL_MS >= 90 && HAND_SAMPLE_INTERVAL_MS <= 110);',
-  'low-fps hand cadence regression expectation',
+  '  assert.ok(HAND_SAMPLE_INTERVAL_MS >= 50 && HAND_SAMPLE_INTERVAL_MS <= 65);',
+  'compact-strum hand cadence regression expectation',
 );
 writeFileSync(motionPolicyTestPath, motionPolicyTest);
 
 console.log(
-  `Applied low-FPS recovery: ${LOW_FPS_HAND_HOLD_MS}ms hand hold, 96ms hand cadence, recovered landmark tracking.`,
+  `Applied low-FPS recovery: ${LOW_FPS_HAND_HOLD_MS}ms hand hold, 56ms hand cadence, recovered landmark tracking.`,
 );
