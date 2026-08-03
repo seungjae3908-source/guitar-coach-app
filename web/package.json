@@ -7,7 +7,7 @@
     "prepare-adaptive": "node scripts/install-adaptive.mjs && node scripts/patch-adaptive-runtime.mjs",
     "dev": "npm run prepare-adaptive && vite",
     "pretest": "npm run prepare-adaptive",
-    "test": "node --test src/vision-logic.test.mjs src/adaptive-guitar-vision.test.mjs src/strum-role-policy.test.mjs src/guitar-pose-policy.test.mjs",
+    "test": "node --test src/vision-logic.test.mjs src/adaptive-guitar-vision.test.mjs src/strum-role-policy.test.mjs src/guitar-pose-policy.test.mjs src/motion-sampling-policy.test.mjs",
     "prebuild": "npm run prepare-adaptive",
     "build": "vite build",
     "render-build": "npm test && vite build --base=/",
