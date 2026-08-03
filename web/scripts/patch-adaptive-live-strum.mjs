@@ -110,10 +110,10 @@ center = replaceRegexOnce(
   'connect live engine to generated automatic-recognition screen',
 );
 
-center = replaceRegexOnce(
+center = replaceOnce(
   center,
-  /(visionRef\.current\.lastDirection\s*=\s*direction;\s*\n\s*)const target = currentIdRef\.current;/,
-  `$1const requestedTarget = currentIdRef.current;
+  '    const target = currentIdRef.current;',
+  `    const requestedTarget = currentIdRef.current;
     const target = requestedTarget === 'down' || requestedTarget === 'up' ? requestedTarget : direction;`,
   'count detected strokes during automatic mode',
 );
