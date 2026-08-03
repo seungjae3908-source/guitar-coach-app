@@ -69,8 +69,6 @@ jobs:
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Upload verified site
         uses: actions/upload-pages-artifact@v3
