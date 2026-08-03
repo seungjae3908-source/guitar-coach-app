@@ -1,6 +1,6 @@
-export const STROKE_MIN_TARGET_GAP_MS = 260;
+export const STROKE_MIN_TARGET_GAP_MS = 220;
 export const STROKE_REARM_TIMEOUT_MS = 620;
-export const MOTION_AFTER_LANDMARK_SUPPRESSION_MS = 320;
+export const MOTION_AFTER_LANDMARK_SUPPRESSION_MS = 300;
 
 function validDirection(direction) {
   return direction === 'down' || direction === 'up';
@@ -8,6 +8,10 @@ function validDirection(direction) {
 
 function opposite(direction) {
   return direction === 'down' ? 'up' : 'down';
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 export class TargetStrokeConsensus {
@@ -75,11 +79,15 @@ export class TargetStrokeConsensus {
 
 export class SegmentDirectionalTracker {
   constructor({
-    cooldownMs = 210,
-    maximumCrossingMs = 720,
-    maximumSampleGapMs = 380,
-    minimumTravel = 0.02,
-    partialTravel = 0.012,
+    cooldownMs = 190,
+    maximumCrossingMs = 900,
+    maximumSampleGapMs = 420,
+    minimumTravel = 0.018,
+    partialTravel = 0.01,
+    minimumCenterTravel = 0.012,
+    centerDeadZoneRatio = 0.04,
+    minimumCenterDeadZone = 0.0035,
+    maximumCenterDeadZone = 0.007,
     bandMargin = 0.006,
   } = {}) {
     this.cooldownMs = cooldownMs;
@@ -87,20 +95,28 @@ export class SegmentDirectionalTracker {
     this.maximumSampleGapMs = maximumSampleGapMs;
     this.minimumTravel = minimumTravel;
     this.partialTravel = partialTravel;
+    this.minimumCenterTravel = minimumCenterTravel;
+    this.centerDeadZoneRatio = centerDeadZoneRatio;
+    this.minimumCenterDeadZone = minimumCenterDeadZone;
+    this.maximumCenterDeadZone = maximumCenterDeadZone;
     this.bandMargin = bandMargin;
     this.reset();
   }
 
   reset() {
-    this.start = null;
+    this.centerStart = null;
     this.lastProjection = null;
     this.lastAt = null;
     this.lastEventAt = Number.NEGATIVE_INFINITY;
   }
 
+  clearCrossingState() {
+    this.centerStart = null;
+  }
+
   sample({ point, band, timestamp, ready = true } = {}) {
     if (!ready || !point || !band) {
-      this.start = null;
+      this.clearCrossingState();
       this.lastProjection = null;
       this.lastAt = null;
       return null;
@@ -110,15 +126,29 @@ export class SegmentDirectionalTracker {
     const projection = band.normalX * point.x + band.normalY * point.y;
     const top = Math.min(band.top, band.bottom) - this.bandMargin;
     const bottom = Math.max(band.top, band.bottom) + this.bandMargin;
+    const center = (top + bottom) / 2;
+    const bandWidth = Math.max(0.001, bottom - top);
+    const centerDeadZone = clamp(
+      bandWidth * this.centerDeadZoneRatio,
+      this.minimumCenterDeadZone,
+      this.maximumCenterDeadZone,
+    );
+    const centerTop = center - centerDeadZone;
+    const centerBottom = center + centerDeadZone;
+    const currentSide =
+      projection <= centerTop ? 'top' : projection >= centerBottom ? 'bottom' : 'center';
     const previous = this.lastProjection;
     const previousAt = this.lastAt;
     const gap = previousAt != null ? now - previousAt : Number.POSITIVE_INFINITY;
 
-    if (gap > this.maximumSampleGapMs) this.start = null;
-    if (this.start && now - this.start.at > this.maximumCrossingMs) this.start = null;
+    if (gap > this.maximumSampleGapMs) this.clearCrossingState();
+    if (this.centerStart && now - this.centerStart.at > this.maximumCrossingMs) {
+      this.clearCrossingState();
+    }
 
     let event = null;
     const canEmit = now - this.lastEventAt >= this.cooldownMs;
+
     if (previous != null && gap <= this.maximumSampleGapMs && canEmit) {
       const travel = projection - previous;
       const previousInside = previous > top && previous < bottom;
@@ -126,30 +156,43 @@ export class SegmentDirectionalTracker {
       const crossedUp = previous >= bottom && projection <= top && -travel >= this.minimumTravel;
       const exitedDown = previousInside && projection >= bottom && travel >= this.partialTravel;
       const exitedUp = previousInside && projection <= top && -travel >= this.partialTravel;
-      if (crossedDown || exitedDown) event = 'down';
-      else if (crossedUp || exitedUp) event = 'up';
+      const crossedCenterDown =
+        previous <= centerTop &&
+        projection >= centerBottom &&
+        travel >= this.minimumCenterTravel;
+      const crossedCenterUp =
+        previous >= centerBottom &&
+        projection <= centerTop &&
+        -travel >= this.minimumCenterTravel;
+
+      if (crossedDown || exitedDown || crossedCenterDown) event = 'down';
+      else if (crossedUp || exitedUp || crossedCenterUp) event = 'up';
     }
 
-    if (!event) {
-      if (!this.start && (projection <= top || projection >= bottom)) {
-        this.start = {
-          projection,
-          at: now,
-          side: projection <= top ? 'top' : 'bottom',
-        };
-      } else if (this.start && canEmit) {
+    if (!event && canEmit) {
+      if (!this.centerStart && currentSide !== 'center') {
+        this.centerStart = { projection, at: now, side: currentSide };
+      } else if (this.centerStart && currentSide === this.centerStart.side) {
+        const isMoreExtreme =
+          (currentSide === 'top' && projection < this.centerStart.projection) ||
+          (currentSide === 'bottom' && projection > this.centerStart.projection);
+        if (isMoreExtreme) this.centerStart.projection = projection;
+      } else if (this.centerStart && currentSide !== 'center') {
+        const totalTravel = projection - this.centerStart.projection;
         if (
-          this.start.side === 'top' &&
-          projection >= bottom &&
-          projection - this.start.projection >= this.minimumTravel
+          this.centerStart.side === 'top' &&
+          currentSide === 'bottom' &&
+          totalTravel >= this.minimumCenterTravel
         ) {
           event = 'down';
         } else if (
-          this.start.side === 'bottom' &&
-          projection <= top &&
-          this.start.projection - projection >= this.minimumTravel
+          this.centerStart.side === 'bottom' &&
+          currentSide === 'top' &&
+          -totalTravel >= this.minimumCenterTravel
         ) {
           event = 'up';
+        } else {
+          this.centerStart = { projection, at: now, side: currentSide };
         }
       }
     }
@@ -157,7 +200,8 @@ export class SegmentDirectionalTracker {
     this.lastProjection = projection;
     this.lastAt = now;
     if (event) {
-      this.start = null;
+      this.centerStart =
+        currentSide === 'center' ? null : { projection, at: now, side: currentSide };
       this.lastEventAt = now;
     }
     return event;
