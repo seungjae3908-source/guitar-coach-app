@@ -1,12 +1,12 @@
 {
   "name": "guitar-coach-debug-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check server.test.mjs",
-    "test": "node --test server.test.mjs",
+    "start": "node live-server.mjs",
+    "check": "node --check server.mjs && node --check live-server.mjs && node --check server.test.mjs && node --check live-server.test.mjs",
+    "test": "node --test server.test.mjs live-server.test.mjs",
     "verify": "npm run check && npm test"
   },
   "engines": {
