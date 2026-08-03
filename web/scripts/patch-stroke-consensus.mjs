@@ -116,8 +116,8 @@ center = replaceOnce(
 center = replaceRegexOnce(
   center,
   /new SimpleDirectionalTracker\(\)/,
-  "new SegmentDirectionalTracker({ cooldownMs: 210, maximumCrossingMs: 720, minimumTravel: 0.018, partialTravel: 0.011 })",
-  'landmark segment tracker',
+  "new SegmentDirectionalTracker({ cooldownMs: 150, maximumCrossingMs: 900, maximumSampleGapMs: 460, minimumTravel: 0.016, partialTravel: 0.008, minimumCenterTravel: 0.009, centerDeadZoneRatio: 0.03, minimumCenterDeadZone: 0.0025, maximumCenterDeadZone: 0.0055 })",
+  'landmark compact wrist tracker',
 );
 
 center = patchStrokeGate(center);
@@ -149,9 +149,9 @@ if (!vision.includes("from './stroke-consensus-policy.js'")) {
 vision = replaceOnce(
   vision,
   '    this.tracker = new SimpleDirectionalTracker({ cooldownMs: 135, maximumCrossingMs: 650, minimumTravel: 0.024 });',
-  '    this.tracker = new SegmentDirectionalTracker({ cooldownMs: 260, maximumCrossingMs: 720, minimumTravel: 0.032, partialTravel: 0.022 });',
-  'motion segment tracker',
+  '    this.tracker = new SegmentDirectionalTracker({ cooldownMs: 220, maximumCrossingMs: 900, maximumSampleGapMs: 480, minimumTravel: 0.028, partialTravel: 0.017, minimumCenterTravel: 0.015, centerDeadZoneRatio: 0.04, minimumCenterDeadZone: 0.0035, maximumCenterDeadZone: 0.007 });',
+  'motion compact wrist fallback tracker',
 );
 writeFileSync(visionPath, vision);
 
-console.log('Applied target-direction consensus, return-stroke rearming, and skipped-frame segment tracking.');
+console.log('Applied compact center-crossing sensitivity, return-stroke rearming, and duplicate suppression.');
