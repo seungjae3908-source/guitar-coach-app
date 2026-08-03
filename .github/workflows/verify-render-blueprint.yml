@@ -61,9 +61,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://render.com/schema/render.yaml.json -o /tmp/render-schema.json
-          ruby -ryaml -rjson -e 'puts JSON.generate(YAML.safe_load(File.read("render.yaml"), permitted_classes: [], permitted_symbols: [], aliases: false))' > /tmp/render-blueprint.json
-          npx --yes ajv-cli@5 validate --spec=draft2020 -s /tmp/render-schema.json -d /tmp/render-blueprint.json
+          python -m pip install --disable-pip-version-check --quiet pyyaml jsonschema
+          python - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+
+          import yaml
+          from jsonschema.validators import validator_for
+
+          schema_url = 'https://render.com/schema/render.yaml.json'
+          with urllib.request.urlopen(schema_url, timeout=30) as response:
+              schema = json.load(response)
+          blueprint = yaml.safe_load(Path('render.yaml').read_text(encoding='utf-8'))
+          validator_class = validator_for(schema)
+          validator_class.check_schema(schema)
+          errors = sorted(validator_class(schema).iter_errors(blueprint), key=lambda error: list(error.absolute_path))
+          if errors:
+              for error in errors:
+                  location = '.'.join(str(part) for part in error.absolute_path) or '<root>'
+                  print(f'{location}: {error.message}')
+              raise SystemExit(1)
+          print('render.yaml matches the official Render schema.')
+          PY
 
       - name: Verify Web Service build and start commands
         working-directory: debug-server
