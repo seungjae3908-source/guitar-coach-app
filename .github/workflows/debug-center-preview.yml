@@ -1,4 +1,4 @@
-name: Build and publish debug center preview
+name: Build and deploy complete debug center
 
 on:
   push:
@@ -8,34 +8,26 @@ on:
       - 'web/**'
       - 'debug-server/**'
       - '.github/workflows/debug-center-preview.yml'
-  pull_request:
-    branches:
-      - main
-    types:
-      - synchronize
-    paths:
-      - 'web/**'
-      - 'debug-server/**'
-      - '.github/workflows/debug-center-preview.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
-  group: guitar-coach-debug-center-static
+  group: guitar-coach-debug-center-pages
   cancel-in-progress: true
 
 jobs:
-  verify-build-publish:
+  verify-and-build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout debug branch
         uses: actions/checkout@v4
         with:
           ref: agent/live-coach-compat-v055
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -50,47 +42,37 @@ jobs:
         working-directory: web
         run: npm install
 
-      - name: Build portable debug center web
+      - name: Build debug center web
         working-directory: web
-        run: npm run build -- --base=./
+        run: npm run build
 
-      - name: Verify debug center output
+      - name: Verify built site
         shell: bash
         run: |
           set -euo pipefail
           test -s web/dist/index.html
           grep -R -q '기타 코치 실시간 진단센터' web/dist/assets
           grep -R -q '원격 진단 관리자' web/dist/assets
-          grep -q 'src="./assets/' web/dist/index.html
-
-      - name: Publish static preview to branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf debug-site
-          mkdir -p debug-site
-          cp -R web/dist/. debug-site/
-          touch debug-site/.nojekyll
-          cat > debug-site/BUILD_INFO.txt <<EOF
-          SOURCE_BRANCH=agent/live-coach-compat-v055
-          SOURCE_SHA=${GITHUB_SHA}
-          BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          EOF
-          git config user.name 'guitar-coach-debug-center-bot'
-          git config user.email 'guitar-coach-debug-center-bot@users.noreply.github.com'
-          git add -A debug-site
-          if git diff --cached --quiet; then
-            echo 'Static preview is already current.'
-            exit 0
+          if grep -R -q 'raw.githack\|rawgit.hack' web/dist; then
+            echo 'Third-party raw host reference found.'
+            exit 1
           fi
-          git commit -m 'Publish guided debug center static preview'
-          git pull --rebase origin agent/live-coach-compat-v055
-          git push origin HEAD:agent/live-coach-compat-v055
 
-      - name: Upload verified static site artifact
-        uses: actions/upload-artifact@v4
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload verified site
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: guitar-coach-debug-center-site
-          path: debug-site
-          if-no-files-found: error
-          retention-days: 30
+          path: web/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    needs: verify-and-build
+    steps:
+      - name: Deploy verified site
+        id: deployment
+        uses: actions/deploy-pages@v4
