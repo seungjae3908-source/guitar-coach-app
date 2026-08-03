@@ -54,11 +54,15 @@ jobs:
         run: |
           set -euo pipefail
           test -s render.yaml
+          test -s debug-server/live-server.mjs
+          test -s web/src/live-telemetry.js
           grep -q 'rootDir: debug-server' render.yaml
           grep -q 'healthCheckPath: /health' render.yaml
           grep -q 'ADMIN_SHARED_SECRET' render.yaml
           grep -q 'DEVICE_SHARED_SECRET' render.yaml
+          grep -q 'ALLOWED_ORIGINS' render.yaml
           grep -q 'https://seungjae3908-guitar-coach-debug-web.onrender.com' render.yaml
+          grep -q 'https://seungjae3908-source.github.io' render.yaml
           grep -q 'npm run render-build' render.yaml
           grep -q 'autoDeployTrigger: "commit"' render.yaml
 
@@ -84,14 +88,20 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - name: Verify front-camera web-only site
+      - name: Verify angled front-camera live-diagnostic site
         shell: bash
         run: |
           set -euo pipefail
           test -s web/dist/index.html
           grep -R -q '기타 코치 실시간 진단센터' web/dist/assets
           grep -R -q '원격 진단 관리자' web/dist/assets
-          grep -R -q '손 21관절' web/dist/assets
+          grep -R -q '양손 관절 인식' web/dist/assets
+          grep -R -q '손 추적' web/dist/assets
+          grep -R -q '원격 로그 코드' web/dist/assets
+          grep -R -q '실시간 연결됨' web/dist/assets
+          grep -R -q '다운 바로 점검' web/dist/assets
+          grep -R -q '업 바로 점검' web/dist/assets
+          grep -R -q '기타·줄 바로 점검' web/dist/assets
           grep -R -q '방향 감지 준비 완료' web/dist/assets
           grep -R -q '전면카메라 연결' web/dist/assets
           grep -R -q '전면 고정' web/dist/assets
@@ -150,7 +160,13 @@ jobs:
           script_url=$(node -e 'console.log(new URL(process.argv[1], process.argv[2]).href)' "$script_path" "$PAGE_URL")
           curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' "$script_url" -o /tmp/deployed-app.js
           grep -q '기타 코치 실시간 진단센터' /tmp/deployed-app.js
-          grep -q '손 21관절' /tmp/deployed-app.js
+          grep -q '양손 관절 인식' /tmp/deployed-app.js
+          grep -q '손 추적' /tmp/deployed-app.js
+          grep -q '원격 로그 코드' /tmp/deployed-app.js
+          grep -q '실시간 연결됨' /tmp/deployed-app.js
+          grep -q '다운 바로 점검' /tmp/deployed-app.js
+          grep -q '업 바로 점검' /tmp/deployed-app.js
+          grep -q '기타·줄 바로 점검' /tmp/deployed-app.js
           grep -q '방향 감지 준비 완료' /tmp/deployed-app.js
           grep -q '전면카메라 연결' /tmp/deployed-app.js
           grep -q '전면 고정' /tmp/deployed-app.js
