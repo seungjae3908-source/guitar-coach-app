@@ -85,3 +85,53 @@ jobs:
       - name: Deploy verified site
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify deployed HTTPS site
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PAGE_URL"
+          case "$PAGE_URL" in
+            https://*.github.io/*) ;;
+            *) echo "Unexpected Pages URL: $PAGE_URL"; exit 1 ;;
+          esac
+
+          for attempt in $(seq 1 18); do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              -H 'Cache-Control: no-cache' \
+              "${PAGE_URL}?verification=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              -o /tmp/deployed-index.html; then
+              break
+            fi
+            if [ "$attempt" -eq 18 ]; then
+              echo 'Deployed site did not become reachable.'
+              exit 1
+            fi
+            sleep 5
+          done
+
+          grep -q '<div id="root"></div>' /tmp/deployed-index.html
+          if grep -qi 'rawgit\.hack\|raw\.githack\|one more step' /tmp/deployed-index.html; then
+            echo 'A third-party warning/interstitial page was returned.'
+            exit 1
+          fi
+
+          script_path=$(grep -oE 'src="[^"]+\.js"' /tmp/deployed-index.html | head -n 1 | cut -d'"' -f2)
+          test -n "$script_path"
+          script_url=$(node -e 'console.log(new URL(process.argv[1], process.argv[2]).href)' "$script_path" "$PAGE_URL")
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 30 \
+            -H 'Cache-Control: no-cache' \
+            "$script_url" -o /tmp/deployed-app.js
+
+          grep -q '기타 코치 실시간 진단센터' /tmp/deployed-app.js
+          grep -q '원격 진단 관리자' /tmp/deployed-app.js
+          if grep -qi 'rawgit\.hack\|raw\.githack' /tmp/deployed-app.js; then
+            echo 'The deployed app still references a third-party raw host.'
+            exit 1
+          fi
+
+          echo "Verified deployed site: $PAGE_URL"
