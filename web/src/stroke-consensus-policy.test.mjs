@@ -27,6 +27,15 @@ test('counts one target stroke and treats the opposite crossing as recovery', ()
   assert.equal(gate.sample({ direction: 'down', target: 'down', source: 'landmark', timestamp: 1500 }).count, true);
 });
 
+test('counts compact return strokes when the opposite crossing rearms the gate', () => {
+  const gate = new TargetStrokeConsensus();
+  assert.equal(gate.sample({ direction: 'down', target: 'down', source: 'landmark', timestamp: 1000 }).count, true);
+  assert.equal(gate.sample({ direction: 'up', target: 'down', source: 'landmark', timestamp: 1080 }).reason, 'recovery');
+  assert.equal(gate.sample({ direction: 'down', target: 'down', source: 'landmark', timestamp: 1160 }).count, true);
+  assert.equal(gate.sample({ direction: 'up', target: 'down', source: 'landmark', timestamp: 1240 }).reason, 'recovery');
+  assert.equal(gate.sample({ direction: 'down', target: 'down', source: 'landmark', timestamp: 1320 }).count, true);
+});
+
 test('suppresses landmark and motion duplicates from the same physical stroke', () => {
   const gate = new TargetStrokeConsensus();
   assert.equal(gate.sample({ direction: 'down', target: 'down', source: 'landmark', timestamp: 1000 }).count, true);
@@ -82,6 +91,24 @@ test('segment tracker catches a compact low-fps center crossing', () => {
   });
   assert.equal(tracker.sample({ point: point(-0.02), band, timestamp: 0 }), null);
   assert.equal(tracker.sample({ point: point(0.02), band, timestamp: 120 }), 'down');
+});
+
+test('runtime compact tracker recognizes a six-pixel wrist crossing without accepting rest jitter', () => {
+  const tracker = new SegmentDirectionalTracker({
+    cooldownMs: 0,
+    minimumTravel: 0.012,
+    partialTravel: 0.006,
+    minimumCenterTravel: 0.0065,
+    centerDeadZoneRatio: 0.02,
+    minimumCenterDeadZone: 0.0022,
+    maximumCenterDeadZone: 0.0042,
+  });
+  for (const [timestamp, y] of [[0, -0.0025], [40, 0.0018], [80, -0.0017], [120, 0.0024]]) {
+    assert.equal(tracker.sample({ point: point(y), band, timestamp }), null);
+  }
+  assert.equal(tracker.sample({ point: point(-0.0075), band, timestamp: 180 }), null);
+  assert.equal(tracker.sample({ point: point(0.0075), band, timestamp: 236 }), 'down');
+  assert.equal(tracker.sample({ point: point(-0.0075), band, timestamp: 292 }), 'up');
 });
 
 test('segment tracker keeps screen-down direction when the guitar axis reverses', () => {
