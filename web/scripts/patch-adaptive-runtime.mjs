@@ -58,7 +58,7 @@ center = replaceOnce(
 );
 center = replaceOnce(
   center,
-  '    motionTrackerRef.current.reset();\n    lastStrumHandAtRef.current = 0;\n    lastStrumHandRef.current = null;\n    const context = overlayRef.current?.getContext(\'2d\');',
+  '    motionTrackerRef.current.reset();\n    const context = overlayRef.current?.getContext(\'2d\');',
   '    motionTrackerRef.current.reset();\n    lastStrumHandAtRef.current = 0;\n    lastStrumHandRef.current = null;\n    poseStabilityRef.current = { pendingAngle: null, pendingCount: 0 };\n    const context = overlayRef.current?.getContext(\'2d\');',
   'camera reset clears role and pose memory',
 );
