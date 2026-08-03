@@ -1,23 +1,56 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-function replaceOnce(source, before, after, label) {
-  const first = source.indexOf(before);
-  if (first < 0) throw new Error(`Visible-overlay patch target missing: ${label}`);
-  if (source.indexOf(before, first + before.length) >= 0) {
-    throw new Error(`Visible-overlay patch target is ambiguous: ${label}`);
-  }
-  return source.slice(0, first) + after + source.slice(first + before.length);
+function replaceRegexOnce(source, pattern, replacement, label) {
+  pattern.lastIndex = 0;
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const matches = [...source.matchAll(new RegExp(pattern.source, flags))];
+  if (matches.length === 0) throw new Error(`Visible-overlay patch target missing: ${label}`);
+  if (matches.length > 1) throw new Error(`Visible-overlay patch target is ambiguous: ${label}`);
+  pattern.lastIndex = 0;
+  return source.replace(pattern, replacement);
 }
 
 const centerPath = resolve(process.cwd(), 'src/AdaptiveDebugCenter.jsx');
 let center = readFileSync(centerPath, 'utf8');
 
-center = replaceOnce(
+center = replaceRegexOnce(
   center,
-  "          <video ref={videoRef} playsInline muted style={{ transform: 'scaleX(-1)' }} />\n          <canvas ref={overlayRef} style={{ transform: 'scaleX(-1)' }} />",
-  `          <video\n            ref={videoRef}\n            playsInline\n            muted\n            style={{\n              position: 'absolute',\n              inset: 0,\n              width: '100%',\n              height: '100%',\n              objectFit: 'cover',\n              transform: 'scaleX(-1)',\n              zIndex: 1,\n            }}\n          />\n          <canvas\n            ref={overlayRef}\n            style={{\n              position: 'absolute',\n              inset: 0,\n              width: '100%',\n              height: '100%',\n              objectFit: 'cover',\n              pointerEvents: 'none',\n              transform: 'scaleX(-1)',\n              zIndex: 2,\n            }}\n          />`,
-  'camera video and visible landmark canvas stacking',
+  /<video\s+ref=\{videoRef\}\s+playsInline\s+muted\s+style=\{\{\s*transform:\s*['"]scaleX\(-1\)['"]\s*\}\}\s*\/>/,
+  `<video
+            ref={videoRef}
+            playsInline
+            muted
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              transform: 'scaleX(-1)',
+              zIndex: 1,
+            }}
+          />`,
+  'camera video layer',
+);
+
+center = replaceRegexOnce(
+  center,
+  /<canvas\s+ref=\{overlayRef\}\s+style=\{\{\s*transform:\s*['"]scaleX\(-1\)['"]\s*\}\}\s*\/>/,
+  `<canvas
+            ref={overlayRef}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              pointerEvents: 'none',
+              transform: 'scaleX(-1)',
+              zIndex: 2,
+            }}
+          />`,
+  'visible landmark canvas layer',
 );
 
 writeFileSync(centerPath, center);
