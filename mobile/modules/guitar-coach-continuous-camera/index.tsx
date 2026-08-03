@@ -122,7 +122,7 @@ function fuseAudio(result: ContinuousHandAnalysisResult): ContinuousHandAnalysis
 export default function ContinuousRightHandCamera({
   running,
   pickColor = 'auto',
-  facing = 'back',
+  facing = 'front',
   analyzeStrings = false,
   onAnalysis,
   ...props
