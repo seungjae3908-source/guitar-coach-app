@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare-adaptive": "node scripts/install-adaptive.mjs",
+    "prepare-adaptive": "node scripts/install-adaptive.mjs && node scripts/inspect-adaptive.mjs",
     "dev": "npm run prepare-adaptive && vite",
     "pretest": "npm run prepare-adaptive",
     "test": "node --test src/vision-logic.test.mjs src/adaptive-guitar-vision.test.mjs",
