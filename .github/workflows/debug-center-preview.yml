@@ -76,11 +76,11 @@ jobs:
           path: web/dist
 
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-24.04
     needs: verify-and-build
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - name: Deploy verified site
         id: deployment
