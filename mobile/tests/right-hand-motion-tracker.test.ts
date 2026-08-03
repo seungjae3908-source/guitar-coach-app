@@ -98,8 +98,17 @@ const fingerHits = fingerTracker.update(frame(0.2, 0.545), 2_190, 'arpeggio');
 assert(fingerHits.some((hit) => hit.contactId === 'index'), 'index crossing should create i hit');
 assert(!fingerHits.some((hit) => hit.contactId === 'pick'), 'arpeggio must not fabricate pick hits');
 
+const compactFingerTracker = new RightHandMotionTracker();
+assert(compactFingerTracker.update(frame(0.2, 0.3475), 2_500, 'arpeggio').length === 0, 'compact pluck first frame should arm tracker');
+const compactFingerHits = compactFingerTracker.update(frame(0.2, 0.3525), 2_580, 'arpeggio');
+assert(compactFingerHits.some((hit) => hit.contactId === 'index'), 'five-pixel-equivalent index pluck should be recognized');
+
+const jitterTracker = new RightHandMotionTracker();
+assert(jitterTracker.update(frame(0.2, 0.3494), 2_800, 'arpeggio').length === 0, 'jitter first frame should arm tracker');
+assert(jitterTracker.update(frame(0.2, 0.3506), 2_880, 'arpeggio').length === 0, 'sub-threshold center jitter must not create a finger hit');
+
 const staleTracker = new RightHandMotionTracker();
 staleTracker.update(frame(0.455, 0.455), 3_000, 'strumming');
 assert(staleTracker.update(frame(0.545, 0.545), 3_900, 'strumming').length === 0, 'stale frames must not create hits');
 
-console.log('Right-hand motion tracker tests passed: 9');
+console.log('Right-hand motion tracker tests passed: 11');
