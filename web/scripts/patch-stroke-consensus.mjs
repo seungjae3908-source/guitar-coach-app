@@ -12,7 +12,8 @@ function replaceOnce(source, before, after, label) {
 
 function replaceRegexOnce(source, pattern, replacement, label) {
   pattern.lastIndex = 0;
-  const matches = [...source.matchAll(new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`))];
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const matches = [...source.matchAll(new RegExp(pattern.source, flags))];
   if (matches.length === 0) throw new Error(`Stroke-consensus regex target missing: ${label}`);
   if (matches.length > 1) throw new Error(`Stroke-consensus regex target is ambiguous: ${label}`);
   pattern.lastIndex = 0;
@@ -27,6 +28,52 @@ function replaceRegexOptional(source, pattern, replacement, label) {
   }
   pattern.lastIndex = 0;
   return source.replace(pattern, replacement);
+}
+
+function patchStrokeGate(source) {
+  const warningAt = source.indexOf('점검 중 반대 방향');
+  if (warningAt < 0) throw new Error('Stroke-consensus marker missing: opposite-direction log');
+
+  const prefix = source.slice(0, warningAt);
+  const headers = [
+    ...prefix.matchAll(
+      /const\s+([A-Za-z_$][\w$]*)\s*=\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*\{/g,
+    ),
+  ];
+  const header = [...headers]
+    .reverse()
+    .find((candidate) => source.slice(candidate.index, warningAt).includes('lastStrokeEventAtRef.current'));
+  if (!header) throw new Error('Stroke-consensus handler header missing');
+
+  const [, , directionName, sourceName, timestampName] = header;
+  const bodyStart = header.index + header[0].length;
+  const gateStart = source.indexOf('if', bodyStart);
+  if (gateStart < 0 || gateStart > warningAt) throw new Error('Stroke-consensus guard start missing');
+
+  const targetPattern = /const\s+([A-Za-z_$][\w$]*)\s*=\s*currentTestRef\.current;/;
+  const targetMatch = source.slice(gateStart, warningAt).match(targetPattern);
+  if (!targetMatch || targetMatch.index == null) throw new Error('Stroke-consensus target test line missing');
+  const targetName = targetMatch[1];
+  const gateEnd = gateStart + targetMatch.index + targetMatch[0].length;
+
+  const lineStart = source.lastIndexOf('\n', gateStart) + 1;
+  const indent = source.slice(lineStart, gateStart);
+  const inner = `${indent}  `;
+  const replacement = [
+    `if (!['down', 'up'].includes(${directionName})) return;`,
+    `${indent}const ${targetName} = currentTestRef.current;`,
+    `${indent}const strokeDecision = strokeConsensusRef.current.sample({`,
+    `${inner}direction: ${directionName},`,
+    `${inner}source: ${sourceName},`,
+    `${inner}target: ${targetName},`,
+    `${inner}timestamp: ${timestampName},`,
+    `${indent}});`,
+    `${indent}visionRef.current.lastDirection = ${directionName};`,
+    `${indent}if (!strokeDecision.count) return;`,
+    `${indent}lastStrokeEventAtRef.current = ${timestampName};`,
+  ].join('\n');
+
+  return source.slice(0, gateStart) + replacement + source.slice(gateEnd);
 }
 
 const centerPath = resolve(process.cwd(), 'src/AdaptiveDebugCenter.jsx');
@@ -52,13 +99,7 @@ center = replaceRegexOnce(
   'landmark segment tracker',
 );
 
-center = replaceRegexOnce(
-  center,
-  /if\s*\(\s*!\['down',\s*'up'\]\.includes\(direction\)\s*\|\|\s*timestamp\s*-\s*lastStrokeEventAtRef\.current\s*<\s*115\s*\)\s*return;\s*lastStrokeEventAtRef\.current\s*=\s*timestamp;\s*visionRef\.current\.lastDirection\s*=\s*direction;\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*currentTestRef\.current;/,
-  (_match, targetName) => `if (!['down', 'up'].includes(direction)) return;\n    const ${targetName} = currentTestRef.current;\n    const strokeDecision = strokeConsensusRef.current.sample({\n      direction,\n      source,\n      target: ${targetName},\n      timestamp,\n    });\n    visionRef.current.lastDirection = direction;\n    if (!strokeDecision.count) return;\n    lastStrokeEventAtRef.current = timestamp;`,
-  'target stroke consensus gate',
-);
-
+center = patchStrokeGate(center);
 center = center.replaceAll('빠른 동작 보간', '관절 누락 보완');
 center = center.replaceAll('관절+지역 움직임', '관절 우선·영상 보완');
 
@@ -69,10 +110,11 @@ center = replaceRegexOptional(
   'stable pick-point weighting',
 );
 
-center = replaceOnce(
+center = replaceRegexOnce(
   center,
-  '    lastStrokeEventAtRef.current = 0;\n    lastStrumHandAtRef.current = 0;',
-  '    lastStrokeEventAtRef.current = 0;\n    strokeConsensusRef.current.reset();\n    lastStrumHandAtRef.current = 0;',
+  /lastStrokeEventAtRef\.current\s*=\s*0;\s*\n(\s*)lastStrumHandAtRef\.current\s*=\s*0;/,
+  (_match, indent) =>
+    `lastStrokeEventAtRef.current = 0;\n${indent}strokeConsensusRef.current.reset();\n${indent}lastStrumHandAtRef.current = 0;`,
   'camera reset clears stroke consensus',
 );
 
