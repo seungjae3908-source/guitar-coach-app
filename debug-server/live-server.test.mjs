@@ -9,7 +9,7 @@ async function requestJson(url, options = {}) {
   return { response, body };
 }
 
-test('live session accepts telemetry and exposes privacy-safe state', async (t) => {
+test('live session accepts telemetry and structured privacy-safe diagnostics', async (t) => {
   const origin = 'https://example.test';
   const instance = createLiveDiagnosticServer({
     adminSecret: 'admin-secret',
@@ -52,12 +52,42 @@ test('live session accepts telemetry and exposes privacy-safe state', async (t) 
   });
   assert.equal(telemetry.response.status, 202);
 
+  const diagnostics = await requestJson(`${base}/api/live-sessions/${created.body.code}/diagnostics`, {
+    method: 'POST',
+    headers: {
+      Origin: origin,
+      Authorization: `Bearer ${created.body.deviceToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sequence: 2,
+      clientAt: Date.now(),
+      currentTest: 'down',
+      blockedReason: '줄 영역이 기울어진 손 이동축과 맞지 않음',
+      camera: { width: 720, height: 1280, fps: 30, brightness: 140, facing: 'user' },
+      hands: [
+        { handedness: 'Right', confidence: 0.88, landmarks: 21, wrist: { x: 0.62, y: 0.55 }, pickPoint: { x: 0.58, y: 0.61 } },
+        { handedness: 'Left', confidence: 0.76, landmarks: 21, wrist: { x: 0.28, y: 0.38 } },
+      ],
+      guitar: { visible: true, confidence: 0.7, modelScore: 0.45, label: 'acoustic guitar', angle: -14, center: { x: 0.43, y: 0.72 } },
+      strings: { count: 6, confidence: 0.75, angle: -13, band: { top: 0.55, bottom: 0.64, center: 0.595 } },
+      strokes: { down: 0, up: 0, lastDirection: 'none', ready: false },
+      model: { hand: '준비 완료', guitar: '준비 완료', error: '' },
+      frame: 'must-never-be-stored',
+    }),
+  });
+  assert.equal(diagnostics.response.status, 202);
+
   const state = await requestJson(`${base}/api/live-sessions/${created.body.code}`);
   assert.equal(state.response.status, 200);
   assert.equal(state.body.telemetry.currentTest, 'down');
   assert.equal(state.body.telemetry.detection.handCount, 2);
   assert.equal(state.body.telemetry.frame, null);
   assert.equal(state.body.history[0].frame, null);
+  assert.equal(state.body.diagnostics.hands.length, 2);
+  assert.equal(state.body.diagnostics.guitar.angle, -14);
+  assert.equal(state.body.diagnostics.strings.angle, -13);
+  assert.equal(state.body.diagnostics.frame, undefined);
 });
 
 test('live session creation rejects unknown browser origins', async (t) => {
