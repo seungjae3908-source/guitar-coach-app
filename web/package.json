@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare-adaptive": "node scripts/install-adaptive.mjs && node scripts/patch-adaptive-runtime.mjs && node scripts/patch-low-fps-recovery.mjs && node scripts/patch-stroke-consensus.mjs && node scripts/patch-guitar-evidence.mjs",
+    "prepare-adaptive": "node scripts/install-adaptive.mjs && node scripts/patch-adaptive-runtime.mjs && node scripts/patch-low-fps-recovery.mjs && node scripts/patch-stroke-consensus.mjs && node scripts/patch-guitar-evidence.mjs && node scripts/patch-visible-hand-overlay.mjs",
     "dev": "npm run prepare-adaptive && vite",
     "pretest": "npm run prepare-adaptive",
-    "test": "node --test src/vision-logic.test.mjs src/adaptive-guitar-vision.test.mjs src/strum-role-policy.test.mjs src/guitar-pose-policy.test.mjs src/motion-sampling-policy.test.mjs src/low-fps-strum-policy.test.mjs src/stroke-consensus-policy.test.mjs src/analysis-frame-policy.test.mjs src/guitar-presence-policy.test.mjs",
+    "test": "node --test src/vision-logic.test.mjs src/adaptive-guitar-vision.test.mjs src/strum-role-policy.test.mjs src/guitar-pose-policy.test.mjs src/motion-sampling-policy.test.mjs src/low-fps-strum-policy.test.mjs src/stroke-consensus-policy.test.mjs src/analysis-frame-policy.test.mjs src/guitar-presence-policy.test.mjs src/visible-hand-overlay.test.mjs",
     "prebuild": "npm run prepare-adaptive",
     "build": "vite build",
     "render-build": "npm test && vite build --base=/",
