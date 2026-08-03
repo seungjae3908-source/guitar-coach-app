@@ -12,18 +12,6 @@ function replaceOnce(source, before, after, label) {
   return source.slice(0, first) + after + source.slice(first + before.length);
 }
 
-function replaceRegexOnce(source, pattern, replacement, label) {
-  const first = source.search(pattern);
-  if (first < 0) throw new Error(`Low-FPS regex target missing: ${label}`);
-  const tail = source.slice(first);
-  const match = tail.match(pattern);
-  if (!match?.[0]) throw new Error(`Low-FPS regex target unreadable: ${label}`);
-  if (source.slice(first + match[0].length).search(pattern) >= 0) {
-    throw new Error(`Low-FPS regex target is ambiguous: ${label}`);
-  }
-  return source.replace(pattern, replacement);
-}
-
 function replaceRegexOptional(source, pattern, replacement, label) {
   if (!pattern.test(source)) {
     console.warn(`Optional low-FPS target not found: ${label}`);
@@ -91,21 +79,24 @@ center = replaceOnce(
 
 writeFileSync(centerPath, center);
 
-const strumPolicyPath = resolve(process.cwd(), 'src/strum-role-policy.js');
-let strumPolicy = readFileSync(strumPolicyPath, 'utf8');
-strumPolicy = replaceRegexOnce(
-  strumPolicy,
-  /(STRUM_HAND_HOLD_MS\s*=\s*)1100\b/,
-  `$1${LOW_FPS_HAND_HOLD_MS}`,
-  'strum hand hold duration',
+const visionPath = resolve(process.cwd(), 'src/adaptive-guitar-vision.js');
+let vision = readFileSync(visionPath, 'utf8');
+if (!vision.includes("from './low-fps-strum-policy.js'")) {
+  vision = "import { LOW_FPS_HAND_HOLD_MS } from './low-fps-strum-policy.js';\n" + vision;
+}
+vision = replaceOnce(
+  vision,
+  '    const handRecent = isStrumHandRecent(timestamp, recentHandAt);',
+  '    const handRecent = isStrumHandRecent(timestamp, recentHandAt, LOW_FPS_HAND_HOLD_MS);',
+  'extend anchored motion readiness through low-fps gaps',
 );
-writeFileSync(strumPolicyPath, strumPolicy);
+writeFileSync(visionPath, vision);
 
 const motionPolicyPath = resolve(process.cwd(), 'src/motion-sampling-policy.js');
 let motionPolicy = readFileSync(motionPolicyPath, 'utf8');
-motionPolicy = replaceRegexOnce(
+motionPolicy = replaceRegexOptional(
   motionPolicy,
-  /(HAND_SAMPLE_INTERVAL_MS\s*=\s*)180\b/,
+  /(HAND_SAMPLE_INTERVAL_MS\s*=\s*)(?:180|1_80)\b/,
   '$196',
   'hand inference cadence at 7-9 FPS',
 );
