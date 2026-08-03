@@ -27,9 +27,16 @@ function median(values) {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function projectionRange(normalX, normalY) {
-  const corners = [0, normalX, normalY, normalX + normalY];
+function projectionRange(axisX, axisY) {
+  const corners = [0, axisX, axisY, axisX + axisY];
   return { min: Math.min(...corners), max: Math.max(...corners) };
+}
+
+function bitCount32(value) {
+  let number = value >>> 0;
+  number -= (number >>> 1) & 0x55555555;
+  number = (number & 0x33333333) + ((number >>> 2) & 0x33333333);
+  return (((number + (number >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
 }
 
 function lineSegment(normalX, normalY, rho) {
@@ -71,10 +78,14 @@ function evaluateStringAngle(gray, width, height, angle) {
   const normalX = -directionY;
   const normalY = directionX;
   const range = projectionRange(normalX, normalY);
+  const tangentRange = projectionRange(directionX, directionY);
   const binCount = 260;
+  const tangentBinCount = 64;
   const histogram = new Float64Array(binCount);
-  const supports = new Uint16Array(binCount);
+  const occupancyLow = new Uint32Array(binCount);
+  const occupancyHigh = new Uint32Array(binCount);
   const scale = (binCount - 1) / Math.max(0.0001, range.max - range.min);
+  const tangentScale = (tangentBinCount - 1) / Math.max(0.0001, tangentRange.max - tangentRange.min);
   const xStart = Math.max(2, Math.floor(width * 0.02));
   const xEnd = Math.min(width - 2, Math.ceil(width * 0.98));
   const yStart = Math.max(2, Math.floor(height * 0.02));
@@ -92,9 +103,12 @@ function evaluateStringAngle(gray, width, height, angle) {
       const normalizedX = x / Math.max(1, width - 1);
       const normalizedY = y / Math.max(1, height - 1);
       const projection = normalX * normalizedX + normalY * normalizedY;
+      const tangent = directionX * normalizedX + directionY * normalizedY;
       const bin = Math.max(0, Math.min(binCount - 1, Math.round((projection - range.min) * scale)));
+      const tangentBin = Math.max(0, Math.min(tangentBinCount - 1, Math.round((tangent - tangentRange.min) * tangentScale)));
       histogram[bin] += strength;
-      supports[bin] += 1;
+      if (tangentBin < 32) occupancyLow[bin] |= (1 << tangentBin) >>> 0;
+      else occupancyHigh[bin] |= (1 << (tangentBin - 32)) >>> 0;
     }
   }
 
@@ -118,9 +132,14 @@ function evaluateStringAngle(gray, width, height, angle) {
   for (let index = 2; index < binCount - 2; index += 1) {
     if (smooth[index] < threshold || smooth[index] < smooth[index - 1] || smooth[index] < smooth[index + 1]) continue;
     const projection = range.min + index / scale;
-    let localSupport = 0;
-    for (let offset = -2; offset <= 2; offset += 1) localSupport += supports[index + offset] || 0;
-    candidates.push({ index, projection, score: smooth[index], support: localSupport });
+    let low = 0;
+    let high = 0;
+    for (let offset = -2; offset <= 2; offset += 1) {
+      low |= occupancyLow[index + offset] || 0;
+      high |= occupancyHigh[index + offset] || 0;
+    }
+    const continuity = (bitCount32(low) + bitCount32(high)) / tangentBinCount;
+    candidates.push({ index, projection, score: smooth[index], continuity });
   }
 
   candidates.sort((left, right) => right.score - left.score);
@@ -153,9 +172,8 @@ function evaluateStringAngle(gray, width, height, angle) {
       const spacingScore = clamp(1 - variation / Math.max(0.006, averageGap));
       const countScore = clamp((sequence.length - 2) / 4);
       const peakScore = clamp(sequence.reduce((sum, entry) => sum + entry.score / Math.max(threshold, 1), 0) / sequence.length / 2);
-      const averageSupport = sequence.reduce((sum, entry) => sum + entry.support, 0) / sequence.length;
-      const supportScore = clamp(averageSupport / Math.max(20, Math.min(width, height) * 0.55));
-      const sequenceScore = countScore * 0.34 + spacingScore * 0.2 + peakScore * 0.12 + supportScore * 0.34;
+      const continuityScore = sequence.reduce((sum, entry) => sum + entry.continuity, 0) / sequence.length;
+      const sequenceScore = countScore * 0.25 + spacingScore * 0.15 + peakScore * 0.1 + continuityScore * 0.5;
       if (sequenceScore > bestSequenceScore) {
         bestSequenceScore = sequenceScore;
         bestSequence = sequence;
@@ -199,7 +217,7 @@ export function detectStringBand(imageData, width, height) {
   for (const angle of angles) {
     const candidate = evaluateStringAngle(gray, width, height, angle);
     if (!candidate) continue;
-    const score = candidate.confidence + Math.min(candidate.count, 6) * 0.025;
+    const score = candidate.confidence;
     if (!best || score > best.score) best = { ...candidate, score };
   }
   if (!best) return { count: 0, confidence: 0, rows: [], lines: [], angle: 0, band: null };
