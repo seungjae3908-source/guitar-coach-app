@@ -1,5 +1,7 @@
-export const LOW_FPS_HAND_HOLD_MS = 2200;
-export const RELAXED_STRUM_DISTANCE = 2.65;
+export const LOW_FPS_HAND_HOLD_MS = 650;
+export const STRUM_EVENT_HOLD_MS = 420;
+export const MAX_STRUM_ZONE_DISTANCE = 1.55;
+export const MIN_STRUM_FRET_MARGIN = 0.18;
 
 function asHands(roles) {
   return Array.isArray(roles) ? roles.filter(Boolean) : [];
@@ -15,6 +17,10 @@ function roleConfidence(hand) {
 
 function strumDistance(hand) {
   return Number.isFinite(hand?.strumDistance) ? hand.strumDistance : Number.POSITIVE_INFINITY;
+}
+
+function fretDistance(hand) {
+  return Number.isFinite(hand?.fretDistance) ? hand.fretDistance : Number.POSITIVE_INFINITY;
 }
 
 function sameStableIdentity(hand, cached) {
@@ -35,41 +41,59 @@ function markRecovered(hand, recoverySource, inferred = false) {
   return hand ? { ...hand, recoverySource, inferred } : null;
 }
 
+function spatiallyLooksLikeStrum(hand) {
+  const strum = strumDistance(hand);
+  const fret = fretDistance(hand);
+  return strum <= MAX_STRUM_ZONE_DISTANCE && fret - strum >= MIN_STRUM_FRET_MARGIN;
+}
+
+export function isCountableStrumHand(hand) {
+  if (!hasPickPoint(hand) || hand?.inferred || hand?.role === 'fret') return false;
+  if (hand.role === 'strum') {
+    return roleConfidence(hand) >= 0.12 && strumDistance(hand) <= MAX_STRUM_ZONE_DISTANCE;
+  }
+  return hand.recoverySource === 'identity' && spatiallyLooksLikeStrum(hand);
+}
+
 export function selectRecoveredStrumHand({
   roles = [],
   cached = null,
   now = 0,
   lastSeenAt = 0,
-  holdMs = LOW_FPS_HAND_HOLD_MS,
+  holdMs = STRUM_EVENT_HOLD_MS,
 } = {}) {
   const candidates = asHands(roles).filter(hasPickPoint);
 
   const explicit = candidates
-    .filter((hand) => hand.role === 'strum')
+    .filter((hand) => hand.role === 'strum' && spatiallyLooksLikeStrum(hand))
     .sort((a, b) => roleConfidence(b) - roleConfidence(a))[0];
   if (explicit) return markRecovered(explicit, 'explicit');
 
-  const identityMatch = candidates.find((hand) => sameStableIdentity(hand, cached));
+  const cachedWasVerifiedStrum = cached?.role === 'strum' && !cached?.inferred;
+  const identityMatch = cachedWasVerifiedStrum
+    ? candidates.find((hand) => (
+      hand.role !== 'fret' &&
+      sameStableIdentity(hand, cached) &&
+      spatiallyLooksLikeStrum(hand)
+    ))
+    : null;
   if (identityMatch) return markRecovered(identityMatch, 'identity');
 
-  const nearest = [...candidates].sort((a, b) => strumDistance(a) - strumDistance(b))[0];
-  if (nearest && strumDistance(nearest) <= RELAXED_STRUM_DISTANCE) {
-    return markRecovered(nearest, 'nearest-zone');
-  }
-
-  const nonFret = candidates
-    .filter((hand) => hand.role !== 'fret')
-    .sort((a, b) => roleConfidence(b) - roleConfidence(a))[0];
-  if (nonFret) return markRecovered(nonFret, 'non-fret');
-
-  if (candidates.length === 1) return markRecovered(candidates[0], 'single-hand');
-
   const age = Number(now) - Number(lastSeenAt || 0);
-  if (hasPickPoint(cached) && age >= 0 && age <= holdMs) {
+  if (cachedWasVerifiedStrum && hasPickPoint(cached) && age >= 0 && age <= holdMs) {
     return markRecovered(cached, 'sticky-cache', true);
   }
 
   return null;
+}
+
+export function chooseDistinctFretHand(roles = [], strumHand = null) {
+  return asHands(roles)
+    .filter((hand) => (
+      hand.role === 'fret' &&
+      (strumHand?.trackId == null || hand.trackId !== strumHand.trackId)
+    ))
+    .sort((a, b) => roleConfidence(b) - roleConfidence(a))[0] || null;
 }
 
 export function preserveDetectedHands({
