@@ -126,8 +126,9 @@ center = center.replaceAll('관절+지역 움직임', '관절 우선·영상 보
 
 center = replaceRegexOnce(
   center,
-  /x:\s*pinch\.x\s*\*\s*0\.78\s*\+\s*palmCenter\.x\s*\*\s*0\.22,\s*y:\s*pinch\.y\s*\*\s*0\.78\s*\+\s*palmCenter\.y\s*\*\s*0\.22,?/,
-  'x: pinch.x * 1.2 - palmCenter.x * 0.2,\n          y: pinch.y * 1.2 - palmCenter.y * 0.2',
+  /x:\s*([A-Za-z_$][\w$]*)\.x\s*\*\s*0\.78\s*\+\s*([A-Za-z_$][\w$]*)\.x\s*\*\s*0\.22,\s*y:\s*\1\.y\s*\*\s*0\.78\s*\+\s*\2\.y\s*\*\s*0\.22,?/,
+  (_match, pinchName, palmName) =>
+    `x: ${pinchName}.x * 1.2 - ${palmName}.x * 0.2,\n          y: ${pinchName}.y * 1.2 - ${palmName}.y * 0.2`,
   'projected pick-tip tracking point',
 );
 
