@@ -50,11 +50,13 @@ function patchAutomaticCount(source) {
 
   const assignmentStart = header.index + assignment.index;
   const assignmentEnd = assignmentStart + assignment[0].length;
-  const lineStart = source.lastIndexOf('\n', assignmentStart) + 1;
-  const indent = source.slice(lineStart, assignmentStart);
+  const headerLineStart = source.lastIndexOf('\n', header.index) + 1;
+  const headerIndent = source.slice(headerLineStart, header.index).match(/^\s*/)?.[0] || '';
+  const indent = `${headerIndent}  `;
   const requestedExpression = assignment[1].trim();
   const replacement = [
-    `const requestedTarget = ${requestedExpression};`,
+    '',
+    `${indent}const requestedTarget = ${requestedExpression};`,
     `${indent}const ${targetName} = requestedTarget === 'down' || requestedTarget === 'up'`,
     `${indent}  ? requestedTarget`,
     `${indent}  : ${directionName};`,
