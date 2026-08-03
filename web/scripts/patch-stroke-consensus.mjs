@@ -116,19 +116,19 @@ center = replaceOnce(
 center = replaceRegexOnce(
   center,
   /new SimpleDirectionalTracker\(\)/,
-  "new SegmentDirectionalTracker({ cooldownMs: 150, maximumCrossingMs: 900, maximumSampleGapMs: 460, minimumTravel: 0.016, partialTravel: 0.008, minimumCenterTravel: 0.009, centerDeadZoneRatio: 0.03, minimumCenterDeadZone: 0.0025, maximumCenterDeadZone: 0.0055 })",
-  'landmark compact wrist tracker',
+  "new SegmentDirectionalTracker({ cooldownMs: 105, maximumCrossingMs: 760, maximumSampleGapMs: 460, minimumTravel: 0.012, partialTravel: 0.006, minimumCenterTravel: 0.0065, centerDeadZoneRatio: 0.02, minimumCenterDeadZone: 0.0022, maximumCenterDeadZone: 0.0042 })",
+  'small wrist landmark tracker',
 );
 
 center = patchStrokeGate(center);
 center = center.replaceAll('빠른 동작 보간', '관절 누락 보완');
 center = center.replaceAll('관절+지역 움직임', '관절 우선·영상 보완');
 
-center = replaceRegexOptional(
+center = replaceRegexOnce(
   center,
-  /x:\s*pinch\.x\s*\*\s*0\.78\s*\+\s*palmCenter\.x\s*\*\s*0\.22,\s*\n\s*y:\s*pinch\.y\s*\*\s*0\.78\s*\+\s*palmCenter\.y\s*\*\s*0\.22,/,
-  'x: pinch.x * 0.72 + palmCenter.x * 0.28,\n          y: pinch.y * 0.72 + palmCenter.y * 0.28,',
-  'stable pick-point weighting',
+  /x:\s*pinch\.x\s*\*\s*0\.78\s*\+\s*palmCenter\.x\s*\*\s*0\.22,\s*y:\s*pinch\.y\s*\*\s*0\.78\s*\+\s*palmCenter\.y\s*\*\s*0\.22,/,
+  'x: pinch.x * 1.2 - palmCenter.x * 0.2,\n          y: pinch.y * 1.2 - palmCenter.y * 0.2,',
+  'projected pick-tip tracking point',
 );
 
 center = replaceRegexOptional(
@@ -149,9 +149,9 @@ if (!vision.includes("from './stroke-consensus-policy.js'")) {
 vision = replaceOnce(
   vision,
   '    this.tracker = new SimpleDirectionalTracker({ cooldownMs: 135, maximumCrossingMs: 650, minimumTravel: 0.024 });',
-  '    this.tracker = new SegmentDirectionalTracker({ cooldownMs: 220, maximumCrossingMs: 900, maximumSampleGapMs: 480, minimumTravel: 0.028, partialTravel: 0.017, minimumCenterTravel: 0.015, centerDeadZoneRatio: 0.04, minimumCenterDeadZone: 0.0035, maximumCenterDeadZone: 0.007 });',
-  'motion compact wrist fallback tracker',
+  '    this.tracker = new SegmentDirectionalTracker({ cooldownMs: 110, maximumCrossingMs: 760, maximumSampleGapMs: 480, minimumTravel: 0.018, partialTravel: 0.009, minimumCenterTravel: 0.009, centerDeadZoneRatio: 0.025, minimumCenterDeadZone: 0.0028, maximumCenterDeadZone: 0.005 });',
+  'small local-motion fallback tracker',
 );
 writeFileSync(visionPath, vision);
 
-console.log('Applied compact center-crossing sensitivity, return-stroke rearming, and duplicate suppression.');
+console.log('Applied projected pick-tip tracking, 56ms hand sampling, compact center crossing, and duplicate suppression.');
