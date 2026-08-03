@@ -63,6 +63,27 @@ test('segment tracker catches a full down and up crossing', () => {
   assert.equal(tracker.sample({ point: point(-0.2), band, timestamp: 220 }), 'up');
 });
 
+test('segment tracker recognizes a natural wrist stroke without leaving the string band', () => {
+  const tracker = new SegmentDirectionalTracker({
+    cooldownMs: 0,
+    minimumCenterTravel: 0.012,
+  });
+  assert.equal(tracker.sample({ point: point(-0.024), band, timestamp: 0 }), null);
+  assert.equal(tracker.sample({ point: point(-0.004), band, timestamp: 90 }), null);
+  assert.equal(tracker.sample({ point: point(0.022), band, timestamp: 180 }), 'down');
+  assert.equal(tracker.sample({ point: point(0.003), band, timestamp: 270 }), null);
+  assert.equal(tracker.sample({ point: point(-0.023), band, timestamp: 360 }), 'up');
+});
+
+test('segment tracker catches a compact low-fps center crossing', () => {
+  const tracker = new SegmentDirectionalTracker({
+    cooldownMs: 0,
+    minimumCenterTravel: 0.012,
+  });
+  assert.equal(tracker.sample({ point: point(-0.02), band, timestamp: 0 }), null);
+  assert.equal(tracker.sample({ point: point(0.02), band, timestamp: 120 }), 'down');
+});
+
 test('segment tracker infers a low-fps crossing when the first sample lands inside the band', () => {
   const tracker = new SegmentDirectionalTracker({ cooldownMs: 0, partialTravel: 0.01 });
   assert.equal(tracker.sample({ point: point(0), band, timestamp: 0 }), null);
@@ -73,15 +94,22 @@ test('segment tracker infers a low-fps crossing when the first sample lands insi
   assert.equal(tracker.sample({ point: point(-0.18), band, timestamp: 90 }), 'up');
 });
 
-test('segment tracker rejects small jitter inside the string band', () => {
-  const tracker = new SegmentDirectionalTracker({ cooldownMs: 0, partialTravel: 0.02 });
-  assert.equal(tracker.sample({ point: point(-0.01), band, timestamp: 0 }), null);
-  assert.equal(tracker.sample({ point: point(0.005), band, timestamp: 80 }), null);
-  assert.equal(tracker.sample({ point: point(-0.004), band, timestamp: 160 }), null);
+test('segment tracker rejects small jitter around the string center', () => {
+  const tracker = new SegmentDirectionalTracker({ cooldownMs: 0 });
+  for (const [timestamp, y] of [[0, -0.003], [80, 0.002], [160, -0.002], [240, 0.003]]) {
+    assert.equal(tracker.sample({ point: point(y), band, timestamp }), null);
+  }
+});
+
+test('segment tracker rejects one-sided movement that never crosses the center', () => {
+  const tracker = new SegmentDirectionalTracker({ cooldownMs: 0 });
+  for (const [timestamp, y] of [[0, -0.045], [80, -0.03], [160, -0.018], [240, -0.012]]) {
+    assert.equal(tracker.sample({ point: point(y), band, timestamp }), null);
+  }
 });
 
 test('segment tracker resets after a long detector gap', () => {
   const tracker = new SegmentDirectionalTracker({ cooldownMs: 0, maximumSampleGapMs: 300 });
-  assert.equal(tracker.sample({ point: point(-0.2), band, timestamp: 0 }), null);
-  assert.equal(tracker.sample({ point: point(0.2), band, timestamp: 500 }), null);
+  assert.equal(tracker.sample({ point: point(-0.02), band, timestamp: 0 }), null);
+  assert.equal(tracker.sample({ point: point(0.02), band, timestamp: 500 }), null);
 });
