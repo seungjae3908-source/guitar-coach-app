@@ -26,6 +26,14 @@ type ContactState = {
   stringNumber: number;
 };
 
+type MotionPolicy = {
+  minimumElapsedMs: number;
+  minimumMovement: number;
+  minimumSideDistanceRatio: number;
+  minimumSideDistance: number;
+  cooldownMs: number;
+};
+
 const PICK_CATEGORIES = new Set<PracticeCategoryId>([
   'strumming',
   'downPicking',
@@ -49,6 +57,22 @@ const TIP_NAMES: Partial<Record<StringContactId, HandLandmarkPoint['name']>> = {
   middle: 'middleTip',
   ring: 'ringTip',
   pinky: 'pinkyTip',
+};
+
+const PICK_MOTION_POLICY: MotionPolicy = {
+  minimumElapsedMs: 35,
+  minimumMovement: 0.035,
+  minimumSideDistanceRatio: 0,
+  minimumSideDistance: 0,
+  cooldownMs: 75,
+};
+
+const FINGER_MOTION_POLICY: MotionPolicy = {
+  minimumElapsedMs: 20,
+  minimumMovement: 0.014,
+  minimumSideDistanceRatio: 0.035,
+  minimumSideDistance: 0.0012,
+  cooldownMs: 105,
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -103,6 +127,10 @@ function contactIds(category: PracticeCategoryId): StringContactId[] {
   return [];
 }
 
+function motionPolicy(category: PracticeCategoryId) {
+  return FINGER_CATEGORIES.has(category) ? FINGER_MOTION_POLICY : PICK_MOTION_POLICY;
+}
+
 function directionFromMotion(previous: ContactState, point: Point, signed: number): 'down' | 'up' | 'unknown' {
   const signedChange = signed - previous.signedDistance;
   if (Math.abs(signedChange) >= 0.0025) return signedChange > 0 ? 'down' : 'up';
@@ -144,6 +172,12 @@ export class RightHandMotionTracker {
     const palmSize = palmWrist && middleMcp ? distance(palmWrist, middleMcp) : 0;
     if (palmSize < 0.045 || result.handednessScore < 0.32) return [];
 
+    const policy = motionPolicy(category);
+    const isFingerCategory = FINGER_CATEGORIES.has(category);
+    const minimumSideDistance = Math.max(
+      policy.minimumSideDistance,
+      spacing * policy.minimumSideDistanceRatio,
+    );
     const hits: InferredRightHandHit[] = [];
     contactIds(category).forEach((id) => {
       const point = pointForContact(id, result, landmarks);
@@ -169,19 +203,23 @@ export class RightHandMotionTracker {
       if (!previous) return;
 
       const elapsedMs = capturedAt - previous.capturedAt;
-      if (elapsedMs < 35 || elapsedMs > 650) return;
+      if (elapsedMs < policy.minimumElapsedMs || elapsedMs > 650) return;
       const movement = distance(previous.point, point) / Math.max(0.001, palmSize);
       const crossedSide = previous.signedDistance * nearest.signed <= 0
         && Math.abs(previous.signedDistance) <= spacing * 1.15
-        && Math.abs(nearest.signed) <= spacing * 1.15;
+        && Math.abs(nearest.signed) <= spacing * 1.15
+        && (!isFingerCategory || (
+          Math.abs(previous.signedDistance) >= minimumSideDistance
+          && Math.abs(nearest.signed) >= minimumSideDistance
+        ));
       const changedLine = previous.visualIndex > 0
         && visualIndex > 0
         && previous.visualIndex !== visualIndex
         && (previous.distanceRatio <= 1.35 || ratio <= 1.35);
-      if ((!crossedSide && !changedLine) || movement < 0.035) return;
+      if ((!crossedSide && !changedLine) || movement < policy.minimumMovement) return;
 
       const lastHit = this.lastHitAt.get(id) ?? 0;
-      if (capturedAt - lastHit < 75) return;
+      if (capturedAt - lastHit < policy.cooldownMs) return;
       const direction = directionFromMotion(previous, point, nearest.signed);
       const handConfidence = clamp(result.handednessScore, 0, 1);
       const stringConfidence = clamp(
