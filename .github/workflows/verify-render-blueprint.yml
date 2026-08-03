@@ -57,15 +57,13 @@ jobs:
             exit 1
           fi
 
-      - name: Install Render CLI
+      - name: Validate against official Render schema
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/render-oss/cli/main/bin/install.sh | sh
-          echo "$HOME/.render/bin" >> "$GITHUB_PATH"
-
-      - name: Validate Blueprint schema
-        run: render blueprints validate render.yaml
+          curl -fsSL https://render.com/schema/render.yaml.json -o /tmp/render-schema.json
+          ruby -ryaml -rjson -e 'puts JSON.generate(YAML.safe_load(File.read("render.yaml"), permitted_classes: [], permitted_symbols: [], aliases: false))' > /tmp/render-blueprint.json
+          npx --yes ajv-cli@5 validate --spec=draft2020 -s /tmp/render-schema.json -d /tmp/render-blueprint.json
 
       - name: Verify Web Service build and start commands
         working-directory: debug-server
