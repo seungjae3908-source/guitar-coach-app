@@ -10,6 +10,9 @@ function replaceOnce(source, before, after, label) {
 
 const centerPath = resolve(process.cwd(), 'src/AdaptiveDebugCenter.jsx');
 let center = readFileSync(centerPath, 'utf8');
+if (!center.includes("from './motion-sampling-policy.js'")) {
+  center = "import { HAND_SAMPLE_INTERVAL_MS, MOTION_SAMPLE_INTERVAL_MS, POSE_SAMPLE_INTERVAL_MS } from './motion-sampling-policy.js';\n" + center;
+}
 if (!center.includes("from './guitar-pose-policy.js'")) {
   center = "import { stabilizeGuitarPose } from './guitar-pose-policy.js';\n" + center;
 }
@@ -58,6 +61,30 @@ center = replaceOnce(
 );
 center = replaceOnce(
   center,
+  '      recentHandAt: lastStrumHandAtRef.current,\n      globalMotion,',
+  '      recentHandAt: lastStrumHandAtRef.current,\n      anchorPoint: lastStrumHandRef.current?.pickPoint || visionRef.current.pickPoint || null,\n      globalMotion,',
+  'anchored local motion input',
+);
+center = replaceOnce(
+  center,
+  '    if (timestamp - lastHandAtRef.current >= 34) {',
+  '    if (timestamp - lastHandAtRef.current >= HAND_SAMPLE_INTERVAL_MS) {',
+  'hand sampling cadence',
+);
+center = replaceOnce(
+  center,
+  '    if (timestamp - lastMotionAtRef.current >= 42) {',
+  '    if (timestamp - lastMotionAtRef.current >= MOTION_SAMPLE_INTERVAL_MS) {',
+  'motion sampling cadence',
+);
+center = replaceOnce(
+  center,
+  '    if (timestamp - lastPoseAtRef.current >= 520) {',
+  '    if (timestamp - lastPoseAtRef.current >= POSE_SAMPLE_INTERVAL_MS) {',
+  'pose sampling cadence',
+);
+center = replaceOnce(
+  center,
   '    motionTrackerRef.current.reset();\n    const context = overlayRef.current?.getContext(\'2d\');',
   '    motionTrackerRef.current.reset();\n    lastStrumHandAtRef.current = 0;\n    lastStrumHandRef.current = null;\n    poseStabilityRef.current = { pendingAngle: null, pendingCount: 0 };\n    const context = overlayRef.current?.getContext(\'2d\');',
   'camera reset clears role and pose memory',
@@ -66,6 +93,9 @@ writeFileSync(centerPath, center);
 
 const visionPath = resolve(process.cwd(), 'src/adaptive-guitar-vision.js');
 let vision = readFileSync(visionPath, 'utf8');
+if (!vision.includes("from './motion-sampling-policy.js'")) {
+  vision = "import { LOCAL_MOTION_ANCHOR_RADIUS, isLocalMotionReady } from './motion-sampling-policy.js';\n" + vision;
+}
 if (!vision.includes("from './strum-role-policy.js'")) {
   vision = "import { isStrumHandRecent } from './strum-role-policy.js';\n" + vision;
 }
@@ -77,22 +107,34 @@ vision = replaceOnce(
 );
 vision = replaceOnce(
   vision,
+  '  update({ imageData, width, height, pose, timestamp, recentHandAt = 0, globalMotion = 0 }) {',
+  '  update({ imageData, width, height, pose, timestamp, recentHandAt = 0, anchorPoint = null, globalMotion = 0 }) {',
+  'local motion anchor argument',
+);
+vision = replaceOnce(
+  vision,
+  '        if (normalizedZoneDistance(point, zone, axis) > 1.2) continue;\n        const index = y * width + x;',
+  '        if (normalizedZoneDistance(point, zone, axis) > 1.2) continue;\n        if (anchorPoint && Math.hypot(point.x - anchorPoint.x, point.y - anchorPoint.y) > LOCAL_MOTION_ANCHOR_RADIUS) continue;\n        const index = y * width + x;',
+  'local motion anchor radius',
+);
+vision = replaceOnce(
+  vision,
   '    if (activePixels < 8 || totalWeight < 180 || globalMotion > 38) return { point: null, event: null, confidence: 0 };',
-  '    if (activePixels < 6 || totalWeight < 130 || globalMotion > 38) return { point: null, event: null, confidence: 0 };',
+  '    if (activePixels < 4 || totalWeight < 80 || globalMotion > 38) return { point: null, event: null, confidence: 0 };',
   'low-fps active motion threshold',
 );
 vision = replaceOnce(
   vision,
   '    const confidence = clamp(activePixels / 75) * clamp(totalWeight / 1800);',
-  '    const confidence = clamp(activePixels / 60) * clamp(totalWeight / 1400);',
-  'low-fps motion confidence',
+  '    const confidence = clamp(activePixels / 32) * clamp(totalWeight / 700);',
+  'anchored low-fps motion confidence',
 );
 vision = replaceOnce(
   vision,
   '    const handRecent = Number(timestamp) - Number(recentHandAt || 0) <= 320;\n    const event = this.tracker.sample({ point, band: pose.stringBand, timestamp, ready: handRecent && confidence >= 0.12 });',
-  '    const handRecent = isStrumHandRecent(timestamp, recentHandAt);\n    const event = this.tracker.sample({ point, band: pose.stringBand, timestamp, ready: handRecent && confidence >= 0.08 });',
-  'recent hand and motion gate',
+  '    const handRecent = isStrumHandRecent(timestamp, recentHandAt);\n    const event = this.tracker.sample({ point, band: pose.stringBand, timestamp, ready: isLocalMotionReady({ confidence, handRecent, anchorPoint }) });',
+  'recent anchored hand and motion gate',
 );
 writeFileSync(visionPath, vision);
 
-console.log('Applied sticky strum-hand and stable guitar-angle runtime patches.');
+console.log('Applied sticky hand, stable angle, and anchored low-FPS motion patches.');
