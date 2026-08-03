@@ -2,25 +2,27 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 import * as mobilenet from '@tensorflow-models/mobilenet';
 import * as tf from '@tensorflow/tfjs';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { sendLiveDiagnostics } from './live-telemetry.js';
 import './debug-center.css';
 import {
-  DirectionalStrumTracker,
+  HandRoleResolver,
   canCountStrum,
   combinedGuitarConfidence,
   detectStringBand,
   guitarPredictionScore,
+  projectPointToBand,
 } from './vision-logic.js';
 
 const TESTS = [
-  { id: 'camera', title: '카메라 연결', instruction: '카메라를 허용하고 기타와 오른손이 화면에 보이도록 휴대폰을 세워 주세요.' },
-  { id: 'feed', title: '실제 영상 확인', instruction: '렌즈를 가리지 말고 실제 영상이 보이는 상태를 3초간 유지해 주세요.' },
-  { id: 'hand', title: '오른손 21관절', instruction: '오른손 전체와 손가락 끝이 잘리지 않게 화면에 3초간 보여 주세요.' },
-  { id: 'guitar', title: '기타 인식', instruction: '기타 몸통과 브리지, 오른손이 함께 보이게 각도를 맞춰 주세요.' },
-  { id: 'strings', title: '기타 줄 인식', instruction: '기타 줄 4개 이상이 선명하게 보이도록 브리지 쪽에 초점을 맞춰 주세요.' },
-  { id: 'down', title: '다운 스트럼', instruction: '손·기타·줄 표시가 모두 초록색일 때 줄을 위에서 아래로 5번 가로질러 주세요.' },
-  { id: 'up', title: '업 스트럼', instruction: '손·기타·줄 표시가 모두 초록색일 때 줄을 아래에서 위로 5번 가로질러 주세요.' },
-  { id: 'voice', title: '음성 안내', instruction: '음성 테스트를 누르고 실제로 들리는지 선택해 주세요.' },
-  { id: 'complete', title: '진단 완료', instruction: '모든 실제 인식 검사가 통과했습니다. 진단 결과를 저장할 수 있습니다.' },
+  { id: 'camera', title: '전면카메라 연결', instruction: '전면카메라를 허용하세요. 기타는 중앙에 맞출 필요가 없고 화면 아래나 사선이어도 됩니다.' },
+  { id: 'feed', title: '실제 영상 확인', instruction: '렌즈를 가리지 말고 실제 영상이 보이는 상태를 잠시 유지하세요.' },
+  { id: 'hand', title: '양손 관절 인식', instruction: '왼손과 오른손을 동시에 추적합니다. 한 손만 보여도 검사는 진행되고 두 손이 보이면 둘 다 표시됩니다.' },
+  { id: 'guitar', title: '기타 인식', instruction: '기타 몸통 일부와 실제 줄, 연주 손이 함께 보이면 됩니다. 위치를 억지로 중앙에 맞추지 마세요.' },
+  { id: 'strings', title: '사선 기타 줄 인식', instruction: '수평뿐 아니라 기울어진 줄을 실제로 보이는 구간 안에서만 찾습니다.' },
+  { id: 'down', title: '다운 스트럼', instruction: '평소 자세 그대로 다운 스트럼을 하세요. 실제 줄 영역을 위에서 아래로 통과한 오른손만 계산합니다.' },
+  { id: 'up', title: '업 스트럼', instruction: '평소 자세 그대로 업 스트럼을 하세요. 실제 줄 영역을 아래에서 위로 통과한 오른손만 계산합니다.' },
+  { id: 'voice', title: '음성 안내', instruction: '음성 테스트를 눌러 안내가 들리는지 확인하세요.' },
+  { id: 'complete', title: '진단 완료', instruction: '검사가 끝났습니다. 원격 로그와 JSON 결과를 확인할 수 있습니다.' },
 ];
 
 const HAND_CONNECTIONS = [
@@ -28,52 +30,33 @@ const HAND_CONNECTIONS = [
   [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16],
   [13, 17], [17, 18], [18, 19], [19, 20], [0, 17],
 ];
-const initialResults = Object.fromEntries(TESTS.map((test) => [test.id, { status: 'pending', note: '' }]));
+
+const emptyVision = () => ({
+  hands: [],
+  selectedTrackId: null,
+  selectedHandedness: '미선택',
+  strumHandSelected: false,
+  handConfidence: 0,
+  handLandmarks: [],
+  pickPoint: null,
+  guitarModelScore: 0,
+  guitarLabel: '',
+  guitarConfidence: 0,
+  guitarAngle: 0,
+  guitarCenter: null,
+  stringCount: 0,
+  stringConfidence: 0,
+  stringRows: [],
+  stringLines: [],
+  stringAngle: 0,
+  stringBand: null,
+  lastDirection: 'none',
+  lockReason: '카메라 시작 전',
+});
+
+const initialResults = () => Object.fromEntries(TESTS.map((test) => [test.id, { status: 'pending', note: '' }]));
 const nowLabel = () => new Date().toLocaleTimeString('ko-KR', { hour12: false });
-const makeCode = () => `${Math.random().toString(36).slice(2, 5)}-${Math.random().toString(36).slice(2, 5)}`.toUpperCase();
 const percent = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
-
-async function digest(value) {
-  const data = new TextEncoder().encode(value);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function LoginGate({ onUnlock }) {
-  const [pin, setPin] = useState('');
-  const [confirmPin, setConfirmPin] = useState('');
-  const [error, setError] = useState('');
-  const stored = localStorage.getItem('gc-debug-pin-hash');
-  const setup = !stored;
-
-  const submit = async (event) => {
-    event.preventDefault();
-    setError('');
-    if (!/^\d{4,8}$/.test(pin)) return setError('숫자 4~8자리로 입력해 주세요.');
-    const hashed = await digest(pin);
-    if (setup) {
-      if (pin !== confirmPin) return setError('두 비밀번호가 다릅니다.');
-      localStorage.setItem('gc-debug-pin-hash', hashed);
-    } else if (hashed !== stored) return setError('비밀번호가 맞지 않습니다.');
-    sessionStorage.setItem('gc-debug-unlocked', '1');
-    onUnlock();
-  };
-
-  return (
-    <div className="debug-login-shell">
-      <form className="debug-login-card" onSubmit={submit}>
-        <div className="debug-logo">GC</div>
-        <span className="debug-kicker">GUITAR COACH VISION TEST</span>
-        <h1>{setup ? '진단센터 비밀번호 만들기' : '진단센터 로그인'}</h1>
-        <p>영상은 기기 안에서 분석합니다. 원본 영상 전송은 기본적으로 꺼져 있습니다.</p>
-        <label>비밀번호<input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 8))} inputMode="numeric" type="password" autoFocus /></label>
-        {setup ? <label>비밀번호 확인<input value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, '').slice(0, 8))} inputMode="numeric" type="password" /></label> : null}
-        {error ? <div className="debug-error">{error}</div> : null}
-        <button className="debug-primary" type="submit">{setup ? '저장하고 시작' : '로그인'}</button>
-      </form>
-    </div>
-  );
-}
 
 function StatusPill({ status }) {
   const labels = { pending: '대기', active: '검사 중', pass: '통과', fail: '판정 불가' };
@@ -91,35 +74,36 @@ function DeviceCenter() {
   const streamRef = useRef(null);
   const animationRef = useRef(0);
   const currentIdRef = useRef('camera');
-  const lastFrameAtRef = useRef(0);
+  const lastHandFrameRef = useRef(0);
+  const lastImageFrameRef = useRef(0);
+  const lastUiFrameRef = useRef(0);
   const frameTimesRef = useRef([]);
   const previousGrayRef = useRef(null);
   const stableRef = useRef({ feed: 0, hand: 0, guitar: 0, strings: 0 });
   const modelRef = useRef({ loading: null, hand: null, guitar: null, error: '' });
-  const handBusyRef = useRef(false);
   const guitarBusyRef = useRef(false);
   const lastGuitarRunRef = useRef(0);
-  const visionRef = useRef({ handConfidence: 0, handLandmarks: [], pickPoint: null, guitarModelScore: 0, guitarLabel: '', guitarConfidence: 0, stringCount: 0, stringConfidence: 0, stringRows: [], stringBand: null });
-  const trackerRef = useRef(new DirectionalStrumTracker());
+  const visionRef = useRef(emptyVision());
+  const handRoleRef = useRef(new HandRoleResolver());
   const countsRef = useRef({ down: 0, up: 0 });
-  const [sessionCode] = useState(() => localStorage.getItem('gc-debug-session') || makeCode());
+  const summaryRef = useRef({ maxHands: 0, maxGuitarConfidence: 0, maxStrings: 0, maxStringConfidence: 0, firstStrokeAt: 0, lastStrokeAt: 0 });
   const [running, setRunning] = useState(false);
-  const [facing, setFacing] = useState('environment');
   const [results, setResults] = useState(initialResults);
   const [currentId, setCurrentId] = useState('camera');
-  const [banner, setBanner] = useState('테스트 시작을 누르면 실제 AI 인식 결과로만 단계가 진행됩니다.');
+  const [banner, setBanner] = useState('테스트 시작을 누르면 전면카메라에서 실제 인식 결과로 단계가 진행됩니다.');
   const [logs, setLogs] = useState([]);
   const [voiceResult, setVoiceResult] = useState('');
   const [modelStatus, setModelStatus] = useState({ hand: '대기', guitar: '대기', error: '' });
   const [stats, setStats] = useState({ fps: 0, brightness: 0, motion: 0, width: 0, height: 0, healthy: false });
   const [vision, setVision] = useState(visionRef.current);
   const [strokeCounts, setStrokeCounts] = useState({ down: 0, up: 0 });
+  const [remoteSessionCode, setRemoteSessionCode] = useState('');
+  const [remoteLogStatus, setRemoteLogStatus] = useState('테스트 시작 후 연결');
 
-  useEffect(() => { localStorage.setItem('gc-debug-session', sessionCode); }, [sessionCode]);
   useEffect(() => { currentIdRef.current = currentId; }, [currentId]);
   useEffect(() => () => stopCamera(), []);
 
-  const addLog = (message, level = 'info') => setLogs((items) => [{ at: nowLabel(), message, level }, ...items].slice(0, 100));
+  const addLog = (message, level = 'info') => setLogs((items) => [{ at: nowLabel(), message, level }, ...items].slice(0, 160));
   const updateResult = (id, status, note = '') => setResults((items) => ({ ...items, [id]: { status, note } }));
 
   const speak = (text) => {
@@ -131,14 +115,14 @@ function DeviceCenter() {
     window.speechSynthesis.speak(utterance);
   };
 
-  const activate = (id) => {
+  const activate = (id, { speakInstruction = true } = {}) => {
     const test = TESTS.find((item) => item.id === id);
     currentIdRef.current = id;
     setCurrentId(id);
     updateResult(id, 'active');
     if (test) {
       setBanner(test.instruction);
-      speak(test.instruction);
+      if (speakInstruction) speak(test.instruction);
     }
   };
 
@@ -162,8 +146,11 @@ function DeviceCenter() {
             modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
             delegate: 'GPU',
           },
-          runningMode: 'VIDEO', numHands: 1,
-          minHandDetectionConfidence: 0.55, minHandPresenceConfidence: 0.55, minTrackingConfidence: 0.5,
+          runningMode: 'VIDEO',
+          numHands: 2,
+          minHandDetectionConfidence: 0.45,
+          minHandPresenceConfidence: 0.45,
+          minTrackingConfidence: 0.42,
         });
         setModelStatus((status) => ({ ...status, hand: '준비 완료' }));
       } catch (error) {
@@ -183,7 +170,7 @@ function DeviceCenter() {
     return modelRef.current.loading;
   };
 
-  const drawOverlay = (landmarks, rows, width, height) => {
+  const drawOverlay = (hands, lines, width, height) => {
     const canvas = overlayRef.current;
     if (!canvas || !width || !height) return;
     canvas.width = width;
@@ -191,9 +178,13 @@ function DeviceCenter() {
     const context = canvas.getContext('2d');
     context.clearRect(0, 0, width, height);
     context.lineWidth = Math.max(2, width / 420);
-    context.strokeStyle = '#34d399';
-    context.fillStyle = '#34d399';
-    if (landmarks?.length === 21) {
+
+    for (const hand of hands || []) {
+      const landmarks = hand?.landmarks || [];
+      if (landmarks.length !== 21) continue;
+      const selected = Boolean(hand.isStrumming);
+      context.strokeStyle = selected ? '#f472b6' : '#34d399';
+      context.fillStyle = selected ? '#f472b6' : '#34d399';
       for (const [start, end] of HAND_CONNECTIONS) {
         context.beginPath();
         context.moveTo(landmarks[start].x * width, landmarks[start].y * height);
@@ -202,45 +193,30 @@ function DeviceCenter() {
       }
       for (const point of landmarks) {
         context.beginPath();
-        context.arc(point.x * width, point.y * height, Math.max(3, width / 220), 0, Math.PI * 2);
+        context.arc(point.x * width, point.y * height, Math.max(3, width / 230), 0, Math.PI * 2);
         context.fill();
       }
+      if (selected && hand.pickPoint) {
+        context.beginPath();
+        context.lineWidth = Math.max(4, width / 260);
+        context.arc(hand.pickPoint.x * width, hand.pickPoint.y * height, Math.max(8, width / 90), 0, Math.PI * 2);
+        context.stroke();
+      }
     }
-    context.strokeStyle = '#fbbf24';
-    for (const row of rows || []) {
-      context.beginPath();
-      context.moveTo(width * 0.08, (row / 180) * height);
-      context.lineTo(width * 0.92, (row / 180) * height);
-      context.stroke();
-    }
-  };
 
-  const processHand = (video, timestamp) => {
-    const handModel = modelRef.current.hand;
-    if (!handModel || handBusyRef.current || video.readyState < 2) return;
-    handBusyRef.current = true;
-    try {
-      const result = handModel.detectForVideo(video, timestamp);
-      const landmarks = result.landmarks?.[0] || [];
-      const category = result.handednesses?.[0]?.[0];
-      const confidence = landmarks.length === 21 ? Number(category?.score || 0.75) : 0;
-      const pickPoint = landmarks.length === 21 ? {
-        x: (landmarks[4].x + landmarks[8].x) / 2,
-        y: (landmarks[4].y + landmarks[8].y) / 2,
-      } : null;
-      visionRef.current.handLandmarks = landmarks;
-      visionRef.current.handConfidence = confidence;
-      visionRef.current.pickPoint = pickPoint;
-    } catch (error) {
-      setModelStatus((status) => ({ ...status, hand: '실행 오류', error: String(error?.message || error) }));
-    } finally {
-      handBusyRef.current = false;
+    context.strokeStyle = '#fbbf24';
+    context.lineWidth = Math.max(2, width / 360);
+    for (const line of lines || []) {
+      context.beginPath();
+      context.moveTo(line.start.x * width, line.start.y * height);
+      context.lineTo(line.end.x * width, line.end.y * height);
+      context.stroke();
     }
   };
 
   const processGuitar = async (video, timestamp) => {
     const guitarModel = modelRef.current.guitar;
-    if (!guitarModel || guitarBusyRef.current || timestamp - lastGuitarRunRef.current < 1300 || video.readyState < 2) return;
+    if (!guitarModel || guitarBusyRef.current || timestamp - lastGuitarRunRef.current < 1200 || video.readyState < 2) return;
     guitarBusyRef.current = true;
     lastGuitarRunRef.current = timestamp;
     try {
@@ -256,91 +232,191 @@ function DeviceCenter() {
     }
   };
 
-  const evaluateStage = (timestamp) => {
+  const reasonForLock = (evidence) => {
+    const reasons = [];
+    if (!(evidence.hands?.length > 0)) reasons.push('손 없음');
+    if (evidence.guitarConfidence < 0.3) reasons.push(`기타 ${percent(evidence.guitarConfidence)}`);
+    if (evidence.stringCount < 4) reasons.push(`줄 ${evidence.stringCount}개`);
+    if (evidence.stringConfidence < 0.32) reasons.push(`줄 신뢰도 ${percent(evidence.stringConfidence)}`);
+    if ((evidence.stringBand?.supportLength || 0) < 0.2) reasons.push('실제 줄 구간 부족');
+    if (!evidence.strumHandSelected) reasons.push('스트럼 손 미선택');
+    return reasons.join(' · ') || '준비 완료';
+  };
+
+  const evaluateStage = (timestamp, roleEvent = null) => {
     const id = currentIdRef.current;
     const evidence = visionRef.current;
     if (id === 'hand') {
-      stableRef.current.hand = evidence.handLandmarks.length === 21 && evidence.handConfidence >= 0.55 ? stableRef.current.hand + 1 : 0;
-      if (stableRef.current.hand >= 18) passAndNext('hand', `21관절 연속 검출 · 신뢰도 ${percent(evidence.handConfidence)}`);
+      const bestConfidence = Math.max(0, ...(evidence.hands || []).map((hand) => Number(hand.confidence || 0)));
+      stableRef.current.hand = evidence.hands?.length >= 1 && bestConfidence >= 0.45 ? stableRef.current.hand + 1 : 0;
+      if (stableRef.current.hand >= 12) passAndNext('hand', `${evidence.hands.length}손 관절 추적 · 최고 신뢰도 ${percent(bestConfidence)}`);
     } else if (id === 'guitar') {
-      stableRef.current.guitar = evidence.guitarConfidence >= 0.35 ? stableRef.current.guitar + 1 : 0;
-      if (stableRef.current.guitar >= 14) passAndNext('guitar', `기타 증거 신뢰도 ${percent(evidence.guitarConfidence)}`);
+      stableRef.current.guitar = evidence.guitarConfidence >= 0.3 ? stableRef.current.guitar + 1 : 0;
+      if (stableRef.current.guitar >= 9) passAndNext('guitar', `기타·줄 결합 신뢰도 ${percent(evidence.guitarConfidence)}`);
     } else if (id === 'strings') {
-      stableRef.current.strings = evidence.stringCount >= 4 && evidence.stringConfidence >= 0.42 ? stableRef.current.strings + 1 : 0;
-      if (stableRef.current.strings >= 14) passAndNext('strings', `${evidence.stringCount}개 평행 줄 · 신뢰도 ${percent(evidence.stringConfidence)}`);
+      const localized = Number(evidence.stringBand?.supportLength || 0) >= 0.2;
+      stableRef.current.strings = evidence.stringCount >= 4 && evidence.stringConfidence >= 0.32 && localized ? stableRef.current.strings + 1 : 0;
+      if (stableRef.current.strings >= 9) passAndNext('strings', `${evidence.stringCount}개 줄 · ${evidence.stringAngle > 0 ? '+' : ''}${evidence.stringAngle}° · 실제 구간 ${Math.round((evidence.stringBand?.supportLength || 0) * 100)}%`);
     }
 
     if (id === 'down' || id === 'up') {
       const ready = canCountStrum(evidence);
-      const direction = trackerRef.current.sample({ timestamp, pointY: evidence.pickPoint?.y, band: evidence.stringBand, ready });
-      if (direction === id) {
-        countsRef.current[id] += 1;
-        const nextCounts = { ...countsRef.current };
-        setStrokeCounts(nextCounts);
-        addLog(`${id === 'down' ? '다운' : '업'} 방향 실제 교차 ${nextCounts[id]}/5`);
-        if (nextCounts[id] >= 5) passAndNext(id, `${id === 'down' ? '위→아래' : '아래→위'} 줄 영역 교차 5회`);
+      if (roleEvent && ready) {
+        if (!summaryRef.current.firstStrokeAt) summaryRef.current.firstStrokeAt = Date.now();
+        summaryRef.current.lastStrokeAt = Date.now();
+        if (roleEvent === id) {
+          countsRef.current[id] += 1;
+          const nextCounts = { ...countsRef.current };
+          setStrokeCounts(nextCounts);
+          addLog(`${id === 'down' ? '다운' : '업'} 실제 교차 ${nextCounts[id]}/5 · 선택 손 ${evidence.selectedHandedness}`);
+          if (nextCounts[id] >= 5) passAndNext(id, `${id === 'down' ? '위→아래' : '아래→위'} 실제 줄 구간 교차 5회`);
+        } else {
+          addLog(`${id === 'down' ? '다운' : '업'} 점검 중 반대 방향 ${roleEvent === 'down' ? '다운' : '업'} 감지`, 'warn');
+        }
       }
-      if (!ready) updateResult(id, 'active', '손·기타·줄이 모두 인식될 때만 카운트합니다.');
+      evidence.lockReason = ready ? '방향 감지 준비 완료' : reasonForLock(evidence);
+      if (!ready) updateResult(id, 'active', evidence.lockReason);
+    }
+  };
+
+  const processHands = (video, timestamp) => {
+    const handModel = modelRef.current.hand;
+    if (!handModel || video.readyState < 2) return;
+    try {
+      const result = handModel.detectForVideo(video, timestamp);
+      const rawHands = (result.landmarks || []).slice(0, 2).map((landmarks, index) => {
+        const category = result.handednesses?.[index]?.[0];
+        const confidence = landmarks.length === 21 ? Number(category?.score || 0.75) : 0;
+        const fingertips = [4, 8, 12, 16, 20].map((pointIndex) => landmarks[pointIndex]).filter(Boolean);
+        const pickPoint = fingertips.length ? {
+          x: fingertips.reduce((sum, point) => sum + point.x, 0) / fingertips.length,
+          y: fingertips.reduce((sum, point) => sum + point.y, 0) / fingertips.length,
+        } : null;
+        return {
+          handedness: category?.categoryName || category?.displayName || 'Unknown',
+          confidence,
+          landmarks,
+          wrist: landmarks[0] || null,
+          pickPoint,
+        };
+      });
+
+      const role = handRoleRef.current.update({
+        timestamp,
+        hands: rawHands,
+        band: visionRef.current.stringBand,
+        ready: visionRef.current.stringCount >= 4 && visionRef.current.stringConfidence >= 0.28,
+      });
+      const selected = role.selectedHand;
+      const fallback = [...role.hands].sort((left, right) => {
+        const leftProjection = projectPointToBand(left.pickPoint, visionRef.current.stringBand);
+        const rightProjection = projectPointToBand(right.pickPoint, visionRef.current.stringBand);
+        const center = Number(visionRef.current.stringBand?.center || 0.5);
+        return Math.abs((leftProjection ?? 99) - center) - Math.abs((rightProjection ?? 99) - center);
+      })[0] || null;
+      const activeHand = selected || fallback;
+      const bestHandConfidence = Math.max(0, ...role.hands.map((hand) => Number(hand.confidence || 0)));
+
+      visionRef.current.hands = role.hands;
+      visionRef.current.selectedTrackId = role.selectedId;
+      visionRef.current.selectedHandedness = selected?.handedness || '자동 선택 중';
+      visionRef.current.strumHandSelected = Boolean(selected);
+      visionRef.current.handLandmarks = activeHand?.landmarks || [];
+      visionRef.current.handConfidence = activeHand?.confidence || bestHandConfidence;
+      visionRef.current.pickPoint = activeHand?.pickPoint || null;
+      visionRef.current.lastDirection = role.event || visionRef.current.lastDirection || 'none';
+      summaryRef.current.maxHands = Math.max(summaryRef.current.maxHands, role.hands.length);
+      evaluateStage(timestamp, role.event);
+    } catch (error) {
+      setModelStatus((status) => ({ ...status, hand: '실행 오류', error: String(error?.message || error) }));
+    }
+  };
+
+  const analyzeImage = (video, timestamp) => {
+    const canvas = analysisCanvasRef.current;
+    if (!canvas || video.readyState < 2) return;
+    canvas.width = 320;
+    canvas.height = 180;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(video, 0, 0, 320, 180);
+    const imageData = context.getImageData(0, 0, 320, 180);
+    let total = 0;
+    let motionTotal = 0;
+    const gray = new Uint8Array(320 * 180);
+    for (let pixel = 0, index = 0; pixel < imageData.data.length; pixel += 4, index += 1) {
+      const value = Math.round(imageData.data[pixel] * 0.299 + imageData.data[pixel + 1] * 0.587 + imageData.data[pixel + 2] * 0.114);
+      gray[index] = value;
+      total += value;
+      if (previousGrayRef.current) motionTotal += Math.abs(value - previousGrayRef.current[index]);
+    }
+    previousGrayRef.current = gray;
+    const brightness = total / gray.length;
+    const motion = motionTotal / gray.length;
+    const stringResult = detectStringBand(imageData, 320, 180);
+    const handPoint = visionRef.current.pickPoint;
+    const handConfidence = Math.max(visionRef.current.handConfidence, ...visionRef.current.hands.map((hand) => Number(hand.confidence || 0)), 0);
+
+    visionRef.current.stringCount = stringResult.count;
+    visionRef.current.stringConfidence = stringResult.confidence;
+    visionRef.current.stringRows = stringResult.rows;
+    visionRef.current.stringLines = stringResult.lines || [];
+    visionRef.current.stringAngle = stringResult.angle || 0;
+    visionRef.current.stringBand = stringResult.band;
+    visionRef.current.guitarAngle = stringResult.angle || 0;
+    const linePoints = (stringResult.lines || []).flatMap((line) => [line.start, line.end]);
+    visionRef.current.guitarCenter = linePoints.length ? {
+      x: linePoints.reduce((sum, point) => sum + point.x, 0) / linePoints.length,
+      y: linePoints.reduce((sum, point) => sum + point.y, 0) / linePoints.length,
+    } : null;
+    visionRef.current.guitarConfidence = combinedGuitarConfidence({
+      modelScore: visionRef.current.guitarModelScore,
+      stringConfidence: stringResult.confidence,
+      stringCount: stringResult.count,
+      handConfidence,
+      handPoint,
+      band: stringResult.band,
+    });
+    visionRef.current.lockReason = reasonForLock(visionRef.current);
+
+    summaryRef.current.maxGuitarConfidence = Math.max(summaryRef.current.maxGuitarConfidence, visionRef.current.guitarConfidence);
+    summaryRef.current.maxStrings = Math.max(summaryRef.current.maxStrings, stringResult.count);
+    summaryRef.current.maxStringConfidence = Math.max(summaryRef.current.maxStringConfidence, stringResult.confidence);
+
+    frameTimesRef.current.push(timestamp);
+    frameTimesRef.current = frameTimesRef.current.filter((time) => timestamp - time <= 1000);
+    const nextStats = {
+      fps: frameTimesRef.current.length,
+      brightness,
+      motion,
+      width: video.videoWidth,
+      height: video.videoHeight,
+      healthy: brightness >= 10 && video.videoWidth > 0,
+    };
+    setStats(nextStats);
+    void processGuitar(video, timestamp);
+
+    if (currentIdRef.current === 'camera' && video.videoWidth > 0) passAndNext('camera', `${video.videoWidth}×${video.videoHeight}`);
+    if (currentIdRef.current === 'feed') {
+      stableRef.current.feed = nextStats.healthy ? stableRef.current.feed + 1 : 0;
+      if (stableRef.current.feed >= 8) passAndNext('feed', `밝기 ${brightness.toFixed(1)} · 분석 ${nextStats.fps} FPS`);
     }
   };
 
   const sampleFrame = (timestamp) => {
     const video = videoRef.current;
-    const canvas = analysisCanvasRef.current;
-    if (!video || !canvas || !streamRef.current) return;
-    frameTimesRef.current.push(timestamp);
-    frameTimesRef.current = frameTimesRef.current.filter((time) => timestamp - time <= 1000);
-
-    if (timestamp - lastFrameAtRef.current >= 100 && video.readyState >= 2) {
-      lastFrameAtRef.current = timestamp;
-      canvas.width = 320;
-      canvas.height = 180;
-      const context = canvas.getContext('2d', { willReadFrequently: true });
-      context.drawImage(video, 0, 0, 320, 180);
-      const imageData = context.getImageData(0, 0, 320, 180);
-      let total = 0;
-      let motionTotal = 0;
-      const gray = new Uint8Array(320 * 180);
-      for (let pixel = 0, index = 0; pixel < imageData.data.length; pixel += 4, index += 1) {
-        const value = Math.round(imageData.data[pixel] * 0.299 + imageData.data[pixel + 1] * 0.587 + imageData.data[pixel + 2] * 0.114);
-        gray[index] = value;
-        total += value;
-        if (previousGrayRef.current) motionTotal += Math.abs(value - previousGrayRef.current[index]);
-      }
-      previousGrayRef.current = gray;
-      const brightness = total / gray.length;
-      const motion = motionTotal / gray.length;
-      const stringResult = detectStringBand(imageData, 320, 180);
-      visionRef.current.stringCount = stringResult.count;
-      visionRef.current.stringConfidence = stringResult.confidence;
-      visionRef.current.stringRows = stringResult.rows;
-      visionRef.current.stringBand = stringResult.band;
-      visionRef.current.guitarConfidence = combinedGuitarConfidence({
-        modelScore: visionRef.current.guitarModelScore,
-        stringConfidence: stringResult.confidence,
-        stringCount: stringResult.count,
-        handConfidence: visionRef.current.handConfidence,
-      });
-      const nextStats = {
-        fps: frameTimesRef.current.length,
-        brightness,
-        motion,
-        width: video.videoWidth,
-        height: video.videoHeight,
-        healthy: brightness >= 10 && video.videoWidth > 0,
-      };
-      setStats(nextStats);
-      setVision({ ...visionRef.current });
-      processHand(video, timestamp);
-      void processGuitar(video, timestamp);
-      drawOverlay(visionRef.current.handLandmarks, stringResult.rows, video.videoWidth, video.videoHeight);
-
-      if (currentIdRef.current === 'camera' && video.videoWidth > 0) passAndNext('camera', `${video.videoWidth}×${video.videoHeight}`);
-      if (currentIdRef.current === 'feed') {
-        stableRef.current.feed = nextStats.healthy ? stableRef.current.feed + 1 : 0;
-        if (stableRef.current.feed >= 20) passAndNext('feed', `실제 프레임 밝기 ${brightness.toFixed(1)} · ${nextStats.fps} FPS`);
-      }
-      evaluateStage(timestamp);
+    if (!video || !streamRef.current) return;
+    if (timestamp - lastHandFrameRef.current >= 50) {
+      lastHandFrameRef.current = timestamp;
+      processHands(video, timestamp);
+    }
+    if (timestamp - lastImageFrameRef.current >= 220) {
+      lastImageFrameRef.current = timestamp;
+      analyzeImage(video, timestamp);
+    }
+    if (timestamp - lastUiFrameRef.current >= 100) {
+      lastUiFrameRef.current = timestamp;
+      drawOverlay(visionRef.current.hands, visionRef.current.stringLines, video.videoWidth, video.videoHeight);
+      setVision({ ...visionRef.current, hands: [...visionRef.current.hands], stringLines: [...visionRef.current.stringLines] });
     }
     animationRef.current = requestAnimationFrame(sampleFrame);
   };
@@ -355,30 +431,42 @@ function DeviceCenter() {
     if (context && overlayRef.current) context.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height);
   }
 
-  const startCamera = async (requestedFacing = facing) => {
+  const startCamera = async () => {
     stopCamera();
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: requestedFacing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } } });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { exact: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+        });
+      }
       streamRef.current = stream;
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
-      addLog(`카메라 시작 · ${requestedFacing === 'environment' ? '후면' : '전면'}`);
+      addLog('카메라 시작 · 전면 웹 고정');
       animationRef.current = requestAnimationFrame(sampleFrame);
     } catch (error) {
       updateResult('camera', 'fail', error?.message || '카메라 권한 실패');
-      setBanner('카메라 권한이 차단됐습니다. 주소창의 카메라 권한을 허용해 주세요.');
+      setBanner('카메라 권한이 차단됐습니다. 주소창의 카메라 권한을 허용하세요.');
       addLog(`카메라 오류 · ${error?.message || error}`, 'error');
     }
   };
 
   const begin = async () => {
     stopCamera();
-    trackerRef.current.reset();
+    handRoleRef.current.reset();
     countsRef.current = { down: 0, up: 0 };
     stableRef.current = { feed: 0, hand: 0, guitar: 0, strings: 0 };
-    visionRef.current = { handConfidence: 0, handLandmarks: [], pickPoint: null, guitarModelScore: 0, guitarLabel: '', guitarConfidence: 0, stringCount: 0, stringConfidence: 0, stringRows: [], stringBand: null };
+    summaryRef.current = { maxHands: 0, maxGuitarConfidence: 0, maxStrings: 0, maxStringConfidence: 0, firstStrokeAt: 0, lastStrokeAt: 0 };
+    visionRef.current = emptyVision();
     setStrokeCounts({ down: 0, up: 0 });
-    setResults({ ...initialResults, camera: { status: 'active', note: '' } });
+    setResults({ ...initialResults(), camera: { status: 'active', note: '' } });
     setCurrentId('camera');
     currentIdRef.current = 'camera';
     setRunning(true);
@@ -390,11 +478,14 @@ function DeviceCenter() {
     await startCamera();
   };
 
-  const switchFacing = async () => {
-    const next = facing === 'environment' ? 'user' : 'environment';
-    setFacing(next);
-    trackerRef.current.reset();
-    await startCamera(next);
+  const jumpToStroke = (direction) => {
+    if (!running) return;
+    handRoleRef.current.reset();
+    countsRef.current[direction] = 0;
+    setStrokeCounts({ ...countsRef.current });
+    updateResult(direction, 'active', '스트럼 손 자동 선택 중');
+    activate(direction);
+    addLog(`${direction === 'down' ? '다운' : '업'} 스트럼 바로 점검 시작`);
   };
 
   const testVoice = () => {
@@ -416,28 +507,47 @@ function DeviceCenter() {
     if (heard) passAndNext('voice', '사용자가 실제 들림 확인');
     else {
       updateResult('voice', 'fail', '소리가 들리지 않음');
-      setBanner('미디어 음량과 무음 모드를 확인한 뒤 음성 테스트를 다시 눌러 주세요.');
+      setBanner('미디어 음량과 무음 모드를 확인한 뒤 다시 테스트하세요.');
     }
   };
 
   const report = useMemo(() => ({
-    version: 2, sessionCode, createdAt: new Date().toISOString(), userAgent: navigator.userAgent,
-    stats, modelStatus, vision: {
-      handLandmarks: vision.handLandmarks?.length || 0,
-      handConfidence: vision.handConfidence,
-      guitarModelScore: vision.guitarModelScore,
-      guitarLabel: vision.guitarLabel,
-      guitarConfidence: vision.guitarConfidence,
-      stringCount: vision.stringCount,
-      stringConfidence: vision.stringConfidence,
-    }, strokeCounts, results, logs,
-  }), [sessionCode, stats, modelStatus, vision, strokeCounts, results, logs]);
+    version: 3,
+    createdAt: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    stats,
+    modelStatus,
+    currentVision: vision,
+    observedSummary: summaryRef.current,
+    strokeCounts,
+    results,
+    logs,
+  }), [stats, modelStatus, vision, strokeCounts, results, logs]);
+
+  useEffect(() => {
+    if (!running) return;
+    void sendLiveDiagnostics({
+      report,
+      currentTest: currentId,
+      vision,
+      strokeCounts,
+      modelStatus,
+      evidenceReady: canCountStrum(vision),
+      lastDirection: vision.lastDirection || 'none',
+    }).then((session) => {
+      if (!session) return;
+      setRemoteSessionCode(session.code);
+      setRemoteLogStatus('실시간 연결됨');
+    }).catch((error) => {
+      setRemoteLogStatus(`연결 오류: ${error?.message || error}`);
+    });
+  }, [running, report, currentId, vision, strokeCounts, modelStatus]);
 
   const downloadReport = () => {
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `guitar-coach-diagnostic-${sessionCode}.json`;
+    link.download = `guitar-coach-diagnostic-${remoteSessionCode || 'local'}.json`;
     link.click();
     URL.revokeObjectURL(link.href);
   };
@@ -449,51 +559,100 @@ function DeviceCenter() {
   return (
     <div className="debug-shell">
       <header className="debug-header">
-        <div><span className="debug-kicker">REAL VISION TEST SESSION</span><h1>기타 코치 실시간 진단센터</h1><p>단순 움직임이 아니라 손 관절·기타·줄·방향 증거가 모두 있을 때만 통과합니다.</p></div>
-        <div className="debug-session-box"><span>세션 코드</span><strong>{sessionCode}</strong><small>원본 영상 전송 꺼짐</small></div>
+        <div>
+          <span className="debug-kicker">FRONT CAMERA · LOCALIZED STRINGS · LIVE LOG</span>
+          <h1>기타 코치 실시간 진단센터</h1>
+          <p>기타를 중앙에 맞추지 않아도 됩니다. 실제로 보이는 줄 구간과 스트럼 손의 교차만 계산합니다.</p>
+        </div>
+        <div className="debug-session-box">
+          <span>원격 로그 코드</span>
+          <strong>{remoteSessionCode || '연결 중'}</strong>
+          <small>{remoteLogStatus} · 영상 전송 없음</small>
+        </div>
       </header>
       <div className="debug-progress"><span style={{ width: `${(completed / TESTS.length) * 100}%` }} /></div>
 
       <main className="debug-grid">
         <section className="debug-camera-card">
           <div className="debug-video-wrap">
-            <video ref={videoRef} playsInline muted />
-            <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
-            {!streamRef.current ? <div className="debug-video-empty">카메라 대기</div> : null}
+            <video ref={videoRef} playsInline muted style={{ transform: 'scaleX(-1)' }} />
+            <canvas ref={overlayRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', transform: 'scaleX(-1)' }} />
+            {!running ? <div className="debug-video-empty">전면카메라 대기</div> : null}
           </div>
           <canvas ref={analysisCanvasRef} hidden />
           <div className="debug-metrics">
-            <div><span>FPS</span><strong>{stats.fps || '-'}</strong></div><div><span>해상도</span><strong>{stats.width ? `${stats.width}×${stats.height}` : '-'}</strong></div>
-            <div><span>밝기</span><strong>{stats.brightness.toFixed(1)}</strong></div><div><span>전체 움직임</span><strong>{stats.motion.toFixed(1)}<small style={{ display: 'block' }}>판정 미사용</small></strong></div>
+            <div><span>카메라</span><strong>전면 고정</strong></div>
+            <div><span>해상도</span><strong>{stats.width ? `${stats.width}×${stats.height}` : '-'}</strong></div>
+            <div><span>분석 FPS</span><strong>{stats.fps || '-'}</strong></div>
+            <div><span>줄 각도</span><strong>{vision.stringAngle > 0 ? '+' : ''}{vision.stringAngle || 0}°</strong></div>
           </div>
-          <div className="debug-button-row"><button className="debug-primary" onClick={() => void begin()}>{running ? '처음부터 다시 검사' : '테스트 시작'}</button><button className="debug-secondary" onClick={() => void switchFacing()} disabled={!running}>전후면 전환</button></div>
+          <div className="debug-button-row" style={{ flexWrap: 'wrap' }}>
+            <button className="debug-primary" onClick={() => void begin()}>{running ? '처음부터 다시 검사' : '테스트 시작'}</button>
+            <button className="debug-secondary" disabled>전면카메라 고정</button>
+            <button className="debug-secondary" onClick={() => jumpToStroke('down')} disabled={!running}>다운 바로 점검</button>
+            <button className="debug-secondary" onClick={() => jumpToStroke('up')} disabled={!running}>업 바로 점검</button>
+          </div>
         </section>
 
         <section className="debug-instruction-card">
-          <span className="debug-kicker">현재 지시</span><h2>{current?.title}</h2><p className="debug-instruction">{banner}</p>
+          <span className="debug-kicker">현재 지시</span>
+          <h2>{current?.title}</h2>
+          <p className="debug-instruction">{banner}</p>
           <div className="debug-button-row" style={{ flexWrap: 'wrap' }}>
-            <EvidencePill ok={vision.handLandmarks?.length === 21 && vision.handConfidence >= 0.55} label="손 21관절" value={`${vision.handLandmarks?.length || 0} · ${percent(vision.handConfidence)}`} />
-            <EvidencePill ok={vision.guitarConfidence >= 0.35} label="기타" value={percent(vision.guitarConfidence)} />
-            <EvidencePill ok={vision.stringCount >= 4 && vision.stringConfidence >= 0.42} label="줄" value={`${vision.stringCount}개 · ${percent(vision.stringConfidence)}`} />
+            <EvidencePill ok={vision.hands?.length >= 1} label="손" value={`${vision.hands?.length || 0}개`} />
+            <EvidencePill ok={vision.strumHandSelected} label="스트럼 손" value={vision.selectedHandedness} />
+            <EvidencePill ok={vision.guitarConfidence >= 0.3} label="기타" value={percent(vision.guitarConfidence)} />
+            <EvidencePill ok={vision.stringCount >= 4 && vision.stringConfidence >= 0.32} label="실제 줄" value={`${vision.stringCount}개 · ${percent(vision.stringConfidence)}`} />
           </div>
-          {(currentId === 'down' || currentId === 'up') ? <><div className="debug-count">{strokeCounts[currentId]}<span>/ 5회</span></div><div className={evidenceReady ? 'debug-voice-result' : 'debug-error'}>{evidenceReady ? '방향 감지 준비 완료' : '손·기타·줄 증거가 부족해 카운트를 잠갔습니다.'}</div></> : null}
-          {currentId === 'voice' ? <><button className="debug-primary debug-wide" onClick={testVoice}>음성 테스트</button><div className="debug-voice-result">{voiceResult || '아직 재생하지 않음'}</div><div className="debug-button-row"><button className="debug-primary" onClick={() => confirmVoice(true)}>들림</button><button className="debug-danger" onClick={() => confirmVoice(false)}>안 들림</button></div></> : null}
+          {(currentId === 'down' || currentId === 'up') ? (
+            <>
+              <div className="debug-count">{strokeCounts[currentId]}<span>/ 5회</span></div>
+              <div className={evidenceReady ? 'debug-voice-result' : 'debug-error'}>{evidenceReady ? '방향 감지 준비 완료' : vision.lockReason}</div>
+            </>
+          ) : null}
+          {currentId === 'voice' ? (
+            <>
+              <button className="debug-primary debug-wide" onClick={testVoice}>음성 테스트</button>
+              <div className="debug-voice-result">{voiceResult || '아직 재생하지 않음'}</div>
+              <div className="debug-button-row">
+                <button className="debug-primary" onClick={() => confirmVoice(true)}>들림</button>
+                <button className="debug-danger" onClick={() => confirmVoice(false)}>안 들림</button>
+              </div>
+            </>
+          ) : null}
           {currentId === 'complete' ? <button className="debug-primary debug-wide" onClick={downloadReport}>검증 결과 저장</button> : null}
           <div className="debug-thresholds">
-            <div><strong>손 모델</strong> {modelStatus.hand}</div><div><strong>기타 모델</strong> {modelStatus.guitar}</div>
+            <div><strong>손 모델</strong> {modelStatus.hand}</div>
+            <div><strong>기타 모델</strong> {modelStatus.guitar}</div>
+            <div><strong>실제 줄 구간</strong> {Math.round((vision.stringBand?.supportLength || 0) * 100)}%</div>
             {vision.guitarLabel ? <div><strong>분류 후보</strong> {vision.guitarLabel} · {percent(vision.guitarModelScore)}</div> : null}
             {modelStatus.error ? <div className="debug-error">{modelStatus.error}</div> : null}
           </div>
         </section>
 
         <section className="debug-checklist-card">
-          <div className="debug-card-title"><div><span className="debug-kicker">EVIDENCE GATED</span><h2>실제 인식 검사</h2></div><strong>{completed}/{TESTS.length}</strong></div>
-          <div className="debug-test-list">{TESTS.map((test) => <div key={test.id} className={currentId === test.id ? 'active' : ''} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: 12 }}><div><strong>{test.title}</strong><small style={{ display: 'block' }}>{results[test.id]?.note || test.instruction}</small></div><StatusPill status={results[test.id]?.status || 'pending'} /></div>)}</div>
+          <div className="debug-card-title">
+            <div><span className="debug-kicker">REAL EVIDENCE</span><h2>실제 인식 검사</h2></div>
+            <strong>{completed}/{TESTS.length}</strong>
+          </div>
+          <div className="debug-test-list">
+            {TESTS.map((test) => (
+              <div key={test.id} className={currentId === test.id ? 'active' : ''} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: 12 }}>
+                <div><strong>{test.title}</strong><small style={{ display: 'block' }}>{results[test.id]?.note || test.instruction}</small></div>
+                <StatusPill status={results[test.id]?.status || 'pending'} />
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="debug-log-card">
-          <div className="debug-card-title"><div><span className="debug-kicker">LIVE LOG</span><h2>진단 기록</h2></div><button onClick={downloadReport}>JSON 저장</button></div>
-          <div className="debug-log-list">{logs.length ? logs.map((log, index) => <div key={`${log.at}-${index}`} className={log.level}><time>{log.at}</time><span>{log.message}</span></div>) : <p>아직 기록이 없습니다.</p>}</div>
+          <div className="debug-card-title">
+            <div><span className="debug-kicker">LIVE LOG</span><h2>진단 기록</h2></div>
+            <button onClick={downloadReport}>JSON 저장</button>
+          </div>
+          <div className="debug-log-list">
+            {logs.length ? logs.map((log, index) => <div key={`${log.at}-${index}`} className={log.level}><time>{log.at}</time><span>{log.message}</span></div>) : <p>아직 기록이 없습니다.</p>}
+          </div>
         </section>
       </main>
     </div>
@@ -501,11 +660,15 @@ function DeviceCenter() {
 }
 
 function AdminCenter() {
-  return <div className="debug-shell admin"><header className="debug-header"><div><span className="debug-kicker">REMOTE CONSOLE</span><h1>원격 진단 관리자</h1><p>현재 휴대폰 진단은 기기 내 실제 AI 모델로 판정합니다. 서버 세션 연결 기능은 인증된 세션만 표시합니다.</p></div></header><main className="debug-admin-grid"><section className="debug-instruction-card"><h2>보안 세션 대기</h2><p className="debug-instruction">관리자 토큰과 기기 토큰이 발급된 세션만 연결할 수 있습니다. 인증되지 않은 수동 상태 변경은 허용하지 않습니다.</p></section></main></div>;
+  return (
+    <div className="debug-shell admin">
+      <header className="debug-header">
+        <div><span className="debug-kicker">REMOTE CONSOLE</span><h1>원격 진단 관리자</h1><p>사용자가 알려준 원격 로그 코드로 숫자·좌표·판정 이유만 확인합니다. 원본 영상은 전송하지 않습니다.</p></div>
+      </header>
+    </div>
+  );
 }
 
 export default function DebugCenter() {
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem('gc-debug-unlocked') === '1');
-  if (!unlocked) return <LoginGate onUnlock={() => setUnlocked(true)} />;
   return new URLSearchParams(window.location.search).get('admin') === '1' ? <AdminCenter /> : <DeviceCenter />;
 }
