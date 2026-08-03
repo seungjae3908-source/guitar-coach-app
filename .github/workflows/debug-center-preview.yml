@@ -25,7 +25,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: guitar-coach-debug-center-pages-${{ github.event_name }}
+  group: guitar-coach-debug-center-pages
   cancel-in-progress: true
 
 jobs:
@@ -64,17 +64,14 @@ jobs:
           grep -R -q '원격 진단 관리자' web/dist/assets
 
       - name: Configure GitHub Pages
-        if: github.event_name == 'push'
         uses: actions/configure-pages@v5
 
       - name: Upload debug center site
-        if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
 
   deploy:
-    if: github.event_name == 'push'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
