@@ -1,19 +1,52 @@
+previews:
+  generation: off
+
 services:
   - type: web
-    name: guitar-coach-debug-api
+    name: seungjae3908-guitar-coach-debug-api
     runtime: node
+    plan: free
+    region: singapore
+    repo: https://github.com/seungjae3908-source/guitar-coach-app
     branch: agent/live-coach-compat-v055
     rootDir: debug-server
-    buildCommand: npm run verify
+    buildCommand: npm install && npm run verify
     startCommand: npm start
     healthCheckPath: /health
-    autoDeploy: true
+    autoDeployTrigger: off
     envVars:
+      - key: NODE_VERSION
+        value: 22.23.1
       - key: NODE_ENV
         value: production
-      - key: ALLOWED_ORIGIN
-        value: https://seungjae3908-source.github.io
       - key: ADMIN_SHARED_SECRET
         generateValue: true
       - key: DEVICE_SHARED_SECRET
         generateValue: true
+      - key: ALLOWED_ORIGIN
+        value: https://seungjae3908-guitar-coach-debug-web.onrender.com
+
+  - type: web
+    name: seungjae3908-guitar-coach-debug-web
+    runtime: static
+    repo: https://github.com/seungjae3908-source/guitar-coach-app
+    branch: agent/live-coach-compat-v055
+    rootDir: web
+    buildCommand: npm install && npm run build -- --base=/
+    staticPublishPath: dist
+    autoDeployTrigger: off
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.1
+      - key: VITE_DIAGNOSTIC_API_URL
+        value: https://seungjae3908-guitar-coach-debug-api.onrender.com
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(self), microphone=(), geolocation=()
