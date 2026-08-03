@@ -1,0 +1,76 @@
+name: Build and deploy debug center preview
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - 'web/**'
+      - 'debug-server/**'
+      - '.github/workflows/debug-center-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: guitar-coach-debug-center-pages
+  cancel-in-progress: true
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout debug branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify relay server syntax
+        working-directory: debug-server
+        run: npm run check
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build debug center web
+        working-directory: web
+        run: npm run build
+
+      - name: Verify debug center output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s web/dist/index.html
+          grep -R -q '기타 코치 실시간 진단센터' web/dist/assets
+          grep -R -q '원격 진단 관리자' web/dist/assets
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload debug center site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    needs: verify-and-build
+    steps:
+      - name: Deploy debug center
+        id: deployment
+        uses: actions/deploy-pages@v4
