@@ -63,8 +63,10 @@ jobs:
           grep -R -q '기타 코치 실시간 진단센터' web/dist/assets
           grep -R -q '원격 진단 관리자' web/dist/assets
 
-      - name: Configure GitHub Pages
+      - name: Configure and enable GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload debug center site
         uses: actions/upload-pages-artifact@v3
