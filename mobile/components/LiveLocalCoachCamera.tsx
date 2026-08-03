@@ -177,7 +177,7 @@ export default function LiveLocalCoachCamera({
   coachingActive,
   category,
   cameraFocus,
-  initialFacing = cameraFocus === 'full-body' ? 'front' : 'back',
+  initialFacing = 'front',
   voiceEnabled,
   onNeedCalibration,
   onMotionSample,
