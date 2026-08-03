@@ -40,16 +40,6 @@ jobs:
         with:
           ref: agent/live-coach-compat-v055
 
-      - name: Report legacy APK workflow path
-        shell: bash
-        run: |
-          set -euo pipefail
-          matches=$(grep -R -l 'Build compact ARM64 release APK' .github/workflows || true)
-          echo 'LEGACY_APK_WORKFLOW_PATHS_BEGIN'
-          printf '%s\n' "$matches"
-          echo 'LEGACY_APK_WORKFLOW_PATHS_END'
-          test -n "$matches"
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -94,7 +84,7 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - name: Verify built site
+      - name: Verify front-camera web-only site
         shell: bash
         run: |
           set -euo pipefail
@@ -103,6 +93,13 @@ jobs:
           grep -R -q '원격 진단 관리자' web/dist/assets
           grep -R -q '손 21관절' web/dist/assets
           grep -R -q '방향 감지 준비 완료' web/dist/assets
+          grep -R -q '전면카메라 연결' web/dist/assets
+          grep -R -q '전면 고정' web/dist/assets
+          grep -R -q '카메라 시작 · 전면 웹 고정' web/dist/assets
+          if find web/dist -type f -name '*.apk' -print -quit | grep -q .; then
+            echo 'APK found in the web build.'
+            exit 1
+          fi
           if grep -R -q '브라우저 움직임 감지 5회' web/dist; then
             echo 'Legacy global-motion strum completion still exists.'
             exit 1
@@ -155,5 +152,8 @@ jobs:
           grep -q '기타 코치 실시간 진단센터' /tmp/deployed-app.js
           grep -q '손 21관절' /tmp/deployed-app.js
           grep -q '방향 감지 준비 완료' /tmp/deployed-app.js
-          if grep -qi 'rawgit\.hack\|raw\.githack\|브라우저 움직임 감지 5회' /tmp/deployed-app.js; then exit 1; fi
+          grep -q '전면카메라 연결' /tmp/deployed-app.js
+          grep -q '전면 고정' /tmp/deployed-app.js
+          grep -q '카메라 시작 · 전면 웹 고정' /tmp/deployed-app.js
+          if grep -qi 'rawgit\.hack\|raw\.githack\|브라우저 움직임 감지 5회|\.apk' /tmp/deployed-app.js; then exit 1; fi
           echo "Verified deployed site: $PAGE_URL"
