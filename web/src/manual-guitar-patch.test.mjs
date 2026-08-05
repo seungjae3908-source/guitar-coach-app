@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const patch = readFileSync(new URL('../scripts/patch-manual-guitar-calibration-v2.mjs', import.meta.url), 'utf8');
+const patch = readFileSync(new URL('../scripts/patch-manual-guitar-calibration-v3.mjs', import.meta.url), 'utf8');
 
 test('manual calibration patch evaluates a manual pose after automatic recognition', () => {
   assert.match(patch, /const automaticPose = backlitGuitarRecoveryRef\.current\.update/);
