@@ -117,22 +117,6 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
 
   center = replaceOnce(
     center,
-    `      const preliminaryGuide = guideRef.current.guideFor(visionRef.current.stringBand);
-      const role = handRoleRef.current.update({`,
-    `      const preliminaryGuide = guideRef.current.guideFor(visionRef.current.stringBand);
-      const manualPoseForRole = manualGuitarCalibrationRef.current.poseFor(timestamp);
-      const role = handRoleRef.current.update({`,
-    'manual role pose lookup',
-  );
-  center = replaceOnce(
-    center,
-    '        ready: visionRef.current.stringCount >= 4 && visionRef.current.stringConfidence >= 0.32 && visionRef.current.guitarConfidence >= 0.3,',
-    '        ready: Boolean(manualPoseForRole) || (visionRef.current.stringCount >= 4 && visionRef.current.stringConfidence >= 0.32 && visionRef.current.guitarConfidence >= 0.3),',
-    'manual role resolver gate',
-  );
-
-  center = replaceOnce(
-    center,
     '    visionRef.current.stringBand = stringResult.band;',
     `    const manualPoseForStrings = manualGuitarCalibrationRef.current.poseFor(timestamp);
     const activeStringBand = manualPoseForStrings?.stringBand || stringResult.band;
