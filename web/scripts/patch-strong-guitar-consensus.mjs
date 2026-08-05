@@ -40,7 +40,7 @@ if (!center.includes("from './strong-guitar-consensus.js'")) {
     (_match, indent, beforeStrict, strictIndent, afterStrict) => {
       const inner = `${indent}  `;
       return `${indent}const consensusPose = strongGuitarConsensusRef.current.update({
-${inner}pose: stabilized.pose || candidatePose,
+${inner}pose: candidatePose,
 ${inner}strictPose,
 ${inner}previous: poseRef.current,
 ${inner}timestamp,
@@ -58,7 +58,7 @@ ${indent}  ready: true,
 ${indent}  confidence: Number(pose.recoveryConfidence || pose.confidence || 0),
 ${indent}  source: pose.recoverySource || 'two-hand-axis',
 ${indent}  label: pose.recoverySource === 'internal-pose-consensus'
-${indent}    ? '사운드홀·넥·6줄 합의'
+${indent}    ? '사운드홀·넥·6줄 원본 합의'
 ${indent}    : '양손 축 적용',
 ${indent}  reason: pose.validationReason || '역광·부분 인식',
 ${indent}} : null;`,
@@ -84,4 +84,4 @@ ${indent}} : null;`,
   writeFileSync(centerPath, center);
 }
 
-console.log('Applied strong soundhole-neck-six-string consensus so wood-grain conflicts cannot cancel a verified guitar.');
+console.log('Applied raw-candidate soundhole-neck-six-string consensus before stabilized display pose.');
