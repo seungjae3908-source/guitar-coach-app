@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const patch = readFileSync(new URL('../scripts/patch-manual-guitar-calibration.mjs', import.meta.url), 'utf8');
+const patch = readFileSync(new URL('../scripts/patch-manual-guitar-calibration-v2.mjs', import.meta.url), 'utf8');
 
 test('manual calibration patch evaluates a manual pose after automatic recognition', () => {
   assert.match(patch, /const automaticPose = backlitGuitarRecoveryRef\.current\.update/);
@@ -21,7 +21,7 @@ test('manual calibration patch supplies validated string and guitar evidence', (
   assert.match(patch, /visionRef\.current\.stringCount = manualPose\.lines\.length/);
   assert.match(patch, /visionRef\.current\.stringConfidence = manualPose\.confidence/);
   assert.match(patch, /visionRef\.current\.guitarConfidence = manualPose\.confidence/);
-  assert.match(patch, /evidence\.manualCalibrationReady/);
+  assert.match(patch, /visionRef\.current\.manualCalibrationReady = Boolean\(manualPose\)/);
 });
 
 test('manual calibration remains an explicit fallback rather than replacing automatic recognition', () => {
