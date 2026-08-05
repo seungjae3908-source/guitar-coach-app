@@ -180,30 +180,28 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
     'manual evidence pill',
   );
 
-  const panel = `              {(!evidenceReady || manualGuitarCalibration.active || manualGuitarCalibration.ready) && (
-                <div style={{ marginTop: 10, padding: 12, border: '1px solid rgba(56, 189, 248, 0.42)', borderRadius: 12, background: 'rgba(15, 23, 42, 0.72)', display: 'grid', gap: 8 }}>
-                  <strong>자동 인식이 안 될 때 · 수동 3점 보정</strong>
-                  <span>{manualGuitarCalibration.instruction}</span>
-                  {manualGuitarCalibration.error && <span className="debug-error">{manualGuitarCalibration.error}</span>}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {!manualGuitarCalibration.active && !manualGuitarCalibration.ready && <button type="button" onClick={beginManualGuitarCalibration}>수동 3점 보정 시작</button>}
-                    {manualGuitarCalibration.active && <button type="button" onClick={cancelManualGuitarCalibration}>보정 취소</button>}
-                    {manualGuitarCalibration.ready && <button type="button" onClick={beginManualGuitarCalibration}>다시 보정</button>}
-                    {(manualGuitarCalibration.active || manualGuitarCalibration.ready) && <button type="button" onClick={clearManualGuitarCalibration}>보정 지우기</button>}
-                  </div>
-                  <small>순서: 사운드홀 가운데 → 헤드 쪽 넥/줄 → 피크가 줄에 닿는 위치</small>
-                </div>
-              )}
+  const panel = `            <div style={{ gridColumn: '1 / -1', marginTop: 6, padding: 12, border: '1px solid rgba(56, 189, 248, 0.42)', borderRadius: 12, background: 'rgba(15, 23, 42, 0.72)', display: 'grid', gap: 8 }}>
+              <strong>자동 인식이 안 될 때 · 수동 3점 보정</strong>
+              <span>{manualGuitarCalibration.instruction}</span>
+              {manualGuitarCalibration.error && <span className="debug-error">{manualGuitarCalibration.error}</span>}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {!manualGuitarCalibration.active && !manualGuitarCalibration.ready && <button type="button" onClick={beginManualGuitarCalibration}>수동 3점 보정 시작</button>}
+                {manualGuitarCalibration.active && <button type="button" onClick={cancelManualGuitarCalibration}>보정 취소</button>}
+                {manualGuitarCalibration.ready && <button type="button" onClick={beginManualGuitarCalibration}>다시 보정</button>}
+                {(manualGuitarCalibration.active || manualGuitarCalibration.ready) && <button type="button" onClick={clearManualGuitarCalibration}>보정 지우기</button>}
+              </div>
+              <small>순서: 사운드홀 가운데 → 헤드 쪽 넥/줄 → 피크가 줄에 닿는 위치</small>
+            </div>
 `;
   center = insertAfterLineContaining(
     center,
-    "className={evidenceReady ? 'debug-voice-result' : 'debug-error'}",
+    'label="수동 3점 보정"',
     panel,
-    'manual panel',
+    'manual panel after calibration status',
   );
 
   center = replaceOptional(center, '    version: 9,', '    version: 10,');
   writeFileSync(centerPath, center);
 }
 
-console.log('Connected manual three-point calibration without depending on overlay-renderer layout.');
+console.log('Connected manual controls directly after the inserted calibration status.');
