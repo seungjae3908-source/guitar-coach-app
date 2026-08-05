@@ -26,7 +26,14 @@ test('visible landmark canvas is stacked over the camera video', () => {
 
   assert.match(overlayStyle, /position:\s*'absolute'/);
   assert.match(overlayStyle, /objectFit:\s*'cover'/);
-  assert.match(overlayStyle, /pointerEvents:\s*'none'/);
+  assert.match(
+    overlayStyle,
+    /pointerEvents:\s*manualGuitarCalibration\.active\s*\?\s*'auto'\s*:\s*'none'/,
+  );
+  assert.match(
+    overlayStyle,
+    /touchAction:\s*manualGuitarCalibration\.active\s*\?\s*'none'\s*:\s*'auto'/,
+  );
   assert.match(overlayStyle, /zIndex:\s*2/);
 });
 
