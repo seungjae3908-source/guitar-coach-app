@@ -10,12 +10,16 @@ function replaceOnce(source, before, after, label) {
   return source.slice(0, first) + after + source.slice(first + before.length);
 }
 
+function replaceOptional(source, before, after) {
+  const first = source.indexOf(before);
+  if (first < 0) return source;
+  if (source.indexOf(before, first + before.length) >= 0) return source;
+  return source.slice(0, first) + after + source.slice(first + before.length);
+}
+
 function insertAfterLineContaining(source, needle, insertion, label) {
   const first = source.indexOf(needle);
   if (first < 0) throw new Error(`Manual-calibration-v3 line missing: ${label}`);
-  if (source.indexOf(needle, first + needle.length) >= 0) {
-    throw new Error(`Manual-calibration-v3 line is ambiguous: ${label}`);
-  }
   const lineEnd = source.indexOf('\n', first);
   if (lineEnd < 0) throw new Error(`Manual-calibration-v3 line ending missing: ${label}`);
   return source.slice(0, lineEnd + 1) + insertion + source.slice(lineEnd + 1);
@@ -59,46 +63,6 @@ function patchFinalPose(source) {
       }`,
     );
   return source.slice(0, start) + patched + source.slice(end);
-}
-
-function patchOverlayMarkers(source) {
-  const marker = '  };\n\n  const processGuitar';
-  const at = source.indexOf(marker);
-  if (at < 0) throw new Error('Manual-calibration-v3 overlay boundary missing');
-  if (source.indexOf(marker, at + marker.length) >= 0) throw new Error('Manual-calibration-v3 overlay boundary is ambiguous');
-  const drawing = `    const manualSnapshot = manualGuitarCalibrationRef.current.snapshot();
-    if (manualSnapshot.points.length) {
-      const colors = ['#facc15', '#38bdf8', '#f472b6'];
-      context.save();
-      context.font = \`bold \${Math.max(14, width / 42)}px sans-serif\`;
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-      manualSnapshot.points.forEach((entry, index) => {
-        const x = entry.x * width;
-        const y = entry.y * height;
-        context.beginPath();
-        context.arc(x, y, Math.max(12, width / 55), 0, Math.PI * 2);
-        context.fillStyle = 'rgba(15, 23, 42, 0.8)';
-        context.fill();
-        context.lineWidth = Math.max(4, width / 240);
-        context.strokeStyle = colors[index] || '#f8fafc';
-        context.stroke();
-        context.fillStyle = '#f8fafc';
-        context.fillText(String(index + 1), x, y);
-      });
-      if (manualSnapshot.points.length >= 2) {
-        context.beginPath();
-        context.moveTo(manualSnapshot.points[0].x * width, manualSnapshot.points[0].y * height);
-        context.lineTo(manualSnapshot.points[1].x * width, manualSnapshot.points[1].y * height);
-        context.strokeStyle = '#38bdf8';
-        context.lineWidth = Math.max(3, width / 300);
-        context.setLineDash([Math.max(7, width / 95), Math.max(5, width / 125)]);
-        context.stroke();
-      }
-      context.restore();
-    }
-`;
-  return source.slice(0, at) + drawing + source.slice(at);
 }
 
 const centerPath = resolve(process.cwd(), 'src/AdaptiveDebugCenter.jsx');
@@ -196,9 +160,7 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
     'canvas interaction',
   );
 
-  center = patchOverlayMarkers(center);
-
-  center = replaceOnce(
+  center = replaceOptional(
     center,
     `  label: pose.recoverySource === 'internal-pose-consensus'
     ? '사운드홀·넥·6줄 원본 합의'
@@ -208,7 +170,6 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
     : pose.recoverySource === 'internal-pose-consensus'
       ? '사운드홀·넥·6줄 원본 합의'
       : '양손 축 적용',`,
-    'manual badge label',
   );
 
   center = insertAfterLineContaining(
@@ -241,8 +202,8 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
     'manual panel',
   );
 
-  center = replaceOnce(center, '    version: 9,', '    version: 10,', 'diagnostic version');
+  center = replaceOptional(center, '    version: 9,', '    version: 10,');
   writeFileSync(centerPath, center);
 }
 
-console.log('Connected manual three-point calibration before the final adaptive component return.');
+console.log('Connected manual three-point calibration without depending on overlay-renderer layout.');
