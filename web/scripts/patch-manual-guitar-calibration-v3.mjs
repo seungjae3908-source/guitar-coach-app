@@ -32,6 +32,15 @@ function insertBeforeComponentReturn(source, insertion) {
   return source.slice(0, at + 1) + insertion + source.slice(at + 1);
 }
 
+function insertBeforeOverlayCanvas(source, insertion) {
+  const refAt = source.indexOf('ref={overlayRef}');
+  if (refAt < 0) throw new Error('Manual-calibration-v3 overlay ref missing');
+  const canvasAt = source.lastIndexOf('<canvas', refAt);
+  if (canvasAt < 0) throw new Error('Manual-calibration-v3 overlay canvas missing');
+  const lineStart = source.lastIndexOf('\n', canvasAt) + 1;
+  return source.slice(0, lineStart) + insertion + source.slice(lineStart);
+}
+
 function patchFinalPose(source) {
   const marker = 'const pose = backlitGuitarRecoveryRef.current.update({';
   const start = source.indexOf(marker);
@@ -160,6 +169,58 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
     'canvas interaction',
   );
 
+  const floatingControls = `          <div
+            data-manual-calibration-floating="true"
+            style={{
+              position: 'absolute',
+              top: 10,
+              left: 10,
+              right: 10,
+              zIndex: 5,
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              pointerEvents: 'auto',
+            }}
+          >
+            {!manualGuitarCalibration.active && !manualGuitarCalibration.ready && (
+              <button
+                type="button"
+                onClick={beginManualGuitarCalibration}
+                style={{ padding: '11px 16px', borderRadius: 999, border: '2px solid rgba(255,255,255,0.9)', background: '#0284c7', color: '#fff', fontWeight: 800, fontSize: 15, boxShadow: '0 6px 20px rgba(0,0,0,0.35)' }}
+              >
+                자동 인식 안 되면 누르기 · 수동 3점 보정
+              </button>
+            )}
+            {manualGuitarCalibration.active && (
+              <>
+                <span style={{ padding: '9px 12px', borderRadius: 999, background: 'rgba(15,23,42,0.9)', color: '#fff', fontWeight: 800, boxShadow: '0 4px 16px rgba(0,0,0,0.35)' }}>
+                  {manualGuitarCalibration.step}/3 · {manualGuitarCalibration.instruction}
+                </span>
+                <button type="button" onClick={cancelManualGuitarCalibration} style={{ padding: '9px 12px', borderRadius: 999, fontWeight: 800 }}>
+                  보정 취소
+                </button>
+              </>
+            )}
+            {manualGuitarCalibration.ready && (
+              <>
+                <span style={{ padding: '9px 12px', borderRadius: 999, background: 'rgba(22,101,52,0.92)', color: '#fff', fontWeight: 800, boxShadow: '0 4px 16px rgba(0,0,0,0.35)' }}>
+                  수동 3점 보정 적용됨
+                </span>
+                <button type="button" onClick={beginManualGuitarCalibration} style={{ padding: '9px 12px', borderRadius: 999, fontWeight: 800 }}>
+                  다시 보정
+                </button>
+                <button type="button" onClick={clearManualGuitarCalibration} style={{ padding: '9px 12px', borderRadius: 999, fontWeight: 800 }}>
+                  지우기
+                </button>
+              </>
+            )}
+          </div>
+`;
+  center = insertBeforeOverlayCanvas(center, floatingControls);
+
   center = replaceOptional(
     center,
     `  label: pose.recoverySource === 'internal-pose-consensus'
@@ -204,4 +265,4 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
   writeFileSync(centerPath, center);
 }
 
-console.log('Connected manual controls directly after the inserted calibration status.');
+console.log('Connected manual controls directly after the inserted calibration status and kept a floating camera control visible.');
