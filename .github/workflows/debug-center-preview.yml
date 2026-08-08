@@ -1,4 +1,4 @@
-name: Build and deploy complete debug center
+name: Build and deploy practice beta
 
 on:
   push:
@@ -27,7 +27,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: guitar-coach-debug-center-pages-${{ github.event_name }}-${{ github.ref }}
+  group: guitar-coach-practice-pages-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - name: Checkout debug branch
+      - name: Checkout test branch
         uses: actions/checkout@v4
         with:
           ref: agent/live-coach-compat-v055
@@ -66,13 +66,18 @@ jobs:
           grep -q 'npm run render-build' render.yaml
           grep -q 'autoDeployTrigger: "commit"' render.yaml
 
-      - name: Verify diagnostic center is the public entry point
+      - name: Verify compact practice app is the public entry point
         shell: bash
         run: |
           set -euo pipefail
-          grep -q "return <DebugCenter />" web/src/AppSafe.jsx
-          if grep -q "params.get('debug')" web/src/AppSafe.jsx; then
-            echo 'Diagnostic center still requires a hidden query parameter.'
+          grep -q "return <PracticeApp />" web/src/AppSafe.jsx
+          grep -q "params.get('debug') === '1'" web/src/AppSafe.jsx
+          grep -q '<FocusAnalyzer />' web/src/PracticeApp.jsx
+          grep -q '<DebugCenter />' web/src/PracticeApp.jsx
+          grep -q 'AI 카메라' web/src/PracticeApp.jsx
+          grep -q '집중연습' web/src/PracticeApp.jsx
+          if grep -q 'UI PROTOTYPE\|NOT CONNECTED' web/src/PracticeApp.jsx; then
+            echo 'Prototype placeholders leaked into the public practice shell.'
             exit 1
           fi
 
@@ -80,32 +85,29 @@ jobs:
         working-directory: web
         run: npm install
 
-      - name: Test evidence-gated vision logic
+      - name: Test evidence-gated vision and practice UI
         working-directory: web
         run: npm test
 
-      - name: Build debug center web
+      - name: Build practice beta web
         working-directory: web
         run: npm run build
 
-      - name: Verify localized front-camera live-diagnostic site
+      - name: Verify compact practice and diagnostic bundle
         shell: bash
         run: |
           set -euo pipefail
           test -s web/dist/index.html
+          grep -R -q 'AI 카메라 연습' web/dist/assets
+          grep -R -q '집중연습' web/dist/assets
+          grep -R -q '실제 동작 기능' web/dist/assets
           grep -R -q '기타 코치 실시간 진단센터' web/dist/assets
           grep -R -q '원격 진단 관리자' web/dist/assets
           grep -R -q '양손 관절 인식' web/dist/assets
           grep -R -q '스트럼 손' web/dist/assets
-          grep -R -q '원격 로그 코드' web/dist/assets
-          grep -R -q '실시간 연결됨' web/dist/assets
           grep -R -q '다운 바로 점검' web/dist/assets
           grep -R -q '업 바로 점검' web/dist/assets
-          grep -R -q '실제 줄 구간' web/dist/assets
           grep -R -q '방향 감지 준비 완료' web/dist/assets
-          grep -R -q '전면카메라 연결' web/dist/assets
-          grep -R -q '전면 고정' web/dist/assets
-          grep -R -q '카메라 시작 · 전면 웹 고정' web/dist/assets
           if find web/dist -type f -name '*.apk' -print -quit | grep -q .; then
             echo 'APK found in the web build.'
             exit 1
@@ -138,7 +140,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify deployed HTTPS site
+      - name: Verify deployed HTTPS practice app
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         shell: bash
@@ -159,15 +161,11 @@ jobs:
           test -n "$script_path"
           script_url=$(node -e 'console.log(new URL(process.argv[1], process.argv[2]).href)' "$script_path" "$PAGE_URL")
           curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' "$script_url" -o /tmp/deployed-app.js
+          grep -q 'AI 카메라 연습' /tmp/deployed-app.js
+          grep -q '집중연습' /tmp/deployed-app.js
+          grep -q '실제 동작 기능' /tmp/deployed-app.js
           grep -q '기타 코치 실시간 진단센터' /tmp/deployed-app.js
-          grep -q '양손 관절 인식' /tmp/deployed-app.js
-          grep -q '스트럼 손' /tmp/deployed-app.js
-          grep -q '실제 줄 구간' /tmp/deployed-app.js
-          grep -q '원격 로그 코드' /tmp/deployed-app.js
           grep -q '다운 바로 점검' /tmp/deployed-app.js
           grep -q '업 바로 점검' /tmp/deployed-app.js
-          grep -q '전면카메라 연결' /tmp/deployed-app.js
-          grep -q '전면 고정' /tmp/deployed-app.js
-          grep -q '카메라 시작 · 전면 웹 고정' /tmp/deployed-app.js
           if grep -qi 'rawgit\.hack\|raw\.githack\|브라우저 움직임 감지 5회|\.apk' /tmp/deployed-app.js; then exit 1; fi
-          echo "Verified deployed site: $PAGE_URL"
+          echo "Verified deployed practice app: $PAGE_URL"
