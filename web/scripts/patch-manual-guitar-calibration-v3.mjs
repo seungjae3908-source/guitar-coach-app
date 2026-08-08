@@ -26,9 +26,11 @@ function insertAfterLineContaining(source, needle, insertion, label) {
 }
 
 function insertBeforeComponentReturn(source, insertion) {
+  const shellAt = source.indexOf('<div className="debug-shell">');
+  if (shellAt < 0) throw new Error('Manual-calibration-v3 debug shell missing');
   const marker = '\n  return (';
-  const at = source.lastIndexOf(marker);
-  if (at < 0) throw new Error('Manual-calibration-v3 component return missing');
+  const at = source.lastIndexOf(marker, shellAt);
+  if (at < 0) throw new Error('Manual-calibration-v3 camera component return missing');
   return source.slice(0, at + 1) + insertion + source.slice(at + 1);
 }
 
@@ -265,4 +267,4 @@ if (!center.includes("from './manual-guitar-calibration.js'")) {
   writeFileSync(centerPath, center);
 }
 
-console.log('Connected manual controls directly after the inserted calibration status and kept a floating camera control visible.');
+console.log('Connected manual controls inside the camera component and kept a floating camera control visible.');
