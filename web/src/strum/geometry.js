@@ -3,11 +3,13 @@ const EPSILON = 1e-6;
 export const clamp = (value, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 export const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-export function createCalibration({ soundhole, neck, bandEdge, mirrored = false }) {
+export function createCalibration({ soundhole, neck, sixStringEdge, bandEdge = sixStringEdge, mirrored = false }) {
   const axisLength = distance(soundhole, neck);
   if (axisLength < 0.12) throw new Error('NECK_POINT_TOO_CLOSE');
   const tangent = { x: (neck.x - soundhole.x) / axisLength, y: (neck.y - soundhole.y) / axisLength };
-  const normal = mirrored ? { x: tangent.y, y: -tangent.x } : { x: -tangent.y, y: tangent.x };
+  const candidate = { x: -tangent.y, y: tangent.x };
+  const edgeProjection = (bandEdge.x - soundhole.x) * candidate.x + (bandEdge.y - soundhole.y) * candidate.y;
+  const normal = edgeProjection >= 0 ? candidate : { x: -candidate.x, y: -candidate.y };
   const bandOffset = (bandEdge.x - soundhole.x) * normal.x + (bandEdge.y - soundhole.y) * normal.y;
   if (Math.abs(bandOffset) < 0.025) throw new Error('STRING_BAND_TOO_NARROW');
   const halfWidth = clamp(Math.abs(bandOffset), 0.035, 0.18);
@@ -29,16 +31,6 @@ export function fromGuitarSpace(point, calibration) {
   return {
     x: calibration.origin.x + point.along * calibration.tangent.x + point.across * calibration.normal.x,
     y: calibration.origin.y + point.along * calibration.tangent.y + point.across * calibration.normal.y,
-  };
-}
-
-export function updateCalibration(calibration, translation, confidence) {
-  if (confidence < 0.35) return { ...calibration, trackingConfidence: confidence };
-  const gain = confidence > 0.7 ? 0.22 : 0.08;
-  return {
-    ...calibration,
-    origin: { x: calibration.origin.x + translation.x * gain, y: calibration.origin.y + translation.y * gain },
-    trackingConfidence: confidence,
   };
 }
 

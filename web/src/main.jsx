@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import App from './AppSafe';
 import './styles.css';
+import './strum-fixes.css';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

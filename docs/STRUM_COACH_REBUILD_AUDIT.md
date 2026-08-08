@@ -14,7 +14,7 @@
 
 The public root now follows: permission -> three-point calibration -> guitar-relative coordinate system -> MediaPipe hand landmarks -> strum-zone crossing state machine -> adaptive audio onset fusion -> stroke events -> BPM/timing/session metrics. Individual six-string detection and soundhole rediscovery are not gates.
 
-The geometry, detection/fusion, model adapter and React UI are separate modules. The detector is deterministic and covered by Node tests. The UI never labels model loading or insufficient evidence as successful analysis. Microphone denial is explicitly shown as vision-only degraded mode.
+The geometry, display/source coordinate conversion, per-hand identity tracking, beat timing, detection/fusion, model adapter and React UI are separate modules. The detector is deterministic and covered by Node tests. The UI never labels model loading or insufficient evidence as successful analysis. Microphone denial is explicitly shown as vision-only degraded mode.
 
 ## Deliberately not reused
 
