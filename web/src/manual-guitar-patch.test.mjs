@@ -29,3 +29,11 @@ test('manual calibration remains an explicit fallback rather than replacing auto
   assert.match(patch, /필요 시 사용/);
   assert.match(patch, /보정 지우기/);
 });
+
+test('manual calibration control stays visibly over the camera on mobile', () => {
+  assert.match(patch, /data-manual-calibration-floating="true"/);
+  assert.match(patch, /position: 'absolute'/);
+  assert.match(patch, /zIndex: 5/);
+  assert.match(patch, /자동 인식 안 되면 누르기 · 수동 3점 보정/);
+  assert.match(patch, /수동 3점 보정 적용됨/);
+});
