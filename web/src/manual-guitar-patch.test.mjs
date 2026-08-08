@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const patch = readFileSync(new URL('../scripts/patch-manual-guitar-calibration-v3.mjs', import.meta.url), 'utf8');
+const center = readFileSync(new URL('./AdaptiveDebugCenter.jsx', import.meta.url), 'utf8');
 
 test('manual calibration patch evaluates a manual pose after automatic recognition', () => {
   assert.match(patch, /const automaticPose = backlitGuitarRecoveryRef\.current\.update/);
@@ -36,4 +37,18 @@ test('manual calibration control stays visibly over the camera on mobile', () =>
   assert.match(patch, /zIndex: 5/);
   assert.match(patch, /자동 인식 안 되면 누르기 · 수동 3점 보정/);
   assert.match(patch, /수동 3점 보정 적용됨/);
+});
+
+test('manual calibration handlers are declared before the camera component return', () => {
+  const shellAt = center.indexOf('<div className="debug-shell">');
+  const manualStateAt = center.indexOf('const [manualGuitarCalibration, setManualGuitarCalibration]');
+  const applyAt = center.indexOf('const applyManualGuitarPose');
+  const beginAt = center.indexOf('const beginManualGuitarCalibration');
+  const pointerAt = center.indexOf('const handleManualCalibrationPointer');
+
+  assert.ok(shellAt > 0, 'debug shell should exist');
+  assert.ok(manualStateAt >= 0 && manualStateAt < shellAt, 'manual state should belong to the camera component');
+  assert.ok(applyAt > manualStateAt && applyAt < shellAt, 'apply handler should be in camera component scope');
+  assert.ok(beginAt > applyAt && beginAt < shellAt, 'begin handler should be in camera component scope');
+  assert.ok(pointerAt > beginAt && pointerAt < shellAt, 'pointer handler should be in camera component scope');
 });
