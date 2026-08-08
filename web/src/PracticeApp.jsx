@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import DebugCenter from './DebugCenter';
+import DebugCenter from './AdaptiveDebugCenter';
 import FocusAnalyzer from './FocusAnalyzer';
 import './practice-app.css';
 
