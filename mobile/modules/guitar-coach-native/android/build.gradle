@@ -1,0 +1,81 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.guitarcoachnative'
+version = '0.4.0'
+
+android {
+  namespace "expo.modules.guitarcoachnative"
+  defaultConfig {
+    versionCode 4
+    versionName '0.4.0'
+  }
+}
+
+def visionModelDir = file("$projectDir/src/main/assets")
+def handModelFile = file("$visionModelDir/hand_landmarker.task")
+def handModelUrl = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task'
+def guitarObjectModelFile = file("$visionModelDir/efficientdet_lite0.tflite")
+def guitarObjectModelUrl = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite'
+def guitarClassifierModelFile = file("$visionModelDir/efficientnet_lite0.tflite")
+def guitarClassifierModelUrl = 'https://storage.googleapis.com/mediapipe-models/image_classifier/efficientnet_lite0/float32/1/efficientnet_lite0.tflite'
+
+tasks.register('downloadHandLandmarkerModel') {
+  outputs.file(handModelFile)
+  doLast {
+    visionModelDir.mkdirs()
+    if (!handModelFile.exists() || handModelFile.length() < 1_000_000L) {
+      logger.lifecycle('Downloading official MediaPipe Hand Landmarker model...')
+      new URL(handModelUrl).withInputStream { input ->
+        handModelFile.withOutputStream { output -> output << input }
+      }
+    }
+  }
+}
+
+tasks.register('downloadGuitarObjectModel') {
+  outputs.file(guitarObjectModelFile)
+  doLast {
+    visionModelDir.mkdirs()
+    if (!guitarObjectModelFile.exists() || guitarObjectModelFile.length() < 2_000_000L) {
+      logger.lifecycle('Downloading official MediaPipe EfficientDet-Lite0 object detector model...')
+      new URL(guitarObjectModelUrl).withInputStream { input ->
+        guitarObjectModelFile.withOutputStream { output -> output << input }
+      }
+    }
+  }
+}
+
+tasks.register('downloadGuitarClassifierModel') {
+  outputs.file(guitarClassifierModelFile)
+  doLast {
+    visionModelDir.mkdirs()
+    if (!guitarClassifierModelFile.exists() || guitarClassifierModelFile.length() < 3_000_000L) {
+      logger.lifecycle('Downloading official MediaPipe EfficientNet-Lite0 image classifier model...')
+      new URL(guitarClassifierModelUrl).withInputStream { input ->
+        guitarClassifierModelFile.withOutputStream { output -> output << input }
+      }
+    }
+  }
+}
+
+afterEvaluate {
+  tasks.named('preBuild').configure {
+    dependsOn(tasks.named('downloadHandLandmarkerModel'))
+    dependsOn(tasks.named('downloadGuitarObjectModel'))
+    dependsOn(tasks.named('downloadGuitarClassifierModel'))
+  }
+}
+
+dependencies {
+  implementation 'com.google.mlkit:pose-detection:18.0.0-beta5'
+  implementation 'com.google.mediapipe:tasks-vision:latest.release'
+
+  def cameraxVersion = '1.4.2'
+  implementation "androidx.camera:camera-core:${cameraxVersion}"
+  implementation "androidx.camera:camera-camera2:${cameraxVersion}"
+  implementation "androidx.camera:camera-lifecycle:${cameraxVersion}"
+  implementation "androidx.camera:camera-view:${cameraxVersion}"
+}

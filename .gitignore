@@ -45,3 +45,6 @@ clips/
 *.mov
 *.m4a
 *.wav
+
+# Generated TypeScript quality-test output
+mobile/.quality-dist/

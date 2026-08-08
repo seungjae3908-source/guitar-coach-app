@@ -1,0 +1,125 @@
+name: Verify Render Blueprint
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - render.yaml
+      - debug-server/**
+      - web/**
+      - .github/workflows/verify-render-blueprint.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - render.yaml
+      - debug-server/**
+      - web/**
+      - .github/workflows/verify-render-blueprint.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-render-blueprint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout development branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+
+      - name: Verify repository layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f render.yaml
+          test -f debug-server/package.json
+          test -f debug-server/server.mjs
+          test -f debug-server/live-server.mjs
+          test -f debug-server/server.test.mjs
+          test -f debug-server/live-server.test.mjs
+          test -f web/package.json
+          test -f web/vite.config.js
+          test -f web/src/DebugCenter.jsx
+          test -f web/src/live-telemetry.js
+          test -f web/src/vision-logic.js
+          test -f web/src/vision-logic.test.mjs
+          grep -q 'rootDir: debug-server' render.yaml
+          grep -q 'rootDir: web' render.yaml
+          grep -q 'healthCheckPath: /health' render.yaml
+          grep -q 'staticPublishPath: dist' render.yaml
+          grep -q 'branch: agent/live-coach-compat-v055' render.yaml
+          grep -q 'npm run render-build' render.yaml
+          grep -q 'ALLOWED_ORIGINS' render.yaml
+          grep -q 'https://seungjae3908-source.github.io' render.yaml
+          grep -q 'autoDeployTrigger: "commit"' render.yaml
+          if grep -q 'branch: main' render.yaml; then echo 'render.yaml must not deploy main.'; exit 1; fi
+
+      - name: Validate against official Render schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --quiet pyyaml jsonschema
+          python - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+          import yaml
+          from jsonschema.validators import validator_for
+          with urllib.request.urlopen('https://render.com/schema/render.yaml.json', timeout=30) as response:
+              schema = json.load(response)
+          blueprint = yaml.safe_load(Path('render.yaml').read_text(encoding='utf-8'))
+          validator_class = validator_for(schema)
+          validator_class.check_schema(schema)
+          errors = sorted(validator_class(schema).iter_errors(blueprint), key=lambda error: list(error.absolute_path))
+          if errors:
+              for error in errors:
+                  print(f'{".".join(str(part) for part in error.absolute_path) or "<root>"}: {error.message}')
+              raise SystemExit(1)
+          print('render.yaml matches the official Render schema.')
+          PY
+
+      - name: Verify Web Service build and start commands
+        working-directory: debug-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install
+          npm run verify
+          timeout 10s bash -c 'PORT=18787 NODE_ENV=production ADMIN_SHARED_SECRET=test-admin DEVICE_SHARED_SECRET=test-device ALLOWED_ORIGIN=https://seungjae3908-guitar-coach-debug-web.onrender.com ALLOWED_ORIGINS=https://seungjae3908-guitar-coach-debug-web.onrender.com,https://seungjae3908-source.github.io npm start > /tmp/render-debug-api.log 2>&1 & pid=$!; trap "kill $pid 2>/dev/null || true" EXIT; for i in {1..20}; do curl -fsS http://127.0.0.1:18787/health && exit 0; sleep 0.25; done; cat /tmp/render-debug-api.log; exit 1'
+
+      - name: Verify Static Site tests and build command
+        working-directory: web
+        shell: bash
+        env:
+          VITE_DIAGNOSTIC_API_URL: https://seungjae3908-guitar-coach-debug-api.onrender.com
+        run: |
+          set -euo pipefail
+          npm install
+          npm run render-build
+          test -s dist/index.html
+          grep -q 'src="/assets/' dist/index.html
+          grep -R -q '기타 코치 실시간 진단센터' dist/assets
+          grep -R -q '양손 관절 인식' dist/assets
+          grep -R -q '스트럼 손' dist/assets
+          grep -R -q '원격 로그 코드' dist/assets
+          grep -R -q '실시간 연결됨' dist/assets
+          grep -R -q '다운 바로 점검' dist/assets
+          grep -R -q '업 바로 점검' dist/assets
+          grep -R -q '실제 줄 구간' dist/assets
+          grep -R -q '방향 감지 준비 완료' dist/assets
+          grep -R -q '전면카메라 연결' dist/assets
+          grep -R -q '전면 고정' dist/assets
+          if find dist -type f -name '*.apk' -print -quit | grep -q .; then
+            echo 'APK found in Render web output.'
+            exit 1
+          fi
+          if grep -R -q '브라우저 움직임 감지 5회' dist; then exit 1; fi

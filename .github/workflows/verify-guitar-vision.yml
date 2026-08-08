@@ -1,0 +1,115 @@
+name: Verify guitar vision
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - 'mobile/components/AutomaticGuitarCalibrationV9.tsx'
+      - 'mobile/services/guitar-auto-detection.ts'
+      - 'mobile/tests/guitar-auto-detection.test.ts'
+      - 'mobile/modules/guitar-coach-native/**'
+      - 'mobile/GUITAR_VISION_BUILD_TRIGGER.txt'
+      - '.github/workflows/verify-guitar-vision.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-guitar-vision-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - id: install
+        name: Install dependencies
+        continue-on-error: true
+        working-directory: mobile
+        run: npm ci
+
+      - id: typecheck
+        name: Typecheck and unit tests
+        if: always() && steps.install.outcome == 'success'
+        continue-on-error: true
+        working-directory: mobile
+        run: npm run typecheck
+
+      - id: prebuild
+        name: Generate Android project
+        if: always() && steps.install.outcome == 'success'
+        continue-on-error: true
+        working-directory: mobile
+        run: npx expo prebuild --platform android --clean --no-install --non-interactive
+
+      - id: android_build
+        name: Build Android debug app
+        if: always() && steps.prebuild.outcome == 'success'
+        continue-on-error: true
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Persist verification result
+        if: always()
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          PREBUILD_OUTCOME: ${{ steps.prebuild.outcome }}
+          ANDROID_OUTCOME: ${{ steps.android_build.outcome }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          cat > mobile/GUITAR_VISION_VERIFICATION.md <<EOF
+          # Guitar Vision Verification
+
+          - Source commit: \`${SOURCE_SHA}\`
+          - npm ci: **${INSTALL_OUTCOME}**
+          - TypeScript + unit tests: **${TYPECHECK_OUTCOME}**
+          - Expo Android prebuild: **${PREBUILD_OUTCOME}**
+          - Android debug build: **${ANDROID_OUTCOME}**
+          - Verified by GitHub Actions: \`${GITHUB_RUN_ID}\`
+          EOF
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mobile/GUITAR_VISION_VERIFICATION.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'ci(camera): record guitar vision verification'
+          git push origin HEAD:agent/live-coach-compat-v055
+
+      - name: Fail when verification failed
+        if: always()
+        env:
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          PREBUILD_OUTCOME: ${{ steps.prebuild.outcome }}
+          ANDROID_OUTCOME: ${{ steps.android_build.outcome }}
+        run: |
+          test "${INSTALL_OUTCOME}" = success
+          test "${TYPECHECK_OUTCOME}" = success
+          test "${PREBUILD_OUTCOME}" = success
+          test "${ANDROID_OUTCOME}" = success

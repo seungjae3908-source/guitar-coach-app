@@ -1,0 +1,110 @@
+import type { HandAnalysisResult } from '../modules/guitar-coach-hand';
+import type { NativeAudioReading } from '../modules/guitar-coach-audio';
+import type { MetronomeTimingState } from '../modules/guitar-coach-metronome';
+import type { PoseAnalysisResult } from '../modules/guitar-coach-native';
+import type { ChordRecognitionResult } from './fretboard-chord-engine';
+import type { FingeringAnalysisResult } from './left-hand-fingering-engine';
+
+export type PoseAnalysisFrame = {
+  kind: 'pose';
+  capturedAt: number;
+  result: PoseAnalysisResult;
+};
+
+export type HandAnalysisFrame = {
+  kind: 'hand';
+  capturedAt: number;
+  result: HandAnalysisResult;
+};
+
+export type AudioAnalysisFrame = {
+  kind: 'audio';
+  capturedAt: number;
+  result: NativeAudioReading;
+};
+
+export type MetronomeAnalysisFrame = {
+  kind: 'metronome';
+  capturedAt: number;
+  result: MetronomeTimingState;
+};
+
+export type ChordAnalysisFrame = {
+  kind: 'chord';
+  capturedAt: number;
+  result: ChordRecognitionResult;
+};
+
+export type FingeringAnalysisFrame = {
+  kind: 'fingering';
+  capturedAt: number;
+  result: FingeringAnalysisResult;
+};
+
+export type LiveAnalysisFrame =
+  | PoseAnalysisFrame
+  | HandAnalysisFrame
+  | AudioAnalysisFrame
+  | MetronomeAnalysisFrame
+  | ChordAnalysisFrame
+  | FingeringAnalysisFrame;
+export type LiveAnalysisListener = (frame: LiveAnalysisFrame) => void;
+
+const listeners = new Set<LiveAnalysisListener>();
+let latestPoseFrame: PoseAnalysisFrame | null = null;
+let latestHandFrame: HandAnalysisFrame | null = null;
+let latestAudioFrame: AudioAnalysisFrame | null = null;
+let latestMetronomeFrame: MetronomeAnalysisFrame | null = null;
+let latestChordFrame: ChordAnalysisFrame | null = null;
+let latestFingeringFrame: FingeringAnalysisFrame | null = null;
+let subscribersSuppressed = false;
+
+export function setLiveAnalysisSubscribersSuppressed(suppressed: boolean) {
+  subscribersSuppressed = suppressed;
+}
+
+export function publishLiveAnalysisFrame(frame: LiveAnalysisFrame) {
+  if (frame.kind === 'pose') latestPoseFrame = frame;
+  else if (frame.kind === 'hand') latestHandFrame = frame;
+  else if (frame.kind === 'audio') latestAudioFrame = frame;
+  else if (frame.kind === 'metronome') latestMetronomeFrame = frame;
+  else if (frame.kind === 'chord') latestChordFrame = frame;
+  else latestFingeringFrame = frame;
+
+  if (subscribersSuppressed && frame.kind !== 'metronome') return;
+
+  listeners.forEach((listener) => {
+    try {
+      listener(frame);
+    } catch {
+      // 한 화면의 구독 오류가 카메라·마이크·메트로놈 분석 자체를 중단하지 않게 합니다.
+    }
+  });
+}
+
+export function subscribeLiveAnalysis(listener: LiveAnalysisListener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function getLatestLiveAnalysisFrames() {
+  return {
+    pose: latestPoseFrame,
+    hand: latestHandFrame,
+    audio: latestAudioFrame,
+    metronome: latestMetronomeFrame,
+    chord: latestChordFrame,
+    fingering: latestFingeringFrame,
+  };
+}
+
+export function clearLatestLiveAnalysisFrames() {
+  latestPoseFrame = null;
+  latestHandFrame = null;
+  latestAudioFrame = null;
+  latestMetronomeFrame = null;
+  latestChordFrame = null;
+  latestFingeringFrame = null;
+}

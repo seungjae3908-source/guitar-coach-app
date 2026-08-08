@@ -1,0 +1,599 @@
+:root {
+  color-scheme: dark;
+}
+
+.debug-login-shell,
+.debug-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 78% 8%, rgba(46, 160, 67, 0.16), transparent 28%),
+    radial-gradient(circle at 12% 85%, rgba(88, 166, 255, 0.09), transparent 30%),
+    #090d12;
+  color: #f0f6fc;
+}
+
+.debug-login-shell {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.debug-login-card {
+  width: min(440px, 100%);
+  padding: 30px;
+  border: 1px solid #30363d;
+  border-radius: 24px;
+  background: rgba(22, 27, 34, 0.96);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.4);
+}
+
+.debug-logo {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #2ea043, #1f6f34);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 950;
+  box-shadow: 0 12px 30px rgba(46, 160, 67, 0.25);
+}
+
+.debug-kicker {
+  display: block;
+  margin-top: 18px;
+  color: #7ee787;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 1.5px;
+}
+
+.debug-login-card h1,
+.debug-header h1,
+.debug-instruction-card h2,
+.debug-card-title h2 {
+  margin: 7px 0 0;
+}
+
+.debug-login-card p,
+.debug-header p {
+  margin: 10px 0 22px;
+  color: #8b949e;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.debug-login-card label,
+.debug-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  color: #c9d1d9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.debug-login-card input,
+.debug-field input,
+.debug-field textarea {
+  width: 100%;
+  border: 1px solid #30363d;
+  border-radius: 13px;
+  padding: 13px 14px;
+  background: #0d1117;
+  color: #fff;
+  outline: none;
+}
+
+.debug-field textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.debug-login-card input:focus,
+.debug-field input:focus,
+.debug-field textarea:focus {
+  border-color: #2ea043;
+  box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.12);
+}
+
+.debug-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: rgba(248, 81, 73, 0.12);
+  color: #ff7b72;
+  font-size: 12px;
+}
+
+.debug-primary,
+.debug-secondary,
+.debug-danger {
+  border: 0;
+  border-radius: 13px;
+  padding: 12px 16px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.debug-primary {
+  background: #238636;
+}
+
+.debug-secondary {
+  background: #30363d;
+}
+
+.debug-danger {
+  background: #b62324;
+}
+
+.debug-primary:disabled,
+.debug-secondary:disabled,
+.debug-danger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.debug-login-card .debug-primary {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.debug-wide {
+  width: 100%;
+}
+
+.debug-shell {
+  padding: 28px;
+}
+
+.debug-header {
+  max-width: 1440px;
+  margin: 0 auto 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.debug-header .debug-kicker {
+  margin-top: 0;
+}
+
+.debug-header h1 {
+  font-size: clamp(26px, 4vw, 42px);
+}
+
+.debug-session-box {
+  min-width: 210px;
+  padding: 14px 16px;
+  border: 1px solid #30363d;
+  border-radius: 17px;
+  background: rgba(22, 27, 34, 0.92);
+}
+
+.debug-session-box span,
+.debug-session-box strong,
+.debug-session-box small {
+  display: block;
+}
+
+.debug-session-box span {
+  color: #8b949e;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.debug-session-box strong {
+  margin-top: 5px;
+  color: #7ee787;
+  font-size: 20px;
+}
+
+.debug-session-box small {
+  margin-top: 5px;
+  color: #6e7681;
+  font-size: 9px;
+}
+
+.debug-progress {
+  max-width: 1440px;
+  height: 7px;
+  margin: 0 auto 20px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #21262d;
+}
+
+.debug-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2ea043, #7ee787);
+  transition: width 260ms ease;
+}
+
+.debug-grid {
+  max-width: 1440px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.debug-camera-card,
+.debug-instruction-card,
+.debug-checklist-card,
+.debug-log-card {
+  border: 1px solid #30363d;
+  border-radius: 21px;
+  background: rgba(22, 27, 34, 0.95);
+  box-shadow: 0 22px 65px rgba(0, 0, 0, 0.2);
+}
+
+.debug-camera-card {
+  padding: 16px;
+}
+
+.debug-video-wrap {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 17px;
+  background: #000;
+}
+
+.debug-video-wrap video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.debug-video-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #6e7681;
+  font-weight: 900;
+}
+
+.debug-feed-badge {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: rgba(13, 17, 23, 0.88);
+  border: 1px solid #30363d;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.debug-feed-badge.good {
+  color: #7ee787;
+  border-color: #2ea043;
+}
+
+.debug-feed-badge.bad {
+  color: #f2cc60;
+  border-color: #9e6a03;
+}
+
+.debug-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.debug-metrics div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  background: #0d1117;
+}
+
+.debug-metrics span,
+.debug-metrics strong {
+  display: block;
+}
+
+.debug-metrics span {
+  color: #6e7681;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.debug-metrics strong {
+  margin-top: 5px;
+  overflow: hidden;
+  color: #f0f6fc;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-button-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 13px;
+}
+
+.debug-instruction-card,
+.debug-checklist-card,
+.debug-log-card {
+  padding: 20px;
+}
+
+.debug-instruction-card .debug-kicker {
+  margin-top: 0;
+}
+
+.debug-instruction-card h2,
+.debug-card-title h2 {
+  font-size: 20px;
+}
+
+.debug-instruction {
+  min-height: 88px;
+  margin: 16px 0;
+  padding: 18px;
+  border-left: 4px solid #2ea043;
+  border-radius: 0 14px 14px 0;
+  background: #0d1117;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1.55;
+}
+
+.debug-count {
+  margin: 10px 0 4px;
+  color: #7ee787;
+  font-size: 54px;
+  font-weight: 950;
+  text-align: center;
+}
+
+.debug-count span {
+  margin-left: 6px;
+  color: #8b949e;
+  font-size: 15px;
+}
+
+.debug-voice-result {
+  margin-top: 10px;
+  color: #8b949e;
+  font-size: 11px;
+  text-align: center;
+}
+
+.debug-thresholds {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 15px;
+  border-top: 1px solid #30363d;
+}
+
+.debug-thresholds label {
+  display: grid;
+  grid-template-columns: 100px 1fr 32px;
+  gap: 10px;
+  align-items: center;
+  color: #8b949e;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.debug-thresholds input {
+  width: 100%;
+}
+
+.debug-thresholds strong {
+  color: #f0f6fc;
+  text-align: right;
+}
+
+.debug-card-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debug-card-title .debug-kicker {
+  margin-top: 0;
+}
+
+.debug-card-title > strong {
+  color: #7ee787;
+  font-size: 20px;
+}
+
+.debug-card-title > button {
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #21262d;
+  color: #c9d1d9;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.debug-test-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.debug-test-list > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #30363d;
+  border-radius: 14px;
+  padding: 12px;
+  background: #0d1117;
+  color: #f0f6fc;
+  text-align: left;
+  cursor: pointer;
+}
+
+.debug-test-list > button.active {
+  border-color: #2ea043;
+  background: rgba(46, 160, 67, 0.08);
+}
+
+.debug-test-list strong,
+.debug-test-list small {
+  display: block;
+}
+
+.debug-test-list strong {
+  font-size: 12px;
+}
+
+.debug-test-list small {
+  max-width: 370px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #6e7681;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 6px 8px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.debug-pill.pending {
+  background: #21262d;
+  color: #8b949e;
+}
+
+.debug-pill.active {
+  background: rgba(88, 166, 255, 0.14);
+  color: #79c0ff;
+}
+
+.debug-pill.pass {
+  background: rgba(46, 160, 67, 0.16);
+  color: #7ee787;
+}
+
+.debug-pill.fail {
+  background: rgba(248, 81, 73, 0.14);
+  color: #ff7b72;
+}
+
+.debug-log-list {
+  max-height: 320px;
+  margin-top: 14px;
+  overflow: auto;
+}
+
+.debug-log-list > div {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 10px;
+}
+
+.debug-log-list time {
+  color: #6e7681;
+}
+
+.debug-log-list .error span {
+  color: #ff7b72;
+}
+
+.debug-log-list p,
+.debug-empty-state {
+  color: #6e7681;
+  font-size: 11px;
+}
+
+.debug-admin-grid {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+}
+
+.debug-json {
+  max-height: 520px;
+  overflow: auto;
+  margin-top: 16px;
+  border-radius: 14px;
+  padding: 14px;
+  background: #0d1117;
+  color: #79c0ff;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .debug-shell {
+    padding: 16px;
+  }
+
+  .debug-header {
+    display: grid;
+  }
+
+  .debug-session-box {
+    min-width: 0;
+  }
+
+  .debug-grid,
+  .debug-admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .debug-instruction-card {
+    order: -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .debug-login-card {
+    padding: 22px;
+  }
+
+  .debug-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .debug-button-row {
+    grid-template-columns: 1fr;
+  }
+
+  .debug-instruction {
+    min-height: 0;
+    font-size: 15px;
+  }
+
+  .debug-test-list small {
+    max-width: 210px;
+  }
+}

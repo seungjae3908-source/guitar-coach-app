@@ -1,37 +1,38 @@
 {
   "expo": {
-    "name": "기타 코치 AI",
-    "slug": "guitar-coach-ai",
-    "version": "0.5.4",
+    "name": "기타 코치 AI 완성형 베타",
+    "slug": "guitar-coach-live-test",
+    "version": "0.6.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "platforms": ["android", "ios"],
+    "platforms": [
+      "android"
+    ],
     "plugins": [
       [
         "expo-camera",
         {
-          "cameraPermission": "기타 연습 영상을 촬영하기 위해 카메라를 사용합니다.",
-          "microphonePermission": "기타 연주 소리를 함께 녹음하기 위해 마이크를 사용합니다.",
+          "cameraPermission": "통기타와 일렉기타 연습 중 상체 자세와 손가락·피크·기타줄을 휴대폰 안에서 분석하고 연습 영상을 녹화하기 위해 카메라를 사용합니다.",
+          "microphonePermission": "크로매틱 튜너, 연주 어택·박자·톤 일관성과 영상 줄 판정 보조를 휴대폰 안에서 처리하기 위해 마이크를 사용합니다.",
           "recordAudioAndroid": true
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "촬영한 기타 연습 영상을 확인하기 위해 미디어를 사용합니다.",
-          "savePhotosPermission": "촬영한 기타 연습 영상을 휴대폰 갤러리에 저장합니다.",
-          "granularPermissions": ["photo", "video"]
+          "photosPermission": "저장된 연습 영상을 확인하기 위해 사진과 동영상 접근 권한을 사용합니다.",
+          "savePhotosPermission": "촬영한 기타 연습 영상을 휴대폰 갤러리에 저장하기 위해 권한을 사용합니다.",
+          "isAccessMediaLocationEnabled": false
         }
       ]
     ],
     "android": {
-      "package": "com.seungjae.guitarcoach",
-      "versionCode": 11,
-      "permissions": ["CAMERA", "RECORD_AUDIO"]
-    },
-    "ios": {
-      "bundleIdentifier": "com.seungjae.guitarcoach",
-      "buildNumber": "11"
+      "package": "com.seungjae.guitarcoach.livetest",
+      "versionCode": 29,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
     }
   }
 }

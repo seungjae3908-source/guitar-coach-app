@@ -1,0 +1,220 @@
+:root {
+  color-scheme: dark;
+}
+
+.practice-app-shell {
+  min-height: 100dvh;
+  background: #090d12;
+  color: #f0f6fc;
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
+.practice-app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  min-height: 62px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #21262d;
+  background: rgba(9, 13, 18, 0.94);
+  backdrop-filter: blur(14px);
+}
+
+.practice-app-header span {
+  display: block;
+  color: #7ee787;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.practice-app-header h1 {
+  margin: 3px 0 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.practice-app-header > strong {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #1f6f34;
+  color: #fff;
+  font-size: 10px;
+}
+
+.practice-app-main {
+  width: 100%;
+}
+
+.practice-camera .debug-shell {
+  min-height: 0 !important;
+  padding: 8px !important;
+  background: #090d12 !important;
+}
+
+.practice-camera .debug-header,
+.practice-camera .debug-progress,
+.practice-camera .debug-grid > section:not(.debug-camera-card):not(.debug-instruction-card),
+.practice-camera .debug-session-box,
+.practice-camera .debug-log-card,
+.practice-camera .debug-checklist-card {
+  display: none !important;
+}
+
+.practice-camera .debug-grid {
+  width: 100% !important;
+  max-width: 760px !important;
+  margin: 0 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+
+.practice-camera .debug-camera-card {
+  order: 1;
+  padding: 8px !important;
+  border-radius: 14px !important;
+}
+
+.practice-camera .debug-video-wrap {
+  border-radius: 11px !important;
+}
+
+.practice-camera .debug-metrics {
+  margin-top: 7px !important;
+  gap: 5px !important;
+}
+
+.practice-camera .debug-metrics > div {
+  padding: 7px !important;
+}
+
+.practice-camera .debug-camera-card > .debug-button-row {
+  margin-top: 8px !important;
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 6px !important;
+}
+
+.practice-camera .debug-camera-card > .debug-button-row .debug-primary {
+  grid-column: 1 / -1;
+}
+
+.practice-camera .debug-camera-card > .debug-button-row .debug-secondary:nth-of-type(2) {
+  display: none !important;
+}
+
+.practice-camera .debug-instruction-card {
+  order: 2;
+  max-height: 230px;
+  overflow: hidden;
+  padding: 12px !important;
+  border-radius: 14px !important;
+}
+
+.practice-camera .debug-instruction-card .debug-kicker,
+.practice-camera .debug-instruction-card .debug-thresholds,
+.practice-camera .debug-instruction-card > .debug-button-row {
+  display: none !important;
+}
+
+.practice-camera .debug-instruction-card h2 {
+  margin-top: 0 !important;
+  font-size: 17px !important;
+}
+
+.practice-camera .debug-instruction {
+  margin: 6px 0 !important;
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+}
+
+.practice-camera .debug-count {
+  margin: 8px 0 !important;
+}
+
+.practice-focus {
+  min-height: calc(100dvh - 138px);
+}
+
+.practice-diagnostic-note {
+  width: min(920px, calc(100% - 24px));
+  margin: 12px auto -8px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  background: #161b22;
+}
+
+.practice-diagnostic-note strong {
+  color: #7ee787;
+}
+
+.practice-diagnostic-note span {
+  color: #8b949e;
+  font-size: 12px;
+}
+
+.practice-bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  height: calc(68px + env(safe-area-inset-bottom));
+  padding: 6px 8px env(safe-area-inset-bottom);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  border-top: 1px solid #30363d;
+  background: rgba(13, 17, 23, 0.97);
+  backdrop-filter: blur(16px);
+}
+
+.practice-bottom-nav button {
+  min-width: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #8b949e;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  font-size: 18px;
+}
+
+.practice-bottom-nav button strong {
+  font-size: 10px;
+}
+
+.practice-bottom-nav button.active {
+  background: #1f6f34;
+  color: #fff;
+}
+
+@media (max-width: 700px) {
+  .practice-camera .debug-video-wrap {
+    aspect-ratio: 4 / 3 !important;
+  }
+
+  .practice-camera .debug-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .practice-camera .debug-metrics span,
+  .practice-camera .debug-metrics strong {
+    font-size: 9px !important;
+  }
+
+  .practice-diagnostic .debug-shell {
+    padding: 12px !important;
+  }
+}

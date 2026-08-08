@@ -1,0 +1,171 @@
+name: Build and deploy practice beta
+
+on:
+  push:
+    branches:
+      - agent/live-coach-compat-v055
+    paths:
+      - 'web/**'
+      - 'debug-server/**'
+      - 'render.yaml'
+      - '.github/workflows/debug-center-preview.yml'
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+    paths:
+      - 'web/**'
+      - 'debug-server/**'
+      - 'render.yaml'
+      - '.github/workflows/debug-center-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: guitar-coach-practice-pages-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/live-coach-compat-v055
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify relay server
+        working-directory: debug-server
+        run: npm run verify
+
+      - name: Verify production deployment blueprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s render.yaml
+          test -s debug-server/live-server.mjs
+          test -s web/src/live-telemetry.js
+          grep -q 'rootDir: debug-server' render.yaml
+          grep -q 'healthCheckPath: /health' render.yaml
+          grep -q 'ADMIN_SHARED_SECRET' render.yaml
+          grep -q 'DEVICE_SHARED_SECRET' render.yaml
+          grep -q 'ALLOWED_ORIGINS' render.yaml
+          grep -q 'https://seungjae3908-guitar-coach-debug-web.onrender.com' render.yaml
+          grep -q 'https://seungjae3908-source.github.io' render.yaml
+          grep -q 'npm run render-build' render.yaml
+          grep -q 'autoDeployTrigger: "commit"' render.yaml
+
+      - name: Verify compact practice app is the public entry point
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "return <PracticeApp />" web/src/AppSafe.jsx
+          grep -q "params.get('debug') === '1'" web/src/AppSafe.jsx
+          grep -q '<FocusAnalyzer />' web/src/PracticeApp.jsx
+          grep -q '<DebugCenter />' web/src/PracticeApp.jsx
+          grep -q 'AI 카메라' web/src/PracticeApp.jsx
+          grep -q '집중연습' web/src/PracticeApp.jsx
+          if grep -q 'UI PROTOTYPE\|NOT CONNECTED' web/src/PracticeApp.jsx; then
+            echo 'Prototype placeholders leaked into the public practice shell.'
+            exit 1
+          fi
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm install
+
+      - name: Test evidence-gated vision and practice UI
+        working-directory: web
+        run: npm test
+
+      - name: Build practice beta web
+        working-directory: web
+        run: npm run build
+
+      - name: Verify compact practice and diagnostic bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s web/dist/index.html
+          grep -R -q 'AI 카메라 연습' web/dist/assets
+          grep -R -q '집중연습' web/dist/assets
+          grep -R -q '실제 동작 기능' web/dist/assets
+          grep -R -q '기타 코치 실시간 진단센터' web/dist/assets
+          grep -R -q '원격 진단 관리자' web/dist/assets
+          grep -R -q '양손 관절 인식' web/dist/assets
+          grep -R -q '스트럼 손' web/dist/assets
+          grep -R -q '다운 바로 점검' web/dist/assets
+          grep -R -q '업 바로 점검' web/dist/assets
+          grep -R -q '방향 감지 준비 완료' web/dist/assets
+          if find web/dist -type f -name '*.apk' -print -quit | grep -q .; then
+            echo 'APK found in the web build.'
+            exit 1
+          fi
+          if grep -R -q '브라우저 움직임 감지 5회' web/dist; then
+            echo 'Legacy global-motion strum completion still exists.'
+            exit 1
+          fi
+          if grep -R -q 'raw.githack\|rawgit.hack' web/dist; then
+            echo 'Third-party raw host reference found.'
+            exit 1
+          fi
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload verified site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    runs-on: ubuntu-24.04
+    needs: verify-and-build
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy verified site
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify deployed HTTPS practice app
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PAGE_URL"
+          case "$PAGE_URL" in
+            https://*.github.io/*) ;;
+            *) echo "Unexpected Pages URL: $PAGE_URL"; exit 1 ;;
+          esac
+          for attempt in $(seq 1 18); do
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' "${PAGE_URL}?verification=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -o /tmp/deployed-index.html; then break; fi
+            if [ "$attempt" -eq 18 ]; then echo 'Deployed site did not become reachable.'; exit 1; fi
+            sleep 5
+          done
+          grep -q '<div id="root"></div>' /tmp/deployed-index.html
+          script_path=$(grep -oE 'src="[^"]+\.js"' /tmp/deployed-index.html | head -n 1 | cut -d'"' -f2)
+          test -n "$script_path"
+          script_url=$(node -e 'console.log(new URL(process.argv[1], process.argv[2]).href)' "$script_path" "$PAGE_URL")
+          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 -H 'Cache-Control: no-cache' "$script_url" -o /tmp/deployed-app.js
+          grep -q 'AI 카메라 연습' /tmp/deployed-app.js
+          grep -q '집중연습' /tmp/deployed-app.js
+          grep -q '실제 동작 기능' /tmp/deployed-app.js
+          grep -q '기타 코치 실시간 진단센터' /tmp/deployed-app.js
+          grep -q '다운 바로 점검' /tmp/deployed-app.js
+          grep -q '업 바로 점검' /tmp/deployed-app.js
+          if grep -qi 'rawgit\.hack\|raw\.githack\|브라우저 움직임 감지 5회|\.apk' /tmp/deployed-app.js; then exit 1; fi
+          echo "Verified deployed practice app: $PAGE_URL"
