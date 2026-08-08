@@ -124,8 +124,8 @@ jobs:
             gh release create "$tag" "$apk#guitar-coach-ai.apk" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title '湲고? 肄붿튂 AI ?대????뚯뒪?명뙋' \
-              --notes 'ARM64 ?덈뱶濡쒖씠???대??곗슜 寃쎈웾 ?뚯뒪??APK?낅땲?? 移대찓?셋룸쭏?댄겕쨌?곸긽 遺꾩꽍 湲곕뒫? ?꾩쭅 ?곌껐?섏? ?딆븯?듬땲??' \
+              --title '기타 코치 AI 휴대폰 테스트판' \
+              --notes 'ARM64 안드로이드 휴대폰용 경량 테스트 APK입니다. 카메라·마이크·영상 분석 기능은 아직 연결되지 않았습니다.' \
               --prerelease
           fi
 
