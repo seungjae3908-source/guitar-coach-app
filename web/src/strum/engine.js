@@ -65,20 +65,25 @@ export function fuseStrokeEvidence(candidate, audioOnset) {
   if (!candidate) return null;
   const audioConfirmed = Boolean(audioOnset);
   const vision = candidate.visionConfidence ?? 0;
+  // Direct callers predate trajectory metadata, so omitted means the caller
+  // already supplied a validated visual candidate. StrokeDetector always passes
+  // an explicit boolean here.
+  const crossedCentralBand = candidate.crossedCentralBand ?? true;
   const confidence = clamp(
     vision * (audioConfirmed ? 0.72 : 0.88) +
       (audioOnset?.strength ?? 0) * 0.28,
   );
   const accepted =
-    (candidate.crossedCentralBand && vision >= 0.64) ||
+    (crossedCentralBand && vision >= 0.64) ||
     (audioConfirmed && vision >= 0.38 && confidence >= 0.48);
   return {
     ...candidate,
+    crossedCentralBand,
     audioConfirmed,
     confidence,
     accepted,
     evidence: audioConfirmed
-      ? candidate.crossedCentralBand
+      ? crossedCentralBand
         ? "vision+audio"
         : "audio-supported-trajectory"
       : accepted
