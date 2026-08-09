@@ -21,3 +21,9 @@ test('device diagnostics remain opt-in behind debug=1', () => {
   assert.match(coach, /REJECT COUNTS/);
   assert.match(coach, /DEVICE DEBUG/);
 });
+
+test('device diagnostics expose a structured window snapshot for ADB-assisted inspection', () => {
+  assert.match(coach, /window\.__GUITAR_COACH_DEBUG__/);
+  assert.match(coach, /\[guitar-coach-debug\]/);
+  assert.match(coach, /totalAcceptedStrokes/);
+});
