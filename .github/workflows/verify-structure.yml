@@ -57,5 +57,7 @@ jobs:
           node-version: '22'
       - name: Install web dependencies
         run: npm install
+      - name: Test strum algorithms
+        run: npm test
       - name: Build web app
         run: npm run build

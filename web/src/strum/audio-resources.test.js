@@ -1,0 +1,13 @@
+import test from'node:test';import assert from'node:assert/strict';import{AudioOnsetDetector,fuseStrokeEvidence}from'./engine.js';import{PracticeResources}from'./resources.js';
+const feed=(detector,values,start=0,step=20)=>values.map((v,i)=>detector.push(v,start+i*step)).filter(Boolean);
+test('quiet room ambient calibration stays quiet',()=>assert.equal(feed(new AudioOnsetDetector({calibrationMs:200}),Array(20).fill(.002)).length,0));
+test('steady fan noise becomes noise floor',()=>{const d=new AudioOnsetDetector({calibrationMs:200});assert.equal(feed(d,Array(40).fill(.025)).length,0);assert.ok(d.noiseFloor>.015)});
+test('high initial background does not trigger',()=>assert.equal(feed(new AudioOnsetDetector({calibrationMs:300}),Array(30).fill(.06)).length,0));
+test('sudden guitar attack after ambient calibrates is detected',()=>{const d=new AudioOnsetDetector({calibrationMs:100});feed(d,Array(8).fill(.01));assert.ok(d.push(.12,200))});
+test('sustain is not repeated onset',()=>{const d=new AudioOnsetDetector({calibrationMs:0});const hits=feed(d,[.01,.12,.1,.09,.08]);assert.equal(hits.length,1)});
+test('separated continuous strums create separate onsets',()=>{const d=new AudioOnsetDetector({calibrationMs:0,refractoryMs:80});const hits=feed(d,[.01,.12,.02,.01,.01,.11,.02,.01,.1],0,30);assert.equal(hits.length,3)});
+test('strong vision plus audio is high confidence',()=>{const r=fuseStrokeEvidence({visionConfidence:.85},{strength:.8});assert.equal(r.accepted,true);assert.equal(r.evidence,'vision+audio')});
+test('strong vision only remains accepted',()=>{const r=fuseStrokeEvidence({visionConfidence:.82},null);assert.equal(r.accepted,true);assert.equal(r.evidence,'strong-vision')});
+test('weak vision plus audio may be accepted',()=>assert.equal(fuseStrokeEvidence({visionConfidence:.5},{strength:.8}).accepted,true));
+test('weak vision only and audio only are rejected',()=>{assert.equal(fuseStrokeEvidence({visionConfidence:.3},null).accepted,false);assert.equal(fuseStrokeEvidence(null,{strength:1}),null)});
+test('ten practice restarts clean every registered resource',()=>{let cancelled=0,closed=0,tracks=0;const r=new PracticeResources(()=>cancelled++);r.values.stream={getTracks:()=>[{stop:()=>tracks++}]};for(let i=0;i<10;i++){r.begin();Object.assign(r.values,{raf:1,audioRaf:2,tracker:{close:()=>closed++},context:{close:()=>closed++},stream:r.values.stream});r.stopAnalysis()}r.stopAll();assert.equal(cancelled,20);assert.equal(closed,20);assert.equal(tracks,1)});
