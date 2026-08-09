@@ -1,5 +1,21 @@
 import { clamp, strumPoint, toGuitarSpace } from "./geometry.js";
 
+export const REJECT_REASONS = Object.freeze({
+  NO_HAND: "NO_HAND",
+  NO_STRUM_HAND: "NO_STRUM_HAND",
+  CALIBRATION_INVALID: "CALIBRATION_INVALID",
+  OUTSIDE_STRUM_ZONE: "OUTSIDE_STRUM_ZONE",
+  WAITING_FOR_TRAJECTORY: "WAITING_FOR_TRAJECTORY",
+  NO_AXIS_CROSS: "NO_AXIS_CROSS",
+  TRAVEL_TOO_SMALL: "TRAVEL_TOO_SMALL",
+  VELOCITY_TOO_LOW: "VELOCITY_TOO_LOW",
+  TRACKING_CONFIDENCE_LOW: "TRACKING_CONFIDENCE_LOW",
+  REFRACTORY: "REFRACTORY",
+  WEAK_VISION_NO_AUDIO: "WEAK_VISION_NO_AUDIO",
+  DUPLICATE: "DUPLICATE",
+  OTHER: "OTHER",
+});
+
 const percentile = (values, ratio) => {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -47,22 +63,24 @@ export class AudioOnsetDetector {
 
 export function fuseStrokeEvidence(candidate, audioOnset) {
   if (!candidate) return null;
-  const audioConfirmed = Boolean(audioOnset),
-    vision = candidate.visionConfidence ?? 0;
+  const audioConfirmed = Boolean(audioOnset);
+  const vision = candidate.visionConfidence ?? 0;
   const confidence = clamp(
-    vision * (audioConfirmed ? 0.7 : 0.82) + (audioOnset?.strength ?? 0) * 0.3,
+    vision * (audioConfirmed ? 0.72 : 0.88) +
+      (audioOnset?.strength ?? 0) * 0.28,
   );
   const accepted =
-    vision >= 0.7 || (audioConfirmed && vision >= 0.34 && confidence >= 0.5);
+    (candidate.crossedCentralBand && vision >= 0.64) ||
+    (audioConfirmed && vision >= 0.38 && confidence >= 0.48);
   return {
     ...candidate,
     audioConfirmed,
     confidence,
     accepted,
     evidence: audioConfirmed
-      ? vision >= 0.7
+      ? candidate.crossedCentralBand
         ? "vision+audio"
-        : "audio-supported"
+        : "audio-supported-trajectory"
       : accepted
         ? "strong-vision"
         : "weak-vision",
@@ -71,73 +89,202 @@ export function fuseStrokeEvidence(candidate, audioOnset) {
 
 export class StrokeDetector {
   constructor({
-    minTravel = 0.055,
-    minVelocity = 0.32,
-    refractoryMs = 115,
-    audioWindowMs = 130,
+    minTravel = 0.045,
+    minVelocity = 0.25,
+    refractoryMs = 105,
+    audioWindowMs = 150,
+    sampleWindowMs = 280,
   } = {}) {
     Object.assign(this, {
       minTravel,
       minVelocity,
       refractoryMs,
       audioWindowMs,
+      sampleWindowMs,
     });
     this.samples = [];
     this.onsets = [];
     this.lastStroke = -Infinity;
+    this.acceptedCount = 0;
+    this.rejectionCounts = {};
+    this.lastDebug = null;
   }
+
   addOnset(onset) {
     if (onset) this.onsets.push(onset);
-    this.onsets = this.onsets.slice(-12);
+    this.onsets = this.onsets.slice(-16);
   }
+
+  markReject(reason, data = {}) {
+    this.rejectionCounts[reason] = (this.rejectionCounts[reason] || 0) + 1;
+    this.lastDebug = {
+      accepted: false,
+      reason,
+      ...data,
+    };
+    return null;
+  }
+
+  getDebugSnapshot() {
+    return {
+      ...(this.lastDebug || {}),
+      acceptedCount: this.acceptedCount,
+      rejectionCounts: { ...this.rejectionCounts },
+      minTravel: this.minTravel,
+      minVelocity: this.minVelocity,
+    };
+  }
+
   push({ timestamp, landmarks, calibration, trackingConfidence = 1 }) {
-    const point = strumPoint(landmarks);
-    if (!point || !calibration || trackingConfidence < 0.2) return null;
-    const guitar = toGuitarSpace(point, calibration),
-      z = calibration.strumZone;
+    const point = strumPoint(landmarks || []);
+    if (!point)
+      return this.markReject(REJECT_REASONS.NO_HAND, { timestamp });
+    if (!calibration)
+      return this.markReject(REJECT_REASONS.CALIBRATION_INVALID, {
+        timestamp,
+        point,
+      });
+    if (trackingConfidence < 0.2)
+      return this.markReject(REJECT_REASONS.TRACKING_CONFIDENCE_LOW, {
+        timestamp,
+        point,
+        trackingConfidence,
+      });
+
+    const guitar = toGuitarSpace(point, calibration);
+    const z = calibration.strumZone;
     const near =
       guitar.along >= z.alongMin &&
       guitar.along <= z.alongMax &&
       guitar.across >= z.acrossMin &&
       guitar.across <= z.acrossMax;
+
     this.samples.push({ timestamp, point, guitar, near });
-    this.samples = this.samples.filter((s) => timestamp - s.timestamp <= 240);
-    if (
-      !near ||
-      timestamp - this.lastStroke < this.refractoryMs ||
-      this.samples.length < 2
-    )
-      return null;
-    const start = this.samples[0],
-      dt = Math.max(1, timestamp - start.timestamp),
-      travel = Math.abs(guitar.across - start.guitar.across),
-      velocity = travel / (dt / 1000),
-      crossed =
-        Math.sign(start.guitar.across) !== Math.sign(guitar.across) &&
-        Math.abs(start.guitar.across) > calibration.stringBand.max * 0.55;
-    if (!crossed || travel < this.minTravel || velocity < this.minVelocity)
-      return null;
+    this.samples = this.samples.filter(
+      (sample) => timestamp - sample.timestamp <= this.sampleWindowMs,
+    );
+
+    if (!near)
+      return this.markReject(REJECT_REASONS.OUTSIDE_STRUM_ZONE, {
+        timestamp,
+        point,
+        guitar,
+        trackingConfidence,
+      });
+    if (timestamp - this.lastStroke < this.refractoryMs)
+      return this.markReject(REJECT_REASONS.REFRACTORY, {
+        timestamp,
+        point,
+        guitar,
+        trackingConfidence,
+      });
+
+    const prior = this.samples
+      .slice(0, -1)
+      .filter((sample) => sample.near)
+      .map((sample) => ({
+        ...sample,
+        travel: Math.abs(guitar.across - sample.guitar.across),
+      }))
+      .sort((a, b) => b.travel - a.travel)[0];
+
+    if (!prior)
+      return this.markReject(REJECT_REASONS.WAITING_FOR_TRAJECTORY, {
+        timestamp,
+        point,
+        guitar,
+        trackingConfidence,
+      });
+
+    const dt = Math.max(1, timestamp - prior.timestamp);
+    const deltaAcross = guitar.across - prior.guitar.across;
+    const travel = Math.abs(deltaAcross);
+    const velocity = travel / (dt / 1000);
+    if (travel < this.minTravel)
+      return this.markReject(REJECT_REASONS.TRAVEL_TOO_SMALL, {
+        timestamp,
+        point,
+        guitar,
+        travel,
+        velocity,
+        trackingConfidence,
+      });
+    if (velocity < this.minVelocity)
+      return this.markReject(REJECT_REASONS.VELOCITY_TOO_LOW, {
+        timestamp,
+        point,
+        guitar,
+        travel,
+        velocity,
+        trackingConfidence,
+      });
+
+    const centralHalfWidth = calibration.stringBand.max * 0.6;
+    const low = Math.min(prior.guitar.across, guitar.across);
+    const high = Math.max(prior.guitar.across, guitar.across);
+    const crossedCentralBand = low <= centralHalfWidth && high >= -centralHalfWidth;
     const onset = this.onsets.findLast(
       (item) => Math.abs(item.timestamp - timestamp) <= this.audioWindowMs,
     );
+
+    const travelScore = clamp(travel / (this.minTravel * 2));
+    const velocityScore = clamp(velocity / (this.minVelocity * 3));
     const visionConfidence = clamp(
-      (travel / (this.minTravel * 2)) * 0.45 +
-        (velocity / (this.minVelocity * 3)) * 0.35 +
-        trackingConfidence * 0.2,
+      travelScore * 0.42 +
+        velocityScore * 0.3 +
+        clamp(trackingConfidence) * 0.18 +
+        (crossedCentralBand ? 0.1 : 0),
     );
-    this.lastStroke = timestamp;
-    this.samples = [this.samples.at(-1)];
-    return fuseStrokeEvidence(
+
+    const fused = fuseStrokeEvidence(
       {
         timestamp,
-        direction: guitar.across < start.guitar.across ? "down" : "up",
+        direction: deltaAcross < 0 ? "down" : "up",
         visionConfidence,
         travel,
         velocity,
         point,
+        crossedCentralBand,
       },
       onset,
     );
+
+    if (!fused?.accepted) {
+      const reason = !crossedCentralBand && !onset
+        ? REJECT_REASONS.NO_AXIS_CROSS
+        : REJECT_REASONS.WEAK_VISION_NO_AUDIO;
+      return this.markReject(reason, {
+        timestamp,
+        point,
+        guitar,
+        travel,
+        velocity,
+        visionConfidence,
+        crossedCentralBand,
+        audioMatched: Boolean(onset),
+        trackingConfidence,
+      });
+    }
+
+    // Only an accepted physical stroke may consume the refractory window.
+    this.lastStroke = timestamp;
+    this.samples = [this.samples.at(-1)];
+    this.acceptedCount += 1;
+    this.lastDebug = {
+      accepted: true,
+      reason: null,
+      timestamp,
+      point,
+      guitar,
+      travel,
+      velocity,
+      visionConfidence,
+      crossedCentralBand,
+      audioMatched: Boolean(onset),
+      trackingConfidence,
+      direction: fused.direction,
+    };
+    return fused;
   }
 }
 
@@ -145,19 +292,19 @@ export function sessionMetrics(strokes, targetBpm, beats = []) {
   const intervals = strokes
       .slice(1)
       .map((s, i) => s.timestamp - strokes[i].timestamp)
-      .filter((n) => n > 150 && n < 2500),
-    mean = intervals.length
-      ? intervals.reduce((a, b) => a + b, 0) / intervals.length
-      : 0,
-    bpm = mean ? 60000 / mean : 0,
-    targetMs = 60000 / targetBpm,
-    available = new Set(beats.map((_, i) => i)),
-    offsets = [];
+      .filter((n) => n > 150 && n < 2500);
+  const mean = intervals.length
+    ? intervals.reduce((a, b) => a + b, 0) / intervals.length
+    : 0;
+  const bpm = mean ? 60000 / mean : 0;
+  const targetMs = 60000 / targetBpm;
+  const available = new Set(beats.map((_, i) => i));
+  const offsets = [];
   for (const stroke of strokes) {
     let best = null;
     for (const i of available) {
-      const offset = stroke.timestamp - beats[i].timestamp,
-        d = Math.abs(offset);
+      const offset = stroke.timestamp - beats[i].timestamp;
+      const d = Math.abs(offset);
       if (d <= targetMs * 0.46 && (!best || d < best.d))
         best = { i, offset, d };
     }
@@ -167,15 +314,15 @@ export function sessionMetrics(strokes, targetBpm, beats = []) {
     }
   }
   const avgOffset = offsets.length
-      ? offsets.reduce((a, b) => a + b, 0) / offsets.length
-      : 0,
-    variance = offsets.length
-      ? offsets.reduce((sum, n) => sum + (n - avgOffset) ** 2, 0) /
-        offsets.length
-      : 0,
-    consistency = Math.round(
-      clamp(1 - Math.sqrt(variance) / (targetMs * 0.35)) * 100,
-    );
+    ? offsets.reduce((a, b) => a + b, 0) / offsets.length
+    : 0;
+  const variance = offsets.length
+    ? offsets.reduce((sum, n) => sum + (n - avgOffset) ** 2, 0) /
+      offsets.length
+    : 0;
+  const consistency = Math.round(
+    clamp(1 - Math.sqrt(variance) / (targetMs * 0.35)) * 100,
+  );
   return {
     total: strokes.length,
     down: strokes.filter((s) => s.direction === "down").length,
