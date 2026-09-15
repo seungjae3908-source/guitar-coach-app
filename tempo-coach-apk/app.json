@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "GuitarTempo Coach",
+    "slug": "guitar-tempo-coach",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.guitartempo.coach",
+      "versionCode": 1,
+      "permissions": ["RECORD_AUDIO", "VIBRATE"]
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "기타 연주의 음정과 타이밍을 분석하고 녹음하기 위해 마이크를 사용합니다.",
+          "recordAudioAndroid": true
+        }
+      ]
+    ]
+  }
+}
