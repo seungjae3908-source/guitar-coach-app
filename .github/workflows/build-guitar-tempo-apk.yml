@@ -31,23 +31,22 @@ jobs:
           cache-dependency-path: tempo-coach-apk/package.json
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 36
+      - name: Ensure Android SDK 36
         run: |
-          sdkmanager --install 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
 
       - name: Generate metronome assets
         run: |
           mkdir -p assets
           python3 - <<'PY'
-          import math, wave, struct, os
+          import math, wave, struct
           def make(path, freq, ms, volume):
               rate=44100
               n=int(rate*ms/1000)
