@@ -82,15 +82,27 @@ jobs:
           patch -p1 -d mobile < /tmp/v110.patch
           test "$(node -p "require('./mobile/package.json').version")" = '1.1.0'
 
-          # Use a higher Android versionCode than the previously installed v1.0.1 build.
-          node <<'NODE'
-          const fs = require('fs');
-          const path = 'mobile/app.json';
-          const app = JSON.parse(fs.readFileSync(path, 'utf8'));
-          app.expo.version = '1.1.0';
-          app.expo.android.versionCode = 3;
-          fs.writeFileSync(path, JSON.stringify(app, null, 2) + '\n');
-          NODE
+      - name: Apply v1.2 single-screen metronome patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            tempo-coach-v1/.patch_v120/patch00.txt \
+            tempo-coach-v1/.patch_v120/patch01.txt \
+            tempo-coach-v1/.patch_v120/patch02.txt \
+            tempo-coach-v1/.patch_v120/patch03.txt \
+            > /tmp/v120.patch.gz.b64
+          base64 --decode /tmp/v120.patch.gz.b64 > /tmp/v120.patch.gz
+          echo '6c6bfa89db89254192d03210b0766b95a1b4fc958edbe5fc7a4ce0a67304bc8c  /tmp/v120.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v120.patch.gz > /tmp/v120.patch
+          echo '949bc878f720704fd403b42e9611293191b243287ce0e09a1d10e70389c8b964  /tmp/v120.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v120.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '1.2.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '4'
+          ! grep -F 'ScrollView' mobile/src/screens/MetronomeScreen.tsx
+          grep -F "type Sheet='meter'|'subdivision'|'sound'|'trainer'|null" mobile/src/screens/MetronomeScreen.tsx
+          grep -F 'Tempo Ramp' mobile/src/screens/MetronomeScreen.tsx
+          grep -F 'Gap Trainer' mobile/src/screens/MetronomeScreen.tsx
 
       - name: Install dependencies
         working-directory: mobile
@@ -120,7 +132,7 @@ jobs:
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           test -d "$BUILD_TOOLS"
           RELEASE_DIR='mobile/android/app/build/outputs/apk/release'
-          OUTPUT='GuitarTempoCoach-v1.1.0-release.apk'
+          OUTPUT='GuitarTempoCoach-v1.2.0-release.apk'
 
           SIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -1 || true)"
           UNSIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*unsigned.apk' | head -1 || true)"
@@ -129,14 +141,14 @@ jobs:
             cp "$SIGNED" "$OUTPUT"
           elif [ -n "$UNSIGNED" ]; then
             test -s mobile/android/app/debug.keystore
-            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v110-aligned.apk
+            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v120-aligned.apk
             "$BUILD_TOOLS/apksigner" sign \
               --ks mobile/android/app/debug.keystore \
               --ks-key-alias androiddebugkey \
               --ks-pass pass:android \
               --key-pass pass:android \
               --out "$OUTPUT" \
-              /tmp/GuitarTempoCoach-v110-aligned.apk
+              /tmp/GuitarTempoCoach-v120-aligned.apk
           else
             echo 'Release APK was not generated.'
             find mobile/android/app/build/outputs/apk -maxdepth 4 -type f -print || true
@@ -145,23 +157,20 @@ jobs:
 
           test -s "$OUTPUT"
           "$BUILD_TOOLS/apksigner" verify --verbose "$OUTPUT"
-
-          # Standalone regression gate: no Metro server dependency.
           unzip -l "$OUTPUT" | grep -F 'assets/index.android.bundle'
           BUNDLE_BYTES="$(unzip -p "$OUTPUT" assets/index.android.bundle | wc -c)"
           echo "Embedded JS bundle bytes: $BUNDLE_BYTES"
           test "$BUNDLE_BYTES" -gt 10000
-
           unzip -t "$OUTPUT"
           ls -lh "$OUTPUT"
           sha256sum "$OUTPUT" > "$OUTPUT.sha256"
 
-      - name: Upload v1.1 release APK artifact
+      - name: Upload v1.2 release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GuitarTempoCoach-v1.1.0-release-apk
+          name: GuitarTempoCoach-v1.2.0-release-apk
           path: |
-            GuitarTempoCoach-v1.1.0-release.apk
-            GuitarTempoCoach-v1.1.0-release.apk.sha256
+            GuitarTempoCoach-v1.2.0-release.apk
+            GuitarTempoCoach-v1.2.0-release.apk.sha256
           if-no-files-found: error
           retention-days: 30
