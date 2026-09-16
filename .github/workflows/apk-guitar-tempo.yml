@@ -1,0 +1,102 @@
+name: Build GuitarTempo APK
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk-clean
+    paths:
+      - '.github/workflows/apk-guitar-tempo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Reconstruct source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            tempo-coach-v1/.bundle/repair00a.txt \
+            tempo-coach-v1/.bundle/repair00b.txt \
+            tempo-coach-v1/.bundle/chunk01.txt \
+            tempo-coach-v1/.bundle/chunk02.txt \
+            tempo-coach-v1/.bundle/chunk03.txt \
+            tempo-coach-v1/.bundle/chunk04.txt \
+            tempo-coach-v1/.bundle/chunk05.txt \
+            tempo-coach-v1/.bundle/chunk06.txt \
+            tempo-coach-v1/.bundle/chunk07.txt \
+            tempo-coach-v1/.bundle/chunk08.txt \
+            tempo-coach-v1/.bundle/chunk09.txt \
+            tempo-coach-v1/.bundle/chunk10.txt \
+            tempo-coach-v1/.bundle/chunk11.txt \
+            tempo-coach-v1/.bundle/chunk12.txt \
+            > /tmp/guitar-project.b64
+          base64 --decode /tmp/guitar-project.b64 > /tmp/guitar_apk_clean.zip
+          echo 'cbed50f6cfbffa73f2a60ba38ef951ae77c523d83d0f6812e0c2524694ea6e78  /tmp/guitar_apk_clean.zip' | sha256sum -c -
+          unzip -t /tmp/guitar_apk_clean.zip
+          rm -rf mobile
+          mkdir mobile
+          unzip -q /tmp/guitar_apk_clean.zip -d mobile
+          test -s mobile/package.json
+          test -s mobile/App.tsx
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        env:
+          CI: '1'
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build ARM64 debug APK
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleDebug -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Collect and verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk GuitarTempoCoach-v1.0.0.apk
+          test -s GuitarTempoCoach-v1.0.0.apk
+          ls -lh GuitarTempoCoach-v1.0.0.apk
+          sha256sum GuitarTempoCoach-v1.0.0.apk > GuitarTempoCoach-v1.0.0.apk.sha256
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose GuitarTempoCoach-v1.0.0.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v1.0.0-apk
+          path: |
+            GuitarTempoCoach-v1.0.0.apk
+            GuitarTempoCoach-v1.0.0.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
