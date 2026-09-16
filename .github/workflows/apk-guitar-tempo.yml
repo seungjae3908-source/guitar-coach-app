@@ -29,7 +29,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Reconstruct source bundle
+      - name: Reconstruct v1.0 base source
         shell: bash
         run: |
           set -euo pipefail
@@ -59,13 +59,37 @@ jobs:
           test -s mobile/package.json
           test -s mobile/App.tsx
 
-          # Bump install version so it can replace the broken v1.0.0 test build cleanly.
+      - name: Apply v1.1 UI and metronome patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            tempo-coach-v1/.patch_v110/patch00.txt \
+            tempo-coach-v1/.patch_v110/patch01.txt \
+            tempo-coach-v1/.patch_v110/patch02.txt \
+            tempo-coach-v1/.patch_v110/patch03.txt \
+            tempo-coach-v1/.patch_v110/patch04.txt \
+            tempo-coach-v1/.patch_v110/patch05.txt \
+            tempo-coach-v1/.patch_v110/patch06.txt \
+            tempo-coach-v1/.patch_v110/patch07.txt \
+            tempo-coach-v1/.patch_v110/patch08.txt \
+            tempo-coach-v1/.patch_v110/patch09.txt \
+            tempo-coach-v1/.patch_v110/patch10.txt \
+            > /tmp/v110.patch.gz.b64
+          base64 --decode /tmp/v110.patch.gz.b64 > /tmp/v110.patch.gz
+          echo '85cd542a2d1dd092d0bb2d360cca9bbb2a415e3c3ad1d8f8e8576661d0d4ffb2  /tmp/v110.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v110.patch.gz > /tmp/v110.patch
+          patch -p1 -d mobile < /tmp/v110.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '1.1.0'
+
+          # Use a higher Android versionCode than the previously installed v1.0.1 build.
           node <<'NODE'
           const fs = require('fs');
-          const p = JSON.parse(fs.readFileSync('mobile/app.json', 'utf8'));
-          p.expo.version = '1.0.1';
-          p.expo.android.versionCode = 2;
-          fs.writeFileSync('mobile/app.json', JSON.stringify(p, null, 2) + '\n');
+          const path = 'mobile/app.json';
+          const app = JSON.parse(fs.readFileSync(path, 'utf8'));
+          app.expo.version = '1.1.0';
+          app.expo.android.versionCode = 3;
+          fs.writeFileSync(path, JSON.stringify(app, null, 2) + '\n');
           NODE
 
       - name: Install dependencies
@@ -96,7 +120,7 @@ jobs:
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           test -d "$BUILD_TOOLS"
           RELEASE_DIR='mobile/android/app/build/outputs/apk/release'
-          OUTPUT='GuitarTempoCoach-v1.0.1-release.apk'
+          OUTPUT='GuitarTempoCoach-v1.1.0-release.apk'
 
           SIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -1 || true)"
           UNSIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*unsigned.apk' | head -1 || true)"
@@ -105,14 +129,14 @@ jobs:
             cp "$SIGNED" "$OUTPUT"
           elif [ -n "$UNSIGNED" ]; then
             test -s mobile/android/app/debug.keystore
-            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-aligned.apk
+            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v110-aligned.apk
             "$BUILD_TOOLS/apksigner" sign \
               --ks mobile/android/app/debug.keystore \
               --ks-key-alias androiddebugkey \
               --ks-pass pass:android \
               --key-pass pass:android \
               --out "$OUTPUT" \
-              /tmp/GuitarTempoCoach-aligned.apk
+              /tmp/GuitarTempoCoach-v110-aligned.apk
           else
             echo 'Release APK was not generated.'
             find mobile/android/app/build/outputs/apk -maxdepth 4 -type f -print || true
@@ -122,23 +146,22 @@ jobs:
           test -s "$OUTPUT"
           "$BUILD_TOOLS/apksigner" verify --verbose "$OUTPUT"
 
-          # Critical regression gate: standalone release must contain the JS bundle.
+          # Standalone regression gate: no Metro server dependency.
           unzip -l "$OUTPUT" | grep -F 'assets/index.android.bundle'
           BUNDLE_BYTES="$(unzip -p "$OUTPUT" assets/index.android.bundle | wc -c)"
           echo "Embedded JS bundle bytes: $BUNDLE_BYTES"
           test "$BUNDLE_BYTES" -gt 10000
 
-          # Sanity checks on the final APK.
           unzip -t "$OUTPUT"
           ls -lh "$OUTPUT"
           sha256sum "$OUTPUT" > "$OUTPUT.sha256"
 
-      - name: Upload standalone APK artifact
+      - name: Upload v1.1 release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GuitarTempoCoach-v1.0.1-release-apk
+          name: GuitarTempoCoach-v1.1.0-release-apk
           path: |
-            GuitarTempoCoach-v1.0.1-release.apk
-            GuitarTempoCoach-v1.0.1-release.apk.sha256
+            GuitarTempoCoach-v1.1.0-release.apk
+            GuitarTempoCoach-v1.1.0-release.apk.sha256
           if-no-files-found: error
           retention-days: 30
