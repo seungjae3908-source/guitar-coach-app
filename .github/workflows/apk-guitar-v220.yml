@@ -1,0 +1,151 @@
+name: Build Guitar Training OS v2.2 APK
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk-clean
+    paths:
+      - '.github/workflows/apk-guitar-v220.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download verified v2.0 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.0.0-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35160198227
+
+      - name: Reconstruct verified v2.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile
+          mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.0.0-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.0.0'
+          cat \
+            tempo-coach-v1/.patch_v211/patch00.txt \
+            tempo-coach-v1/.patch_v211/patch01.txt \
+            tempo-coach-v1/.patch_v211/repair02a.txt \
+            tempo-coach-v1/.patch_v211/repair02b.txt \
+            tempo-coach-v1/.patch_v211/patch03.txt \
+            tempo-coach-v1/.patch_v211/patch04.txt \
+            tempo-coach-v1/.patch_v211/patch05.txt \
+            tempo-coach-v1/.patch_v211/repair06a.txt \
+            tempo-coach-v1/.patch_v211/repair06b.txt \
+            tempo-coach-v1/.patch_v211/repair07a.txt \
+            tempo-coach-v1/.patch_v211/repair07b.txt \
+            tempo-coach-v1/.patch_v211/patch08.txt \
+            tempo-coach-v1/.patch_v211/patch09.txt \
+            tempo-coach-v1/.patch_v211/patch10.txt > /tmp/v211.b64
+          base64 --decode /tmp/v211.b64 > /tmp/v211.patch.gz
+          echo '41e5a2f675ac82eb15c566f76210020a87d6ed326a8d1eb32c35a9f756b9afb3  /tmp/v211.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v211.patch.gz > /tmp/v211.patch
+          echo 'd98bd7b3839afc8fc932885f0e1322a05c1bb086c28ec5ae01f45ef178277055  /tmp/v211.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v211.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.1.0'
+
+      - name: Apply verified v2.2 Stage Mode patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat tempo-coach-v1/.patch_v220/patch{00..05}.txt > /tmp/v220.b64
+          base64 --decode /tmp/v220.b64 > /tmp/v220.patch.gz
+          echo 'aea16f247ff27e2fd23aa0b5f9260bb544a22509007cc1b69ddde690fa2a0a8b  /tmp/v220.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v220.patch.gz > /tmp/v220.patch
+          echo '40a4051263be1defe2fdb2c439aa01ee817782f1bbef4097887b66af403b85cb  /tmp/v220.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v220.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.2.0'
+          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.2.0'
+          test "$(node -p "require('./mobile/app.json').expo.orientation")" = 'default'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '8'
+          if grep -R -F 'ScrollView' mobile/src/screens; then echo 'ScrollView remains in a main screen'; exit 1; fi
+          grep -F 'PRACTICE OS 2.2' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'GUITAR TRAINING OS 2.2' mobile/src/screens/HomeScreen.tsx
+          grep -F '전체화면' mobile/src/screens/PracticeScreen.tsx
+          grep -F '가로 STAGE' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'pageMeasures' mobile/src/components/ScorePlayer.tsx
+          grep -F 'pageMeasures' mobile/src/components/TabView.tsx
+          grep -F 'navigationBarTranslucent' mobile/src/screens/PracticeScreen.tsx
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        env:
+          CI: '1'
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build standalone ARM64 release APK
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Collect, sign and verify v2.2 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          RELEASE_DIR='mobile/android/app/build/outputs/apk/release'
+          OUTPUT='GuitarTempoCoach-v2.2.0-release.apk'
+          SIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -1 || true)"
+          UNSIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*unsigned.apk' | head -1 || true)"
+          if [ -n "$SIGNED" ]; then
+            cp "$SIGNED" "$OUTPUT"
+          elif [ -n "$UNSIGNED" ]; then
+            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v220-aligned.apk
+            "$BUILD_TOOLS/apksigner" sign --ks mobile/android/app/debug.keystore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$OUTPUT" /tmp/GuitarTempoCoach-v220-aligned.apk
+          else
+            echo 'Release APK was not generated'; exit 1
+          fi
+          test -s "$OUTPUT"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$OUTPUT"
+          unzip -l "$OUTPUT" | grep -F 'assets/index.android.bundle'
+          BUNDLE_BYTES="$(unzip -p "$OUTPUT" assets/index.android.bundle | wc -c)"
+          echo "Embedded JS bundle bytes: $BUNDLE_BYTES"
+          test "$BUNDLE_BYTES" -gt 10000
+          unzip -t "$OUTPUT"
+          sha256sum "$OUTPUT" > "$OUTPUT.sha256"
+          ls -lh "$OUTPUT"
+
+      - name: Upload v2.2 release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.2.0-release-apk
+          path: |
+            GuitarTempoCoach-v2.2.0-release.apk
+            GuitarTempoCoach-v2.2.0-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
