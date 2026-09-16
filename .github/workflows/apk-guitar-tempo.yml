@@ -110,6 +110,17 @@ jobs:
           grep -F 'Midnight Run' mobile/src/music/etudeLibrary.ts
           grep -F 'playheadBeat' mobile/src/components/ScorePlayer.tsx
 
+      - name: Apply v1.3 TypeScript hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode tempo-coach-v1/.patch_v130/typefix.gz.b64 > /tmp/v130-typefix.gz
+          echo '41950d2c4596f474071f1595eeb4c755fba0ed3decc820d95c748c846c5ae966  /tmp/v130-typefix.gz' | sha256sum -c -
+          gzip -dc /tmp/v130-typefix.gz > /tmp/v130-typefix.patch
+          echo '038d5d3ea661365dfe0d37c1773d8efc840fe3675b5a92020ac1d301c7e6b96e  /tmp/v130-typefix.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v130-typefix.patch
+          grep -F "compact?[styles.today,styles.todayCompact]:styles.today" mobile/src/screens/HomeScreen.tsx
+
       - name: Install dependencies
         working-directory: mobile
         run: npm install --no-audit --no-fund
