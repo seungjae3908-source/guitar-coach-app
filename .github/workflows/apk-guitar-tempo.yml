@@ -71,7 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           : > /tmp/v120.b64
-          for i in $(seq -w 0 3); do cat "tempo-coach-v1/.patch_v120/patch${i}.txt" >> /tmp/v120.b64; done
+          for i in {00..03}; do cat "tempo-coach-v1/.patch_v120/patch${i}.txt" >> /tmp/v120.b64; done
           base64 --decode /tmp/v120.b64 > /tmp/v120.gz
           echo '6c6bfa89db89254192d03210b0766b95a1b4fc958edbe5fc7a4ce0a67304bc8c  /tmp/v120.gz' | sha256sum -c -
           gzip -dc /tmp/v120.gz > /tmp/v120.patch
@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           : > /tmp/v130.b64
-          for i in $(seq -w 0 8); do cat "tempo-coach-v1/.patch_v130/patch${i}.txt" >> /tmp/v130.b64; done
+          for i in {00..08}; do cat "tempo-coach-v1/.patch_v130/patch${i}.txt" >> /tmp/v130.b64; done
           base64 --decode /tmp/v130.b64 > /tmp/v130.gz
           echo '6c2d8af475fbd615dace3bb6464508297918385236cf2497a07bb3f4095fb9f4  /tmp/v130.gz' | sha256sum -c -
           gzip -dc /tmp/v130.gz > /tmp/v130.patch
