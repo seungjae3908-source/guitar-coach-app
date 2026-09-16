@@ -38,7 +38,8 @@ jobs:
             tempo-coach-v1/.bundle/repair00b.txt \
             tempo-coach-v1/.bundle/chunk01.txt \
             tempo-coach-v1/.bundle/chunk02.txt \
-            tempo-coach-v1/.bundle/chunk03.txt \
+            tempo-coach-v1/.bundle/repair03a.txt \
+            tempo-coach-v1/.bundle/repair03b.txt \
             tempo-coach-v1/.bundle/chunk04.txt \
             tempo-coach-v1/.bundle/chunk05.txt \
             tempo-coach-v1/.bundle/chunk06.txt \
