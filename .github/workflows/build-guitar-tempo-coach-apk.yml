@@ -1,0 +1,84 @@
+name: Build GuitarTempo Coach APK
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk
+    paths:
+      - '.github/workflows/build-guitar-tempo-coach-apk.yml'
+      - 'tempo-coach-v1/build-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download exact source ZIP
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 --retry-delay 2 'https://drive.usercontent.google.com/download?id=1b20vUqnGR4ZJCjB2P185F5S-4mQwGXuC&export=download&confirm=t' -o /tmp/GuitarTempoCoach.zip
+          echo '6f3c3e2db27fdc72b71431fd1959b14b0aede6e99f7db815e7a274bad839d808  /tmp/GuitarTempoCoach.zip' | sha256sum -c -
+          unzip -t /tmp/GuitarTempoCoach.zip
+          mkdir -p tempo-coach-v1/work
+          unzip -q /tmp/GuitarTempoCoach.zip -d tempo-coach-v1/work
+
+      - name: Install dependencies
+        working-directory: tempo-coach-v1/work/GuitarTempoCoach-Expo-Final
+        run: npm install --no-audit --no-fund
+
+      - name: Normalize Expo dependencies
+        working-directory: tempo-coach-v1/work/GuitarTempoCoach-Expo-Final
+        run: npx expo install --fix
+
+      - name: Typecheck
+        working-directory: tempo-coach-v1/work/GuitarTempoCoach-Expo-Final
+        run: npx tsc --noEmit
+
+      - name: Expo Android prebuild
+        working-directory: tempo-coach-v1/work/GuitarTempoCoach-Expo-Final
+        env:
+          CI: '1'
+        run: npx expo prebuild --platform android --clean
+
+      - name: Build debug APK
+        working-directory: tempo-coach-v1/work/GuitarTempoCoach-Expo-Final/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp tempo-coach-v1/work/GuitarTempoCoach-Expo-Final/android/app/build/outputs/apk/debug/app-debug.apk GuitarTempoCoach-v1.0.0.apk
+          sha256sum GuitarTempoCoach-v1.0.0.apk | tee GuitarTempoCoach-v1.0.0.apk.sha256
+          ls -lh GuitarTempoCoach-v1.0.0.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v1.0.0-APK
+          path: |
+            GuitarTempoCoach-v1.0.0.apk
+            GuitarTempoCoach-v1.0.0.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
