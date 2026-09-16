@@ -104,6 +104,17 @@ jobs:
           grep -F 'Tempo Ramp' mobile/src/screens/MetronomeScreen.tsx
           grep -F 'Gap Trainer' mobile/src/screens/MetronomeScreen.tsx
 
+      - name: Apply v1.2 TypeScript hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode tempo-coach-v1/.patch_v120/typefix.gz.b64 > /tmp/v120-typefix.patch.gz
+          echo '803af490fe90a7b1d61f95cdcda3e26966a7c0fc2b552610e6b1f48207645c50  /tmp/v120-typefix.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v120-typefix.patch.gz > /tmp/v120-typefix.patch
+          echo '1dfb15f5c25230e159a2fb2b0dd5c1c1129715963af709c5ec7adf626aaf81af  /tmp/v120-typefix.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v120-typefix.patch
+          ! grep -F 'StyleSheet.absoluteFillObject' mobile/src/screens/MetronomeScreen.tsx
+
       - name: Install dependencies
         working-directory: mobile
         run: npm install --no-audit --no-fund
