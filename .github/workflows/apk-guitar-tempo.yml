@@ -86,8 +86,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          : > /tmp/v130.b64
-          for i in {00..08}; do cat "tempo-coach-v1/.patch_v130/patch${i}.txt" >> /tmp/v130.b64; done
+          cat \
+            tempo-coach-v1/.patch_v130/patch00.txt \
+            tempo-coach-v1/.patch_v130/patch01.txt \
+            tempo-coach-v1/.patch_v130/patch02.txt \
+            tempo-coach-v1/.patch_v130/patch03.txt \
+            tempo-coach-v1/.patch_v130/repair04a.txt \
+            tempo-coach-v1/.patch_v130/repair04b.txt \
+            tempo-coach-v1/.patch_v130/patch05.txt \
+            tempo-coach-v1/.patch_v130/patch06.txt \
+            tempo-coach-v1/.patch_v130/patch07.txt \
+            tempo-coach-v1/.patch_v130/patch08.txt > /tmp/v130.b64
           base64 --decode /tmp/v130.b64 > /tmp/v130.gz
           echo '6c2d8af475fbd615dace3bb6464508297918385236cf2497a07bb3f4095fb9f4  /tmp/v130.gz' | sha256sum -c -
           gzip -dc /tmp/v130.gz > /tmp/v130.patch
