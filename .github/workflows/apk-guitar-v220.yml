@@ -79,6 +79,7 @@ jobs:
           gzip -dc /tmp/v220.patch.gz > /tmp/v220.patch
           echo '40a4051263be1defe2fdb2c439aa01ee817782f1bbef4097887b66af403b85cb  /tmp/v220.patch' | sha256sum -c -
           patch -p1 -d mobile < /tmp/v220.patch
+          sed -i 's/GUITAR TRAINING OS 2.1/GUITAR TRAINING OS 2.2/g' mobile/src/screens/HomeScreen.tsx
           test "$(node -p "require('./mobile/package.json').version")" = '2.2.0'
           test "$(node -p "require('./mobile/app.json').expo.version")" = '2.2.0'
           test "$(node -p "require('./mobile/app.json').expo.orientation")" = 'default'
