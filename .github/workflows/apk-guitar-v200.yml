@@ -117,10 +117,11 @@ jobs:
           grep -F 'judgeReliability' mobile/src/domain/performanceJudge.ts
           grep -F 'weakLoopFromSession' mobile/src/domain/trainingOS.ts
           grep -F 'makeLoopExercise' mobile/src/domain/playback.ts
-          grep -F "type BlindMode = 'FULL'|'FADE'|'MEMORY'" mobile/src/types.ts
-          grep -F "GrooveStyle" mobile/src/hooks/useMetronome.ts
+          grep -F "export type BlindMode = 'FULL' | 'FADE' | 'MEMORY';" mobile/src/types.ts
+          grep -F 'GrooveStyle' mobile/src/hooks/useMetronome.ts
           grep -F 'Metal' mobile/src/screens/MetronomeScreen.tsx
-          grep -F '판정 불충분' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'NO SCORE' mobile/src/screens/PracticeScreen.tsx
+          grep -F '마이크 신뢰도가 부족해 점수를 확정하지 않았습니다.' mobile/src/screens/PracticeScreen.tsx
 
       - name: Install dependencies
         working-directory: mobile
