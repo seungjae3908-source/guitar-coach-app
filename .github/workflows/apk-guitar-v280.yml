@@ -50,13 +50,19 @@ jobs:
           test "$(node -p "require('./mobile/app.json').expo.version")" = '2.7.0'
           test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '13'
 
-      - name: Decode and verify v2.8 patch
+      - name: Reassemble and verify exact v2.8 patch
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode tempo-coach-v1/.patch_v280/v280.b64 > /tmp/v280.patch.gz
+          cat tempo-coach-v1/.patch_v280/chunks/patch{00..11}.txt > /tmp/v280.b64
+          test "$(wc -c < /tmp/v280.b64)" -eq 17848
+          echo '39a4dfbd4ca52b6b7f389611cf536da954a540c564c2034504b6cb81bf961526  /tmp/v280.b64' | sha256sum -c -
+          base64 --decode /tmp/v280.b64 > /tmp/v280.patch.gz
+          test "$(wc -c < /tmp/v280.patch.gz)" -eq 13384
           echo 'dca2103c6491e00a1eb4b43555240fe4348e4f4c3b24de665969a4a0775433e7  /tmp/v280.patch.gz' | sha256sum -c -
+          gzip -t /tmp/v280.patch.gz
           gzip -dc /tmp/v280.patch.gz > /tmp/v280.patch
+          test "$(wc -c < /tmp/v280.patch)" -eq 58170
           echo '55df38927a16862daa35bc113adaf3964b8f071663d9ac88cc389d55bb05fe00  /tmp/v280.patch' | sha256sum -c -
 
       - name: Apply v2.8 patch
