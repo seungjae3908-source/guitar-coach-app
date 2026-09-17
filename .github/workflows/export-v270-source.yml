@@ -1,0 +1,72 @@
+name: Export Guitar Training OS v2.7 Source
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk-clean
+    paths:
+      - '.github/workflows/export-v270-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download verified v2.6 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.6.0-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35187646316
+
+      - name: Reconstruct verified v2.7 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile && mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.6.0-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.6.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '12'
+
+          cat tempo-coach-v1/.patch_v270/patch{00..10}.txt > /tmp/v270.b64
+          echo '0e27cc6dc8616edf7c14b4aa6e5f41881f5f9b1825c701676b97287c1526336e  /tmp/v270.b64' | sha256sum -c -
+          base64 --decode /tmp/v270.b64 > /tmp/v270.patch.gz
+          echo '5c2ca984f2d08f6240f47c7485af96bb2da2d5ee9d540d2ccca6434de78c3190  /tmp/v270.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v270.patch.gz > /tmp/v270.patch
+          echo '7670eb09ecad1d6263e641e1239a9cba5f775c6a4697f712274eeef849fd07e5  /tmp/v270.patch' | sha256sum -c -
+          patch -p4 -d mobile < /tmp/v270.patch
+
+          test "$(node -p "require('./mobile/package.json').version")" = '2.7.0'
+          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.7.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '13'
+
+      - name: Package verified v2.7 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile/node_modules mobile/android mobile/.expo || true
+          (cd mobile && zip -qr ../GuitarTempoCoach-v2.7.0-source.zip .)
+          test -s GuitarTempoCoach-v2.7.0-source.zip
+          sha256sum GuitarTempoCoach-v2.7.0-source.zip
+
+      - name: Upload verified v2.7 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.7.0-source
+          path: GuitarTempoCoach-v2.7.0-source.zip
+          if-no-files-found: error
+          retention-days: 7
