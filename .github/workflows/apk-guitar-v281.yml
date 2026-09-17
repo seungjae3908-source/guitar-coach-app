@@ -172,6 +172,26 @@ jobs:
           sha256sum "$OUTPUT" > "$OUTPUT.sha256"
           ls -lh "$OUTPUT"
 
+      - name: Upload v2.8.1 APK before compatibility gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.1-device-acceptance-apk
+          path: |
+            GuitarTempoCoach-v2.8.1-device-acceptance-release.apk
+            GuitarTempoCoach-v2.8.1-device-acceptance-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload v2.8.1 source before compatibility gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.1-source
+          path: |
+            GuitarTempoCoach-v2.8.1-source.zip
+            GuitarTempoCoach-v2.8.1-source.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Verify v2.8 to v2.8.1 update compatibility
         shell: bash
         run: |
@@ -181,44 +201,48 @@ jobs:
           NEW_APK='GuitarTempoCoach-v2.8.1-device-acceptance-release.apk'
           test -s "$OLD_APK"
           test -s "$NEW_APK"
-          OLD_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$OLD_APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)"
-          NEW_CERT="$($BUILD_TOOLS/apksigner verify --print-certs "$NEW_APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)"
-          test -n "$OLD_CERT"
-          test -n "$NEW_CERT"
+
+          echo '=== v2.8 signer certificates ==='
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$OLD_APK" 2>&1 | tee /tmp/v280-certs.txt
+          echo '=== v2.8.1 signer certificates ==='
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$NEW_APK" 2>&1 | tee /tmp/v281-certs.txt
+
+          OLD_CERT="$(grep -i -m1 'certificate SHA-256 digest' /tmp/v280-certs.txt | sed -E 's/.*digest:[[:space:]]*//' | tr -d '\r[:space:]' || true)"
+          NEW_CERT="$(grep -i -m1 'certificate SHA-256 digest' /tmp/v281-certs.txt | sed -E 's/.*digest:[[:space:]]*//' | tr -d '\r[:space:]' || true)"
+          if [ -z "$OLD_CERT" ] || [ -z "$NEW_CERT" ]; then
+            echo 'Unable to parse signer certificate SHA-256 digest.'
+            echo 'Old certificate output:'; cat /tmp/v280-certs.txt
+            echo 'New certificate output:'; cat /tmp/v281-certs.txt
+            exit 1
+          fi
           echo "v2.8 cert SHA-256: $OLD_CERT"
           echo "v2.8.1 cert SHA-256: $NEW_CERT"
-          test "$OLD_CERT" = "$NEW_CERT"
-          echo "$OLD_CERT" > GuitarTempoCoach-v2.8-to-v2.8.1-signing-cert.sha256
-          if [ -x "$BUILD_TOOLS/aapt" ]; then
-            OLD_PACKAGE="$($BUILD_TOOLS/aapt dump badging "$OLD_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
-            NEW_PACKAGE="$($BUILD_TOOLS/aapt dump badging "$NEW_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
-            OLD_CODE="$($BUILD_TOOLS/aapt dump badging "$OLD_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
-            NEW_CODE="$($BUILD_TOOLS/aapt dump badging "$NEW_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
-            echo "Packages: $OLD_PACKAGE -> $NEW_PACKAGE"
-            echo "VersionCodes: $OLD_CODE -> $NEW_CODE"
-            test "$OLD_PACKAGE" = 'com.guitartempo.coach'
-            test "$NEW_PACKAGE" = "$OLD_PACKAGE"
-            test "$OLD_CODE" = '14'
-            test "$NEW_CODE" = '15'
+
+          if [ "$OLD_CERT" != "$NEW_CERT" ]; then
+            echo 'SIGNING_CERT_MISMATCH=true'
+            exit 2
           fi
+          echo 'SIGNING_CERT_MATCH=true'
+          echo "$OLD_CERT" > GuitarTempoCoach-v2.8-to-v2.8.1-signing-cert.sha256
 
-      - name: Upload v2.8.1 device acceptance APK artifact
+          AAPT="$BUILD_TOOLS/aapt"
+          test -x "$AAPT"
+          OLD_PACKAGE="$($AAPT dump badging "$OLD_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          NEW_PACKAGE="$($AAPT dump badging "$NEW_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          OLD_CODE="$($AAPT dump badging "$OLD_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
+          NEW_CODE="$($AAPT dump badging "$NEW_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
+          echo "Packages: $OLD_PACKAGE -> $NEW_PACKAGE"
+          echo "VersionCodes: $OLD_CODE -> $NEW_CODE"
+          test "$OLD_PACKAGE" = 'com.guitartempo.coach'
+          test "$NEW_PACKAGE" = "$OLD_PACKAGE"
+          test "$OLD_CODE" = '14'
+          test "$NEW_CODE" = '15'
+          echo 'UPDATE_COMPATIBILITY=PASS'
+
+      - name: Upload update compatibility evidence
         uses: actions/upload-artifact@v4
         with:
-          name: GuitarTempoCoach-v2.8.1-device-acceptance-apk
-          path: |
-            GuitarTempoCoach-v2.8.1-device-acceptance-release.apk
-            GuitarTempoCoach-v2.8.1-device-acceptance-release.apk.sha256
-            GuitarTempoCoach-v2.8-to-v2.8.1-signing-cert.sha256
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload v2.8.1 source artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GuitarTempoCoach-v2.8.1-source
-          path: |
-            GuitarTempoCoach-v2.8.1-source.zip
-            GuitarTempoCoach-v2.8.1-source.zip.sha256
+          name: GuitarTempoCoach-v2.8-to-v2.8.1-update-compatibility
+          path: GuitarTempoCoach-v2.8-to-v2.8.1-signing-cert.sha256
           if-no-files-found: error
           retention-days: 30
