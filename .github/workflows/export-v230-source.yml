@@ -1,0 +1,99 @@
+name: Export Guitar Training OS v2.3 Source
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk-clean
+    paths:
+      - '.github/workflows/export-v230-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download verified v2.0 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.0.0-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35160198227
+
+      - name: Reconstruct verified v2.3 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile
+          mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.0.0-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.0.0'
+
+          cat \
+            tempo-coach-v1/.patch_v211/patch00.txt \
+            tempo-coach-v1/.patch_v211/patch01.txt \
+            tempo-coach-v1/.patch_v211/repair02a.txt \
+            tempo-coach-v1/.patch_v211/repair02b.txt \
+            tempo-coach-v1/.patch_v211/patch03.txt \
+            tempo-coach-v1/.patch_v211/patch04.txt \
+            tempo-coach-v1/.patch_v211/patch05.txt \
+            tempo-coach-v1/.patch_v211/repair06a.txt \
+            tempo-coach-v1/.patch_v211/repair06b.txt \
+            tempo-coach-v1/.patch_v211/repair07a.txt \
+            tempo-coach-v1/.patch_v211/repair07b.txt \
+            tempo-coach-v1/.patch_v211/patch08.txt \
+            tempo-coach-v1/.patch_v211/patch09.txt \
+            tempo-coach-v1/.patch_v211/patch10.txt > /tmp/v211.b64
+          base64 --decode /tmp/v211.b64 > /tmp/v211.patch.gz
+          echo '41e5a2f675ac82eb15c566f76210020a87d6ed326a8d1eb32c35a9f756b9afb3  /tmp/v211.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v211.patch.gz > /tmp/v211.patch
+          echo 'd98bd7b3839afc8fc932885f0e1322a05c1bb086c28ec5ae01f45ef178277055  /tmp/v211.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v211.patch
+
+          cat tempo-coach-v1/.patch_v220/patch{00..05}.txt > /tmp/v220.b64
+          base64 --decode /tmp/v220.b64 > /tmp/v220.patch.gz
+          echo 'aea16f247ff27e2fd23aa0b5f9260bb544a22509007cc1b69ddde690fa2a0a8b  /tmp/v220.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v220.patch.gz > /tmp/v220.patch
+          echo '40a4051263be1defe2fdb2c439aa01ee817782f1bbef4097887b66af403b85cb  /tmp/v220.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v220.patch
+          perl -0pi -e 's/GUITAR TRAINING OS 2\.1/GUITAR TRAINING OS 2.2/g' mobile/src/screens/HomeScreen.tsx
+
+          cat tempo-coach-v1/.patch_v230/patch{00..14}.txt > /tmp/v230.b64
+          base64 --decode /tmp/v230.b64 > /tmp/v230.patch.gz
+          echo '24910456f11dd342ae0ec9294b82afa574b93442b7301f98becf239fbd446bb2  /tmp/v230.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v230.patch.gz > /tmp/v230.patch
+          echo '2a80f2f8e4040fc13e68c05d1c5135a10d02a9e1a27987f3c45976b950a26bf7  /tmp/v230.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v230.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.3.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '9'
+
+      - name: Package verified v2.3 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd mobile && zip -qr ../GuitarTempoCoach-v2.3.0-source.zip .)
+          sha256sum GuitarTempoCoach-v2.3.0-source.zip > GuitarTempoCoach-v2.3.0-source.zip.sha256
+          unzip -t GuitarTempoCoach-v2.3.0-source.zip
+
+      - name: Upload verified v2.3 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.3.0-source
+          path: |
+            GuitarTempoCoach-v2.3.0-source.zip
+            GuitarTempoCoach-v2.3.0-source.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
