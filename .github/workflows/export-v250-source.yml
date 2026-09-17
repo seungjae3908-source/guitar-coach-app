@@ -1,0 +1,75 @@
+name: Export Guitar Training OS v2.5 Source
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk-clean
+    paths:
+      - '.github/workflows/export-v250-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download verified v2.3 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.3.0-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35169887707
+      - name: Reconstruct verified v2.5 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile && mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.3.0-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.3.0'
+          cat tempo-coach-v1/.patch_v240/patch{00..13}.txt > /tmp/v240.b64
+          base64 --decode /tmp/v240.b64 > /tmp/v240.patch.gz
+          echo 'e51f8b1e9ebe51cc83a7f7120237e293068a52e8e49700fb01892681b2b070e0  /tmp/v240.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v240.patch.gz > /tmp/v240.patch
+          echo '56e1e711b16ae2453f6e5f3c2eeae3c1596b3721be21da7e2de097f465b2d69d  /tmp/v240.patch' | sha256sum -c -
+          patch -p4 -d mobile < /tmp/v240.patch
+          cat \
+            tempo-coach-v1/.patch_v250/repair00a.txt \
+            tempo-coach-v1/.patch_v250/repair00b1.txt \
+            tempo-coach-v1/.patch_v250/repair00b2.txt \
+            tempo-coach-v1/.patch_v250/patch01.txt \
+            tempo-coach-v1/.patch_v250/patch02.txt \
+            tempo-coach-v1/.patch_v250/patch03.txt \
+            tempo-coach-v1/.patch_v250/patch04.txt \
+            tempo-coach-v1/.patch_v250/patch05.txt \
+            tempo-coach-v1/.patch_v250/patch06.txt \
+            tempo-coach-v1/.patch_v250/patch07.txt \
+            tempo-coach-v1/.patch_v250/patch08.txt \
+            tempo-coach-v1/.patch_v250/patch09.txt \
+            tempo-coach-v1/.patch_v250/patch10.txt \
+            tempo-coach-v1/.patch_v250/patch11.txt \
+            tempo-coach-v1/.patch_v250/patch12.txt \
+            tempo-coach-v1/.patch_v250/patch13.txt > /tmp/v250.b64
+          base64 --decode /tmp/v250.b64 > /tmp/v250.patch.gz
+          echo 'a7455e5221efe9a162f4a573a08db73ebe95041ff006ba1e21fadd2ec384da68  /tmp/v250.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v250.patch.gz > /tmp/v250.patch
+          echo '9c0875e3c5e5dccd8380bf452be4a84b98069696ace17465b444af01f9344a2f  /tmp/v250.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v250.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.5.0'
+          rm -f mobile/android/app/debug.keystore || true
+          (cd mobile && zip -qr ../GuitarTempoCoach-v2.5.0-source.zip . -x 'node_modules/*' 'android/.gradle/*' 'android/app/build/*')
+          sha256sum GuitarTempoCoach-v2.5.0-source.zip
+      - name: Upload verified v2.5 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.5.0-source
+          path: GuitarTempoCoach-v2.5.0-source.zip
+          retention-days: 7
