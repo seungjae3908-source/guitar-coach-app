@@ -50,31 +50,35 @@ jobs:
           test "$(node -p "require('./mobile/app.json').expo.version")" = '2.7.0'
           test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '13'
 
-      - name: Apply v2.8 Reference Tone Capture patch
+      - name: Decode and verify v2.8 patch
         shell: bash
         run: |
           set -euo pipefail
-          cp tempo-coach-v1/.patch_v280/v280.b64 /tmp/v280.b64
-          echo '39a4dfbd4ca52b6b7f389611cf536da954a540c564c2034504b6cb81bf961526  /tmp/v280.b64' | sha256sum -c -
-          base64 --decode /tmp/v280.b64 > /tmp/v280.patch.gz
+          base64 --decode tempo-coach-v1/.patch_v280/v280.b64 > /tmp/v280.patch.gz
           echo 'dca2103c6491e00a1eb4b43555240fe4348e4f4c3b24de665969a4a0775433e7  /tmp/v280.patch.gz' | sha256sum -c -
           gzip -dc /tmp/v280.patch.gz > /tmp/v280.patch
           echo '55df38927a16862daa35bc113adaf3964b8f071663d9ac88cc389d55bb05fe00  /tmp/v280.patch' | sha256sum -c -
-          patch -p1 < /tmp/v280.patch
 
+      - name: Apply v2.8 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch -p1 < /tmp/v280.patch
           test "$(node -p "require('./mobile/package.json').version")" = '2.8.0'
           test "$(node -p "require('./mobile/app.json').expo.version")" = '2.8.0'
           test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '14'
 
+      - name: Verify v2.8 product contract
+        shell: bash
+        run: |
+          set -euo pipefail
           if grep -R -F 'ScrollView' mobile/src/screens; then
             echo 'ScrollView remains in a main screen'; exit 1
           fi
-
           grep -F 'GUITAR TRAINING OS 2.8' mobile/src/screens/HomeScreen.tsx
           grep -F 'PRACTICE OS 2.8' mobile/src/screens/PracticeScreen.tsx
           grep -F 'STUDIO 2.8' mobile/src/screens/AnalyzerScreen.tsx
           grep -F 'SONG LAB 2.8' mobile/src/screens/SongLabScreen.tsx
-
           grep -F 'REFERENCE TONE CAPTURE · BOSS GT-1 + THR-II' mobile/src/screens/SongLabScreen.tsx
           grep -F 'useAudioSampleListener' mobile/src/screens/SongLabScreen.tsx
           grep -F 'requestRecordingPermissionsAsync' mobile/src/screens/SongLabScreen.tsx
