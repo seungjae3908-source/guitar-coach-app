@@ -85,7 +85,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode tempo-coach-v1/.patch_v230/v230.patch.gz.b64 > /tmp/v230.patch.gz
+          : > /tmp/v230.b64
+          for i in {00..14}; do cat "tempo-coach-v1/.patch_v230/patch${i}.txt" >> /tmp/v230.b64; done
+          base64 --decode /tmp/v230.b64 > /tmp/v230.patch.gz
           echo '24910456f11dd342ae0ec9294b82afa574b93442b7301f98becf239fbd446bb2  /tmp/v230.patch.gz' | sha256sum -c -
           gzip -dc /tmp/v230.patch.gz > /tmp/v230.patch
           echo '2a80f2f8e4040fc13e68c05d1c5135a10d02a9e1a27987f3c45976b950a26bf7  /tmp/v230.patch' | sha256sum -c -
