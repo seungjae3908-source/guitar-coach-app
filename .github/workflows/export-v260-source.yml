@@ -1,0 +1,64 @@
+name: Export Guitar Training OS v2.6 Source
+
+on:
+  push:
+    branches:
+      - build/guitar-tempo-coach-v1-apk-clean
+    paths:
+      - '.github/workflows/export-v260-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download verified v2.5 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.5.0-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35177840141
+      - name: Reconstruct verified v2.6 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf mobile && mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.5.0-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.5.0'
+          cat tempo-coach-v1/.patch_v260/patch{00..32}.txt > /tmp/v260.b64
+          base64 --decode /tmp/v260.b64 > /tmp/v260.patch.gz
+          echo '64dfda3070220baa8931d2fafce34fa26df33e946c4c11dfd36db37541c4ac3e  /tmp/v260.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v260.patch.gz > /tmp/v260.patch
+          echo '5caa064f1f3245894b2fc38533b8ffcbdbc28e06c490d913b2461399ae036306  /tmp/v260.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v260.patch
+          cat tempo-coach-v1/.patch_v260/typefix{00..04}.txt > /tmp/v260-typefix.b64
+          base64 --decode /tmp/v260-typefix.b64 > /tmp/v260-typefix.patch.gz
+          echo 'ae49a7cdfa5b4a0adf7225496f1f319653f2794bcd68604400adb128c49002dd  /tmp/v260-typefix.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v260-typefix.patch.gz > /tmp/v260-typefix.patch
+          echo '8e22edb83e513c74646195dbb59c2db2a9daa006933768458db4184f2b032660  /tmp/v260-typefix.patch' | sha256sum -c -
+          patch -p1 -d mobile < /tmp/v260-typefix.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.6.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '12'
+      - name: Package verified v2.6 source
+        run: |
+          cd mobile
+          zip -qr ../GuitarTempoCoach-v2.6.0-source.zip . -x 'node_modules/*' 'android/*' '.git/*'
+          cd ..
+          sha256sum GuitarTempoCoach-v2.6.0-source.zip
+      - name: Upload verified v2.6 source
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.6.0-source
+          path: GuitarTempoCoach-v2.6.0-source.zip
+          if-no-files-found: error
+          retention-days: 7
