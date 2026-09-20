@@ -82,8 +82,17 @@ jobs:
         run: |
           set -euo pipefail
           patch -p1 -d mobile < /tmp/v282.patch
-          sed -i 's/tol\\.timingMs/tol.timing/g' mobile/src/screens/PracticeScreen.tsx
-          ! grep -F 'tol.timingMs' mobile/src/screens/PracticeScreen.tsx
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('mobile/src/screens/PracticeScreen.tsx')
+          s = p.read_text()
+          if '.timingMs' not in s:
+              raise SystemExit('Expected legacy .timingMs field was not found')
+          s = s.replace('.timingMs', '.timing')
+          p.write_text(s)
+          if '.timingMs' in p.read_text():
+              raise SystemExit('Legacy .timingMs field still remains')
+          PY
           test "$(node -p "require('./mobile/package.json').version")" = '2.8.2'
           test "$(node -p "require('./mobile/app.json').expo.version")" = '2.8.2'
           test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '16'
