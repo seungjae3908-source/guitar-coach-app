@@ -1,0 +1,240 @@
+name: Build Guitar Training OS v2.8.2 Focus Practice APK
+
+on:
+  push:
+    branches:
+      - build/guitar-training-os-v282-focus-practice
+    paths:
+      - '.github/workflows/apk-guitar-v282.yml'
+      - 'tempo-coach-v1/.patch_v282/v282.b64'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download verified v2.8.1 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.1-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35199137553
+
+      - name: Download verified v2.8.1 APK for update compatibility
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.1-device-acceptance-apk
+          path: previous-apk
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35199137553
+
+      - name: Restore verified v2.8.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd baseline && sha256sum -c GuitarTempoCoach-v2.8.1-source.zip.sha256)
+          rm -rf mobile
+          mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.8.1-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.8.1'
+          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.8.1'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '15'
+          test -s previous-apk/GuitarTempoCoach-v2.8.1-device-acceptance-release.apk
+
+      - name: Reassemble and verify exact v2.8.2 focus patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp tempo-coach-v1/.patch_v282/v282.b64 /tmp/v282.b64
+          test "$(wc -c < /tmp/v282.b64)" -eq 19800
+          echo 'c0b0a13dd7fb445024bc721b35c199570e600363893046d298596a39cb665439  /tmp/v282.b64' | sha256sum -c -
+          base64 --decode /tmp/v282.b64 > /tmp/v282.patch.gz
+          test "$(wc -c < /tmp/v282.patch.gz)" -eq 14848
+          echo '448861b7dcc3e6ee54cbecc7e93bc16220ce454ee3e9e06ef2cd6fefe3e20d4f  /tmp/v282.patch.gz' | sha256sum -c -
+          gzip -t /tmp/v282.patch.gz
+          gzip -dc /tmp/v282.patch.gz > /tmp/v282.patch
+          test "$(wc -c < /tmp/v282.patch)" -eq 74515
+          echo '577ffc27b8ba22630da7cc42bf0676df1d0804a393c07058cb32a671ebf8d276  /tmp/v282.patch' | sha256sum -c -
+
+      - name: Apply v2.8.2 Focus Practice patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch -p1 -d mobile < /tmp/v282.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.8.2'
+          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.8.2'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '16'
+          test "$(node -p "require('./mobile/app.json').expo.android.package")" = 'com.guitartempo.coach'
+
+      - name: Verify v2.8.2 focus-practice contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -F 'ScrollView' mobile/src/screens; then
+            echo 'ScrollView remains in a main screen'; exit 1
+          fi
+          grep -F 'GUITAR TRAINING OS 2.8.2' mobile/src/screens/HomeScreen.tsx
+          grep -F 'PRACTICE OS 2.8.2' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'STUDIO 2.8.2' mobile/src/screens/AnalyzerScreen.tsx
+          grep -F 'SONG LAB 2.8.2' mobile/src/screens/SongLabScreen.tsx
+          grep -F 'setSessionActive(true);setStageOpen(true)' mobile/src/screens/PracticeScreen.tsx
+          grep -F '집중 모드: 연주 중 악보와 핵심 피드백만 표시' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'stageStopLive' mobile/src/screens/PracticeScreen.tsx
+          grep -F '연습 종료를 눌러 세션과 WAV를 안전하게 저장해 주세요.' mobile/src/screens/PracticeScreen.tsx
+          grep -F '!(stage&&isPlaying)' mobile/src/components/ScorePlayer.tsx
+          grep -F 'Focus Practice Device Acceptance' mobile/DEVICE_ACCEPTANCE_V282.md
+          grep -F 'RTC-PASS' mobile/src/screens/SongLabScreen.tsx
+          grep -F 'RTC-E05' mobile/DEVICE_ACCEPTANCE_V281.md
+
+      - name: Package v2.8.2 source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd mobile && zip -qr ../GuitarTempoCoach-v2.8.2-source.zip .)
+          test -s GuitarTempoCoach-v2.8.2-source.zip
+          sha256sum GuitarTempoCoach-v2.8.2-source.zip > GuitarTempoCoach-v2.8.2-source.zip.sha256
+
+      - name: Install dependencies
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Generate Android project
+        working-directory: mobile
+        env:
+          CI: '1'
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build standalone ARM64 release APK
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Collect, sign and verify v2.8.2 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -d "$BUILD_TOOLS"
+          RELEASE_DIR='mobile/android/app/build/outputs/apk/release'
+          OUTPUT='GuitarTempoCoach-v2.8.2-focus-practice-release.apk'
+          SIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -1 || true)"
+          UNSIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*unsigned.apk' | head -1 || true)"
+          if [ -n "$SIGNED" ]; then
+            cp "$SIGNED" "$OUTPUT"
+          elif [ -n "$UNSIGNED" ]; then
+            test -s mobile/android/app/debug.keystore
+            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v282-aligned.apk
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks mobile/android/app/debug.keystore \
+              --ks-key-alias androiddebugkey \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$OUTPUT" \
+              /tmp/GuitarTempoCoach-v282-aligned.apk
+          else
+            echo 'Release APK was not generated'; exit 1
+          fi
+          test -s "$OUTPUT"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$OUTPUT"
+          unzip -l "$OUTPUT" | grep -F 'assets/index.android.bundle'
+          BUNDLE_BYTES="$(unzip -p "$OUTPUT" assets/index.android.bundle | wc -c)"
+          echo "Embedded JS bundle bytes: $BUNDLE_BYTES"
+          test "$BUNDLE_BYTES" -gt 10000
+          unzip -t "$OUTPUT"
+          sha256sum "$OUTPUT" > "$OUTPUT.sha256"
+          ls -lh "$OUTPUT"
+
+      - name: Upload v2.8.2 APK before compatibility gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.2-focus-practice-apk
+          path: |
+            GuitarTempoCoach-v2.8.2-focus-practice-release.apk
+            GuitarTempoCoach-v2.8.2-focus-practice-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload v2.8.2 source before compatibility gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.2-source
+          path: |
+            GuitarTempoCoach-v2.8.2-source.zip
+            GuitarTempoCoach-v2.8.2-source.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verify v2.8.1 to v2.8.2 update compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          OLD_APK='previous-apk/GuitarTempoCoach-v2.8.1-device-acceptance-release.apk'
+          NEW_APK='GuitarTempoCoach-v2.8.2-focus-practice-release.apk'
+          test -s "$OLD_APK"
+          test -s "$NEW_APK"
+
+          echo '=== v2.8.1 signer certificates ==='
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$OLD_APK" 2>&1 | tee /tmp/v281-certs.txt
+          echo '=== v2.8.2 signer certificates ==='
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$NEW_APK" 2>&1 | tee /tmp/v282-certs.txt
+
+          OLD_CERT="$(grep -i -m1 'certificate SHA-256 digest' /tmp/v281-certs.txt | sed -E 's/.*digest:[[:space:]]*//' | tr -d '\r[:space:]' || true)"
+          NEW_CERT="$(grep -i -m1 'certificate SHA-256 digest' /tmp/v282-certs.txt | sed -E 's/.*digest:[[:space:]]*//' | tr -d '\r[:space:]' || true)"
+          if [ -z "$OLD_CERT" ] || [ -z "$NEW_CERT" ]; then
+            echo 'Unable to parse signer certificate SHA-256 digest.'
+            exit 1
+          fi
+          echo "v2.8.1 cert SHA-256: $OLD_CERT"
+          echo "v2.8.2 cert SHA-256: $NEW_CERT"
+          test "$OLD_CERT" = "$NEW_CERT"
+          echo "$OLD_CERT" > GuitarTempoCoach-v2.8.1-to-v2.8.2-signing-cert.sha256
+
+          AAPT="$BUILD_TOOLS/aapt"
+          test -x "$AAPT"
+          OLD_PACKAGE="$($AAPT dump badging "$OLD_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          NEW_PACKAGE="$($AAPT dump badging "$NEW_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          OLD_CODE="$($AAPT dump badging "$OLD_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
+          NEW_CODE="$($AAPT dump badging "$NEW_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
+          echo "Packages: $OLD_PACKAGE -> $NEW_PACKAGE"
+          echo "VersionCodes: $OLD_CODE -> $NEW_CODE"
+          test "$OLD_PACKAGE" = 'com.guitartempo.coach'
+          test "$NEW_PACKAGE" = "$OLD_PACKAGE"
+          test "$OLD_CODE" = '15'
+          test "$NEW_CODE" = '16'
+          echo 'UPDATE_COMPATIBILITY=PASS'
+
+      - name: Upload update compatibility evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.8.1-to-v2.8.2-update-compatibility
+          path: GuitarTempoCoach-v2.8.1-to-v2.8.2-signing-cert.sha256
+          if-no-files-found: error
+          retention-days: 30
