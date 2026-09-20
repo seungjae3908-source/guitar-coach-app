@@ -1,15 +1,17 @@
-name: Build Guitar Training OS v2.1 APK
+name: Build Guitar Training OS v2.11.0 Auto-Follow TAB APK
 
 on:
   push:
     branches:
-      - build/guitar-tempo-coach-v1-apk-clean
+      - build/guitar-training-os-v211-auto-follow-tab
     paths:
       - '.github/workflows/apk-guitar-v211.yml'
+      - 'tempo-coach-v1/.patch_v211/chunks/**'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-apk:
@@ -29,128 +31,94 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Reconstruct verified v1.3 baseline
+      - name: Download verified v2.10.0 source baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.10.0-source
+          path: baseline
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35484438448
+
+      - name: Download verified v2.10.0 APK for update compatibility
+        uses: actions/download-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.10.0-bpm-personal-score-apk
+          path: previous-apk
+          github-token: ${{ github.token }}
+          repository: seungjae3908-source/guitar-coach-app
+          run-id: 35484438448
+
+      - name: Restore verified v2.10.0 source
         shell: bash
         run: |
           set -euo pipefail
-          cat \
-            tempo-coach-v1/.bundle/repair00a.txt \
-            tempo-coach-v1/.bundle/repair00b.txt \
-            tempo-coach-v1/.bundle/chunk01.txt \
-            tempo-coach-v1/.bundle/chunk02.txt \
-            tempo-coach-v1/.bundle/repair03a.txt \
-            tempo-coach-v1/.bundle/repair03b.txt \
-            tempo-coach-v1/.bundle/chunk04.txt \
-            tempo-coach-v1/.bundle/chunk05.txt \
-            tempo-coach-v1/.bundle/chunk06.txt \
-            tempo-coach-v1/.bundle/chunk07.txt \
-            tempo-coach-v1/.bundle/chunk08.txt \
-            tempo-coach-v1/.bundle/chunk09.txt \
-            tempo-coach-v1/.bundle/chunk10.txt \
-            tempo-coach-v1/.bundle/chunk11.txt \
-            tempo-coach-v1/.bundle/chunk12.txt > /tmp/base.b64
-          base64 --decode /tmp/base.b64 > /tmp/base.zip
-          echo 'cbed50f6cfbffa73f2a60ba38ef951ae77c523d83d0f6812e0c2524694ea6e78  /tmp/base.zip' | sha256sum -c -
-          rm -rf mobile && mkdir mobile
-          unzip -q /tmp/base.zip -d mobile
+          (cd baseline && sha256sum -c GuitarTempoCoach-v2.10.0-source.zip.sha256)
+          rm -rf mobile
+          mkdir mobile
+          unzip -q baseline/GuitarTempoCoach-v2.10.0-source.zip -d mobile
+          test "$(node -p "require('./mobile/package.json').version")" = '2.10.0'
+          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.10.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '18'
+          test -s previous-apk/GuitarTempoCoach-v2.10.0-bpm-personal-score-release.apk
 
-          : > /tmp/v110.b64
-          for i in $(seq -w 0 10); do cat "tempo-coach-v1/.patch_v110/patch${i}.txt" >> /tmp/v110.b64; done
-          base64 --decode /tmp/v110.b64 > /tmp/v110.gz
-          echo '85cd542a2d1dd092d0bb2d360cca9bbb2a415e3c3ad1d8f8e8576661d0d4ffb2  /tmp/v110.gz' | sha256sum -c -
-          gzip -dc /tmp/v110.gz > /tmp/v110.patch
-          patch -p1 -d mobile < /tmp/v110.patch
-
-          : > /tmp/v120.b64
-          for i in {00..03}; do cat "tempo-coach-v1/.patch_v120/patch${i}.txt" >> /tmp/v120.b64; done
-          base64 --decode /tmp/v120.b64 > /tmp/v120.gz
-          echo '6c6bfa89db89254192d03210b0766b95a1b4fc958edbe5fc7a4ce0a67304bc8c  /tmp/v120.gz' | sha256sum -c -
-          gzip -dc /tmp/v120.gz > /tmp/v120.patch
-          echo '949bc878f720704fd403b42e9611293191b243287ce0e09a1d10e70389c8b964  /tmp/v120.patch' | sha256sum -c -
-          patch -p1 -d mobile < /tmp/v120.patch
-          base64 --decode tempo-coach-v1/.patch_v120/typefix.gz.b64 > /tmp/v120-typefix.gz
-          echo '803af490fe90a7b1d61f95cdcda3e26966a7c0fc2b552610e6b1f48207645c50  /tmp/v120-typefix.gz' | sha256sum -c -
-          gzip -dc /tmp/v120-typefix.gz > /tmp/v120-typefix.patch
-          patch -p1 -d mobile < /tmp/v120-typefix.patch
-
-          cat \
-            tempo-coach-v1/.patch_v130/patch00.txt \
-            tempo-coach-v1/.patch_v130/patch01.txt \
-            tempo-coach-v1/.patch_v130/patch02.txt \
-            tempo-coach-v1/.patch_v130/patch03.txt \
-            tempo-coach-v1/.patch_v130/repair04a.txt \
-            tempo-coach-v1/.patch_v130/repair04b.txt \
-            tempo-coach-v1/.patch_v130/patch05.txt \
-            tempo-coach-v1/.patch_v130/patch06.txt \
-            tempo-coach-v1/.patch_v130/patch07.txt \
-            tempo-coach-v1/.patch_v130/patch08.txt > /tmp/v130.b64
-          base64 --decode /tmp/v130.b64 > /tmp/v130.gz
-          echo '6c2d8af475fbd615dace3bb6464508297918385236cf2497a07bb3f4095fb9f4  /tmp/v130.gz' | sha256sum -c -
-          gzip -dc /tmp/v130.gz > /tmp/v130.patch
-          echo 'e73a74a3350358a7f438f4cf37d3116b44ce40cfeafd963bf67396bdaa96bda6  /tmp/v130.patch' | sha256sum -c -
-          patch -p1 -d mobile < /tmp/v130.patch
-          base64 --decode tempo-coach-v1/.patch_v130/typefix.gz.b64 > /tmp/v130-typefix.gz
-          echo '41950d2c4596f474071f1595eeb4c755fba0ed3decc820d95c748c846c5ae966  /tmp/v130-typefix.gz' | sha256sum -c -
-          gzip -dc /tmp/v130-typefix.gz > /tmp/v130-typefix.patch
-          echo '038d5d3ea661365dfe0d37c1773d8efc840fe3675b5a92020ac1d301c7e6b96e  /tmp/v130-typefix.patch' | sha256sum -c -
-          patch -p1 -d mobile < /tmp/v130-typefix.patch
-          test "$(node -p "require('./mobile/package.json').version")" = '1.3.0'
-
-      - name: Apply verified v2.0 Training OS patch
+      - name: Reassemble and verify exact v2.11.0 Auto-Follow patch
         shell: bash
         run: |
           set -euo pipefail
-          : > /tmp/v200.b64
-          for i in {00..17}; do cat "tempo-coach-v1/.patch_v200/patch${i}.txt" >> /tmp/v200.b64; done
-          base64 --decode /tmp/v200.b64 > /tmp/v200.patch.gz
-          echo 'c2c954e17cd545f21f6e2fb681c4d30869ab5db02ee27cea7619b5d19fe50e04  /tmp/v200.patch.gz' | sha256sum -c -
-          gzip -dc /tmp/v200.patch.gz > /tmp/v200.patch
-          echo '3fe71c9d83fe61c3479cd96a79604ced7f13bddbd6fc8ac4cf1a02ed706591b9  /tmp/v200.patch' | sha256sum -c -
-          patch -p1 -d mobile < /tmp/v200.patch
-          test "$(node -p "require('./mobile/package.json').version")" = '2.0.0'
-          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '6'
-
-      - name: Apply verified v2.1 practice UX patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat \
-            tempo-coach-v1/.patch_v211/patch00.txt \
-            tempo-coach-v1/.patch_v211/patch01.txt \
-            tempo-coach-v1/.patch_v211/repair02a.txt \
-            tempo-coach-v1/.patch_v211/repair02b.txt \
-            tempo-coach-v1/.patch_v211/patch03.txt \
-            tempo-coach-v1/.patch_v211/patch04.txt \
-            tempo-coach-v1/.patch_v211/patch05.txt \
-            tempo-coach-v1/.patch_v211/repair06a.txt \
-            tempo-coach-v1/.patch_v211/repair06b.txt \
-            tempo-coach-v1/.patch_v211/repair07a.txt \
-            tempo-coach-v1/.patch_v211/repair07b.txt \
-            tempo-coach-v1/.patch_v211/patch08.txt \
-            tempo-coach-v1/.patch_v211/patch09.txt \
-            tempo-coach-v1/.patch_v211/patch10.txt > /tmp/v211.b64
+          cat tempo-coach-v1/.patch_v211/chunks/patch{00..02}.txt > /tmp/v211.b64
+          test "$(wc -c < /tmp/v211.b64)" -eq 19245
+          echo 'b014fb623d1f58418aa2b45241b94c726fc62a8c55966c2232043cd06e4c7026  /tmp/v211.b64' | sha256sum -c -
           base64 --decode /tmp/v211.b64 > /tmp/v211.patch.gz
-          echo '41e5a2f675ac82eb15c566f76210020a87d6ed326a8d1eb32c35a9f756b9afb3  /tmp/v211.patch.gz' | sha256sum -c -
+          test "$(wc -c < /tmp/v211.patch.gz)" -eq 14431
+          echo 'e7167d83780100b003c30cee34adcd1cff147f3f56f38f210d3d7c3a4c98f2ae  /tmp/v211.patch.gz' | sha256sum -c -
+          gzip -t /tmp/v211.patch.gz
           gzip -dc /tmp/v211.patch.gz > /tmp/v211.patch
-          echo 'd98bd7b3839afc8fc932885f0e1322a05c1bb086c28ec5ae01f45ef178277055  /tmp/v211.patch' | sha256sum -c -
-          patch -p1 -d mobile < /tmp/v211.patch
+          test "$(wc -c < /tmp/v211.patch)" -eq 71530
+          echo '0a6f348d52f55ba67b3e611c86581f7ad8af38291a2489aa86ad0fc93fec3973  /tmp/v211.patch' | sha256sum -c -
 
-          test "$(node -p "require('./mobile/package.json').version")" = '2.1.0'
-          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.1.0'
-          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '7'
-          if grep -R -F 'ScrollView' mobile/src/screens; then echo 'ScrollView remains in a main screen'; exit 1; fi
-          grep -F 'PRACTICE OS 2.1' mobile/src/screens/PracticeScreen.tsx
-          grep -F 'Smart Playback 2.1' mobile/src/screens/PracticeScreen.tsx
-          grep -F 'GUITAR TRAINING OS 2.1' mobile/src/screens/HomeScreen.tsx
-          grep -F 'preferredMetronomeSound' mobile/src/types.ts
-          grep -F 'preferredTabTheme' mobile/src/types.ts
-          grep -F 'PracticeLengthMode' mobile/src/types.ts
-          grep -F 'repeatExercise' mobile/src/domain/playback.ts
-          grep -F '카운트인은 처음 한 번만' mobile/src/screens/PracticeScreen.tsx
-          grep -F 'Guitar Vision' mobile/src/screens/PracticeScreen.tsx
-          grep -F "'LIGHT' | 'DARK' | 'CONTRAST'" mobile/src/types.ts
-          grep -F "value:'off',label:'무음'" mobile/src/screens/MetronomeScreen.tsx
-          grep -F '끊김 없이 자동 반복' mobile/src/screens/PracticeScreen.tsx
+      - name: Apply v2.11.0 Auto-Follow TAB patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch -p1 -d mobile < /tmp/v211.patch
+          test "$(node -p "require('./mobile/package.json').version")" = '2.11.0'
+          test "$(node -p "require('./mobile/app.json').expo.version")" = '2.11.0'
+          test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '19'
+          test "$(node -p "require('./mobile/app.json').expo.android.package")" = 'com.guitartempo.coach'
+
+      - name: Verify v2.11.0 auto-follow contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -F 'ScrollView' mobile/src/screens; then
+            echo 'ScrollView remains in a main screen'; exit 1
+          fi
+          grep -F 'GUITAR TRAINING OS 2.11.0' mobile/src/screens/HomeScreen.tsx
+          grep -F 'PRACTICE OS 2.11.0' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'STUDIO 2.11.0' mobile/src/screens/AnalyzerScreen.tsx
+          grep -F 'SONG LAB 2.11.0' mobile/src/screens/SongLabScreen.tsx
+          grep -F "type StageFollow='FLOW'|'PAGE'" mobile/src/screens/PracticeScreen.tsx
+          grep -F "autoScroll={stage&&sessionActive&&stageFollow==='FLOW'}" mobile/src/screens/PracticeScreen.tsx
+          grep -F "자동흐름" mobile/src/screens/PracticeScreen.tsx
+          grep -F "페이지 넘김" mobile/src/screens/PracticeScreen.tsx
+          grep -F "autoScroll=false" mobile/src/components/TabView.tsx
+          grep -F "AUTO FLOW" mobile/src/components/TabView.tsx
+          grep -F "Animated.timing" mobile/src/components/TabView.tsx
+          grep -F "wrapped=playheadBeat+beats*.5<prevBeat.current" mobile/src/components/TabView.tsx
+          grep -F 'TAP · BPM 찾기' mobile/src/screens/PracticeScreen.tsx
+          grep -F 'GTC_SCORE_PACK_V1' mobile/src/domain/songLab.ts
+          grep -F 'unfoldedRepeats' mobile/src/domain/songLab.ts
+          grep -F 'Auto-Follow TAB Acceptance' mobile/DEVICE_ACCEPTANCE_V211.md
+          grep -F 'RTC-PASS' mobile/src/screens/SongLabScreen.tsx
+
+      - name: Package v2.11.0 source baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd mobile && zip -qr ../GuitarTempoCoach-v2.11.0-source.zip .)
+          test -s GuitarTempoCoach-v2.11.0-source.zip
+          sha256sum GuitarTempoCoach-v2.11.0-source.zip > GuitarTempoCoach-v2.11.0-source.zip.sha256
 
       - name: Install dependencies
         working-directory: mobile
@@ -173,28 +141,28 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
 
-      - name: Collect, sign and verify v2.1 APK
+      - name: Collect, sign and verify v2.11.0 APK
         shell: bash
         run: |
           set -euo pipefail
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
           test -d "$BUILD_TOOLS"
           RELEASE_DIR='mobile/android/app/build/outputs/apk/release'
-          OUTPUT='GuitarTempoCoach-v2.1.0-release.apk'
+          OUTPUT='GuitarTempoCoach-v2.11.0-auto-follow-tab-release.apk'
           SIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*release.apk' ! -name '*unsigned*' | head -1 || true)"
           UNSIGNED="$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*unsigned.apk' | head -1 || true)"
           if [ -n "$SIGNED" ]; then
             cp "$SIGNED" "$OUTPUT"
           elif [ -n "$UNSIGNED" ]; then
             test -s mobile/android/app/debug.keystore
-            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v211-aligned.apk
+            "$BUILD_TOOLS/zipalign" -f 4 "$UNSIGNED" /tmp/GuitarTempoCoach-v211-auto-aligned.apk
             "$BUILD_TOOLS/apksigner" sign \
               --ks mobile/android/app/debug.keystore \
               --ks-key-alias androiddebugkey \
               --ks-pass pass:android \
               --key-pass pass:android \
               --out "$OUTPUT" \
-              /tmp/GuitarTempoCoach-v211-aligned.apk
+              /tmp/GuitarTempoCoach-v211-auto-aligned.apk
           else
             echo 'Release APK was not generated'; exit 1
           fi
@@ -208,12 +176,58 @@ jobs:
           sha256sum "$OUTPUT" > "$OUTPUT.sha256"
           ls -lh "$OUTPUT"
 
-      - name: Upload v2.1 release APK artifact
+      - name: Upload v2.11.0 APK before compatibility gate
         uses: actions/upload-artifact@v4
         with:
-          name: GuitarTempoCoach-v2.1.0-release-apk
+          name: GuitarTempoCoach-v2.11.0-auto-follow-tab-apk
           path: |
-            GuitarTempoCoach-v2.1.0-release.apk
-            GuitarTempoCoach-v2.1.0-release.apk.sha256
+            GuitarTempoCoach-v2.11.0-auto-follow-tab-release.apk
+            GuitarTempoCoach-v2.11.0-auto-follow-tab-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload v2.11.0 source before compatibility gate
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.11.0-source
+          path: |
+            GuitarTempoCoach-v2.11.0-source.zip
+            GuitarTempoCoach-v2.11.0-source.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verify v2.10.0 to v2.11.0 update compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          OLD_APK='previous-apk/GuitarTempoCoach-v2.10.0-bpm-personal-score-release.apk'
+          NEW_APK='GuitarTempoCoach-v2.11.0-auto-follow-tab-release.apk'
+          test -s "$OLD_APK"
+          test -s "$NEW_APK"
+
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$OLD_APK" 2>&1 | tee /tmp/v210-certs.txt
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$NEW_APK" 2>&1 | tee /tmp/v211-certs.txt
+          OLD_CERT="$(grep -i -m1 'certificate SHA-256 digest' /tmp/v210-certs.txt | sed -E 's/.*digest:[[:space:]]*//' | tr -d '\r[:space:]' || true)"
+          NEW_CERT="$(grep -i -m1 'certificate SHA-256 digest' /tmp/v211-certs.txt | sed -E 's/.*digest:[[:space:]]*//' | tr -d '\r[:space:]' || true)"
+          test -n "$OLD_CERT"; test -n "$NEW_CERT"; test "$OLD_CERT" = "$NEW_CERT"
+          echo "$OLD_CERT" > GuitarTempoCoach-v2.10.0-to-v2.11.0-signing-cert.sha256
+
+          AAPT="$BUILD_TOOLS/aapt"
+          OLD_PACKAGE="$($AAPT dump badging "$OLD_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          NEW_PACKAGE="$($AAPT dump badging "$NEW_APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
+          OLD_CODE="$($AAPT dump badging "$OLD_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
+          NEW_CODE="$($AAPT dump badging "$NEW_APK" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p" | head -1)"
+          test "$OLD_PACKAGE" = 'com.guitartempo.coach'
+          test "$NEW_PACKAGE" = "$OLD_PACKAGE"
+          test "$OLD_CODE" = '18'
+          test "$NEW_CODE" = '19'
+          echo 'UPDATE_COMPATIBILITY=PASS'
+
+      - name: Upload update compatibility evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTempoCoach-v2.10.0-to-v2.11.0-update-compatibility
+          path: GuitarTempoCoach-v2.10.0-to-v2.11.0-signing-cert.sha256
           if-no-files-found: error
           retention-days: 30
