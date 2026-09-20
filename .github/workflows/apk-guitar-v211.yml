@@ -67,8 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           cat tempo-coach-v1/.patch_v211/chunks/patch{00..02}.txt > /tmp/v211.b64
-          test "$(wc -c < /tmp/v211.b64)" -eq 19245
-          echo 'b014fb623d1f58418aa2b45241b94c726fc62a8c55966c2232043cd06e4c7026  /tmp/v211.b64' | sha256sum -c -
+          test "$(wc -c < /tmp/v211.b64)" -eq 19244
+          echo '78a3d5afa86407062c15f064d07168af303a9c06c0cac4772e7924f72666add1  /tmp/v211.b64' | sha256sum -c -
           base64 --decode /tmp/v211.b64 > /tmp/v211.patch.gz
           test "$(wc -c < /tmp/v211.patch.gz)" -eq 14431
           echo 'e7167d83780100b003c30cee34adcd1cff147f3f56f38f210d3d7c3a4c98f2ae  /tmp/v211.patch.gz' | sha256sum -c -
