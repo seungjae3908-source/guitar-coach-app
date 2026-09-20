@@ -67,21 +67,23 @@ jobs:
         run: |
           set -euo pipefail
           cp tempo-coach-v1/.patch_v282/v282.b64 /tmp/v282.b64
-          test "$(wc -c < /tmp/v282.b64)" -eq 19781
-          echo '9142cf0ea3f0ac1fdd711b6b8f06c13342e60077e3d7bc600533ab4d2fb385b1  /tmp/v282.b64' | sha256sum -c -
+          test "$(wc -c < /tmp/v282.b64)" -eq 19800
+          echo 'c0b0a13dd7fb445024bc721b35c199570e600363893046d298596a39cb665439  /tmp/v282.b64' | sha256sum -c -
           base64 --decode /tmp/v282.b64 > /tmp/v282.patch.gz
-          test "$(wc -c < /tmp/v282.patch.gz)" -eq 14835
-          echo 'b632d7b8710a0902163f6178b7085a408694fe74ede6c52a308877215094faf3  /tmp/v282.patch.gz' | sha256sum -c -
+          test "$(wc -c < /tmp/v282.patch.gz)" -eq 14848
+          echo '448861b7dcc3e6ee54cbecc7e93bc16220ce454ee3e9e06ef2cd6fefe3e20d4f  /tmp/v282.patch.gz' | sha256sum -c -
           gzip -t /tmp/v282.patch.gz
           gzip -dc /tmp/v282.patch.gz > /tmp/v282.patch
-          test "$(wc -c < /tmp/v282.patch)" -eq 74513
-          echo 'c018f5084ec53fb898670713b53bb0036d064f51fbcdef5c4675b8549d47fae5  /tmp/v282.patch' | sha256sum -c -
+          test "$(wc -c < /tmp/v282.patch)" -eq 74515
+          echo '577ffc27b8ba22630da7cc42bf0676df1d0804a393c07058cb32a671ebf8d276  /tmp/v282.patch' | sha256sum -c -
 
       - name: Apply v2.8.2 Focus Practice patch
         shell: bash
         run: |
           set -euo pipefail
           patch -p1 -d mobile < /tmp/v282.patch
+          sed -i 's/tol\\.timingMs/tol.timing/g' mobile/src/screens/PracticeScreen.tsx
+          ! grep -F 'tol.timingMs' mobile/src/screens/PracticeScreen.tsx
           test "$(node -p "require('./mobile/package.json').version")" = '2.8.2'
           test "$(node -p "require('./mobile/app.json').expo.version")" = '2.8.2'
           test "$(node -p "require('./mobile/app.json').expo.android.versionCode")" = '16'
